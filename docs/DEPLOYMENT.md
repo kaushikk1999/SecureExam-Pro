@@ -4,14 +4,14 @@
 
 1. Use a supported managed PostgreSQL release in an appropriate region. Use the provider's pooled TLS connection URL. Keep migration/owner credentials separate from runtime credentials. Apply `npm run db:migrate` to an empty production database; never run the demo seed there.
 2. Create a runtime role with SELECT/INSERT/UPDATE on operational tables and sequences. For `audit_events`, allow SELECT/INSERT only, never UPDATE/DELETE/TRUNCATE. The trigger is defense in depth, not protection against a database owner. Use the migration role only for schema administration.
-3. Generate `AUTH_SECRET` and `CRON_SECRET` privately. Set both app URLs to the exact HTTPS production origin. Set `DATABASE_PROVIDER=postgres` (or omit it; PostgreSQL is the default).
+3. Generate `AUTH_SECRET` privately. Set both app URLs to the exact HTTPS production origin. Set `DATABASE_PROVIDER=postgres` (or omit it; PostgreSQL is the default).
 4. Provision the administrator through `npm run admin:create`. Enable and test TOTP before requiring it. The TOTP encryption key is distinct from the cookie signing secret. Backup loss of this key prevents decoding enrolled secrets.
 5. In Vercel, connect this source directory, keep the Next.js framework preset, use Node.js 22+, run `npm ci` and `npm run build`. The build copies the Monaco runtime to `public/monaco`, so editor code does not depend on a third-party CDN.
 6. Provision a private Vercel Blob store and set `BLOB_READ_WRITE_TOKEN` for document workflows. The handler accepts files up to 4 MB to stay below request body limits. It validates type/extension, common signatures, ownership and size. Add institutional malware scanning before allowing untrusted Office content at scale; files are never executed by this server.
-7. Schedule `/api/cron` once per minute with `Authorization: Bearer <CRON_SECRET>` through Vercel Cron or an authenticated scheduler. Deadline enforcement also occurs on attempt reads, writes and teacher monitoring. Cron handles inactive/offline attempts; cron delay cannot extend the answer-acceptance deadline.
+7. This zero-cost Vercel Hobby configuration does not register a recurring cron job. Attempt writes enforce the authoritative deadline, and instructor monitoring finalizes expired attempts. If a student is offline, the attempt may remain marked active until an instructor next opens monitoring; no answer after the deadline is accepted. For unattended finalization, configure an external scheduler and protect `/api/cron` with `CRON_SECRET`.
 8. Smoke-test authentication, role isolation, a classroom practice exam, draft saving and expiry on the deployed origin before involving real students.
 
-No valid production PostgreSQL/Blob/Sheets/Ollama deployment configuration was supplied in this workspace. No deployment URL is claimed.
+Production PostgreSQL is provisioned through Neon. Vercel Blob, Google Sheets, and Ollama remain optional integrations and are not configured here. Add an initial administrator and Google OAuth credentials before inviting exam users.
 
 ## Google Sheets
 
