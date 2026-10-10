@@ -1,0 +1,1 @@
+ALTER TABLE files ADD COLUMN IF NOT EXISTS extracted_text text NOT NULL DEFAULT '';

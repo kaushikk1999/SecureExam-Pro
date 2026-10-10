@@ -1,0 +1,1250 @@
+import { NextResponse } from "next/server";
+import { randomUUID, randomBytes } from "node:crypto";
+import { hash } from "bcryptjs";
+import { sql } from "drizzle-orm";
+import { z } from "zod";
+import { parse } from "csv-parse/sync";
+import ExcelJS from "exceljs";
+import { put, get } from "@vercel/blob";
+import { unzipSync, strFromU8 } from "fflate";
+import { actor, sameOrigin, HttpError, type Actor } from "@/lib/auth";
+import { db, query } from "@/lib/db";
+import { audit, record, rateLimit } from "@/lib/audit";
+import {
+  ownedExam,
+  enrolledExam,
+  startAttempt,
+  lockedAttempt,
+  event,
+  finish,
+  saveAnswers,
+  effectivePolicy,
+} from "@/lib/exams";
+import { classroomSchema, classroomCode, csv } from "@/lib/domain";
+import {
+  examSchema,
+  questionSchema,
+  studentSchema,
+  answersSchema,
+  startSchema,
+  uuid,
+} from "@/lib/validation";
+import { growthRequest } from "@/lib/growth";
+import { ai, syncSheets } from "@/lib/integrations";
+export const runtime = "nodejs";
+export const dynamic = "force-dynamic";
+const json = (data: unknown) =>
+  NextResponse.json(data, { headers: { "Cache-Control": "no-store" } });
+const teacher = (u: Actor) => {
+  if (u.role === "STUDENT")
+    throw new HttpError(403, "Teacher access required.");
+};
+const admin = (u: Actor) => {
+  if (u.role !== "ADMIN")
+    throw new HttpError(403, "Administrator access required.");
+};
+async function body(req: Request) {
+  if (Number(req.headers.get("content-length") ?? 0) > 1000000)
+    throw new HttpError(413, "Request too large.");
+  const raw = await req.text();
+  if (raw.length > 1000000) throw new HttpError(413, "Request too large.");
+  try {
+    return JSON.parse(raw);
+  } catch {
+    throw new HttpError(400, "Invalid JSON.");
+  }
+}
+async function courseAccess(id: string, u: Actor) {
+  const [c] = await query(
+    sql`SELECT * FROM courses WHERE id=${uuid.parse(id)}`,
+  );
+  if (!c || (u.role !== "ADMIN" && c.teacher_id !== u.id))
+    throw new HttpError(403, "Course access denied.");
+  return c;
+}
+async function studentAccess(id: string, u: Actor) {
+  const [s] = await query(
+    sql`SELECT id FROM users WHERE id=${id} AND role='STUDENT' AND (${u.role === "ADMIN"} OR created_by=${u.id} OR id IN(SELECT n.user_id FROM enrollments n JOIN courses c ON c.id=n.course_id WHERE c.teacher_id=${u.id}))`,
+  );
+  if (!s) throw new HttpError(403, "Student access denied.");
+}
+async function reportRows(id: string, u: Actor) {
+  await ownedExam(id, u);
+  const rows = await query(
+    sql`SELECT e.title,u.student_id,u.name,u.last_login,a.started_at,a.submitted_at,COALESCE(a.status,'ABSENT') AS status,a.location_status,a.warnings,a.score,a.feedback FROM exams e JOIN enrollments n ON n.course_id=e.course_id JOIN users u ON u.id=n.user_id LEFT JOIN attempts a ON a.exam_id=e.id AND a.user_id=u.id WHERE e.id=${id} ORDER BY u.name`,
+  );
+  return [
+    [
+      "Exam",
+      "Student ID",
+      "Name",
+      "Last login",
+      "Started",
+      "Submitted",
+      "Status",
+      "Location",
+      "Warnings",
+      "Score",
+      "Feedback",
+    ],
+    ...rows.map((r) => [
+      r.title,
+      r.student_id,
+      r.name,
+      r.last_login,
+      r.started_at,
+      r.submitted_at,
+      r.status,
+      r.location_status,
+      r.warnings,
+      r.score,
+      r.feedback,
+    ]),
+  ];
+}
+async function dispatch(req: Request, parts: string[]) {
+  sameOrigin(req);
+  const u = await actor();
+  const [resource, id, action] = parts;
+  const method = req.method;
+  if (
+    method === "GET" &&
+    (resource === "ai" ||
+      [
+        "start",
+        "checkin",
+        "duplicate",
+        "control",
+        "accommodations",
+        "sheets",
+        "grade",
+        "sync",
+        "submit",
+        "recover",
+      ].includes(action))
+  )
+    throw new HttpError(405, "This operation requires POST.");
+  const url = new URL(req.url);
+  if (!(await rateLimit("api:" + u.id, 240, 60)))
+    throw new HttpError(429, "Too many requests. Please wait.");
+  if (resource === "growth")
+    return json(await growthRequest(req, parts.slice(1), u, () => body(req)));
+  if (resource === "me") {
+    if (id === "device") {
+      if (method !== "POST") throw new HttpError(405, "POST required.");
+      const deviceId = randomUUID();
+      await query(
+        sql`INSERT INTO exam_devices(id,user_id,session_version) SELECT ${deviceId},id,session_version FROM users WHERE id=${u.id}`,
+      );
+      return json({ id: deviceId });
+    }
+    if (method === "POST") {
+      await query(
+        sql`UPDATE users SET session_version=session_version+1 WHERE id=${u.id}`,
+      );
+      await record({ userId: u.id, type: "ALL_SESSIONS_REVOKED" });
+      return json({ ok: true });
+    }
+    return json(u);
+  }
+  if (resource === "settings") {
+    if (method === "GET") {
+      const [s] = await query(
+        sql`SELECT value FROM settings WHERE id='institution'`,
+      );
+      return json({
+        brand: "SecureExam Pro",
+        institution: "Bangkok University",
+        timezone: "Asia/Bangkok",
+        accent: "#2563eb",
+        retentionDays: 90,
+        ...s?.value,
+        integrations: {
+          ai: process.env.OLLAMA_ENABLED === "true",
+          storage: !!process.env.BLOB_READ_WRITE_TOKEN,
+          sheets: !!process.env.GOOGLE_SHEET_ID,
+        },
+      });
+    }
+    admin(u);
+    const v = z
+      .object({
+        brand: z.string().min(1).max(80),
+        institution: z.string().min(1).max(120),
+        timezone: z.string().refine((v) => {
+          try {
+            new Intl.DateTimeFormat("en", { timeZone: v });
+            return true;
+          } catch {
+            return false;
+          }
+        }),
+        accent: z.string().regex(/^#[0-9a-fA-F]{6}$/),
+        logo: z
+          .string()
+          .max(300)
+          .regex(/^$|^\/api\/platform\/files\/[0-9a-f-]+$/)
+          .default(""),
+        retentionDays: z.number().int().min(7).max(3650),
+      })
+      .parse(await body(req));
+    if (v.logo) {
+      const [logo] = await query(
+        sql`SELECT mime FROM files WHERE id=${v.logo.split("/").at(-1)}`,
+      );
+      if (!logo || !["image/png", "image/jpeg"].includes(logo.mime))
+        throw new HttpError(
+          400,
+          "Logo must reference an uploaded PNG or JPEG.",
+        );
+    }
+    await db.transaction(async (tx) => {
+      await tx.execute(
+        sql`INSERT INTO settings(id,value) VALUES('institution',${JSON.stringify(v)}::jsonb) ON CONFLICT(id) DO UPDATE SET value=EXCLUDED.value`,
+      );
+      await audit(tx, { userId: u.id, type: "SETTINGS_UPDATED", metadata: v });
+    });
+    return json({ ok: true });
+  }
+  if (resource === "courses") {
+    teacher(u);
+    if (method === "GET")
+      return json(
+        await query(
+          sql`SELECT * FROM courses WHERE ${u.role === "ADMIN"} OR teacher_id=${u.id} ORDER BY code`,
+        ),
+      );
+    const v = z
+      .object({
+        code: z.string().min(1).max(30),
+        name: z.string().min(1).max(160),
+        section: z.string().max(80).default(""),
+      })
+      .parse(await body(req));
+    const cid = randomUUID();
+    await query(
+      sql`INSERT INTO courses(id,teacher_id,code,name,section) VALUES(${cid},${u.id},${v.code},${v.name},${v.section})`,
+    );
+    await record({
+      userId: u.id,
+      type: "COURSE_CREATED",
+      metadata: { id: cid },
+    });
+    return json({ id: cid });
+  }
+  if (resource === "students") {
+    teacher(u);
+    if (method === "GET")
+      return json(
+        await query(
+          sql`SELECT DISTINCT u.id,u.name,u.email,u.student_id,u.section,u.active,u.last_login FROM users u LEFT JOIN enrollments n ON n.user_id=u.id LEFT JOIN courses c ON c.id=n.course_id WHERE u.role='STUDENT' AND (${u.role === "ADMIN"} OR u.created_by=${u.id} OR c.teacher_id=${u.id}) ORDER BY u.name`,
+        ),
+      );
+    if (id && id !== "import") {
+      uuid.parse(id);
+      await studentAccess(id, u);
+      const v = z
+        .object({
+          action: z.enum(["deactivate", "activate", "reset", "enroll"]),
+          password: z.string().min(12).max(128).optional(),
+          courseId: uuid.optional(),
+        })
+        .parse(await body(req));
+      if (v.action === "enroll") {
+        if (!v.courseId) throw new HttpError(400, "Course required.");
+        await courseAccess(v.courseId, u);
+        await query(
+          sql`INSERT INTO enrollments(course_id,user_id) VALUES(${v.courseId},${id}) ON CONFLICT DO NOTHING`,
+        );
+      } else if (v.action === "reset") {
+        if (!v.password)
+          throw new HttpError(400, "A new password is required.");
+        const h = await hash(v.password, 12);
+        await query(
+          sql`UPDATE users SET password_hash=${h},session_version=session_version+1 WHERE id=${id}`,
+        );
+      } else
+        await query(
+          sql`UPDATE users SET active=${v.action === "activate"},session_version=session_version+1 WHERE id=${id}`,
+        );
+      await record({
+        userId: u.id,
+        type: "STUDENT_" + v.action.toUpperCase(),
+        metadata: { studentId: id },
+      });
+      return json({ ok: true });
+    }
+    const b = await body(req);
+    let inputs;
+    if (id === "import") {
+      const v = z
+        .object({ csv: z.string().max(400000), courseId: uuid })
+        .parse(b);
+      const rows = parse(v.csv, {
+        columns: true,
+        skip_empty_lines: true,
+        trim: true,
+        bom: true,
+      }) as Record<string, string>[];
+      if (rows.length > 250)
+        throw new HttpError(400, "Import at most 250 students per batch.");
+      inputs = rows.map((r) =>
+        studentSchema.parse({ ...r, courseId: v.courseId }),
+      );
+    } else inputs = [studentSchema.parse(b)];
+    for (const v of inputs) if (v.courseId) await courseAccess(v.courseId, u);
+    const prepared = await Promise.all(
+      inputs.map(async (v) => ({
+        ...v,
+        id: randomUUID(),
+        h: await hash(v.password, 12),
+      })),
+    );
+    await db.transaction(async (tx) => {
+      for (const v of prepared) {
+        await tx.execute(
+          sql`INSERT INTO users(id,email,name,password_hash,role,student_id,section,created_by) VALUES(${v.id},${v.email.toLowerCase()},${v.name},${v.h},'STUDENT',${v.studentId},${v.section},${u.id})`,
+        );
+        if (v.courseId)
+          await tx.execute(
+            sql`INSERT INTO enrollments(course_id,user_id) VALUES(${v.courseId},${v.id})`,
+          );
+        await audit(tx, {
+          userId: u.id,
+          type: "STUDENT_CREATED",
+          metadata: { studentId: v.id },
+        });
+      }
+    });
+    return json({ count: prepared.length });
+  }
+  if (resource === "classrooms") {
+    teacher(u);
+    if (method === "GET")
+      return json(
+        await query(
+          sql`SELECT * FROM classrooms WHERE ${u.role === "ADMIN"} OR teacher_id=${u.id} ORDER BY name`,
+        ),
+      );
+    const v = classroomSchema.parse(await body(req));
+    const cid = randomUUID();
+    await query(
+      sql`INSERT INTO classrooms(id,teacher_id,name,configuration) VALUES(${cid},${u.id},${v.name},${JSON.stringify(v)}::jsonb)`,
+    );
+    await record({
+      userId: u.id,
+      type: "CLASSROOM_CREATED",
+      metadata: { id: cid },
+    });
+    return json({ id: cid });
+  }
+  if (resource === "questions") {
+    teacher(u);
+    if (method === "GET")
+      return json(
+        await query(
+          sql`SELECT * FROM questions WHERE ${u.role === "ADMIN"} OR teacher_id=${u.id} ORDER BY created_at DESC`,
+        ),
+      );
+    const v = questionSchema.parse(await body(req));
+    const qid = randomUUID();
+    await query(
+      sql`INSERT INTO questions(id,teacher_id,type,prompt,marks,options,solution,rubric,topic,difficulty) VALUES(${qid},${u.id},${v.type},${v.prompt},${v.marks},${JSON.stringify(v.options)}::jsonb,${JSON.stringify(v.solution)}::jsonb,${v.rubric},${v.topic},${v.difficulty})`,
+    );
+    await record({
+      userId: u.id,
+      type: "QUESTION_CREATED",
+      metadata: { id: qid },
+    });
+    return json({ id: qid });
+  }
+  if (resource === "exams") {
+    if (!id) {
+      if (method === "GET") {
+        if (u.role === "STUDENT")
+          return json(
+            await query(
+              sql`SELECT e.id,e.title,e.instructions,e.starts_at,e.ends_at,e.duration_minutes,e.status,c.code AS course_code,a.id AS attempt_id,a.status AS attempt_status,CASE WHEN e.results_released THEN a.score ELSE NULL END AS score FROM exams e JOIN courses c ON c.id=e.course_id JOIN enrollments n ON n.course_id=c.id LEFT JOIN attempts a ON a.exam_id=e.id AND a.user_id=${u.id} WHERE n.user_id=${u.id} AND n.eligible=true AND e.status NOT IN('DRAFT','ARCHIVED') ORDER BY e.starts_at DESC`,
+            ),
+          );
+        return json(
+          await query(
+            sql`SELECT e.id,e.title,e.status,e.starts_at,e.ends_at,e.duration_minutes,c.code AS course_code,(SELECT count(*)::int FROM enrollments WHERE course_id=e.course_id) AS enrolled,(SELECT count(*)::int FROM attempts WHERE exam_id=e.id) AS attended FROM exams e JOIN courses c ON c.id=e.course_id WHERE ${u.role === "ADMIN"} OR c.teacher_id=${u.id} ORDER BY e.created_at DESC`,
+          ),
+        );
+      }
+      teacher(u);
+      const v = examSchema.parse(await body(req));
+      await courseAccess(v.courseId, u);
+      const eid = randomUUID();
+      await query(
+        sql`INSERT INTO exams(id,course_id,title,instructions,starts_at,ends_at,duration_minutes,policy,classroom,code_secret,passing_score) VALUES(${eid},${v.courseId},${v.title},${v.instructions},${v.startsAt},${v.endsAt},${v.duration},${JSON.stringify(v.policy)}::jsonb,${JSON.stringify(v.classroom)}::jsonb,${randomBytes(32).toString("hex")},${v.passingScore})`,
+      );
+      await record({ userId: u.id, examId: eid, type: "EXAM_CREATED" });
+      return json({ id: eid });
+    }
+    uuid.parse(id);
+    if (action === "start") {
+      if (u.role !== "STUDENT")
+        throw new HttpError(403, "Only students may start an exam.");
+      const input = startSchema.parse(await body(req));
+      try {
+        return json(await startAttempt(id, u, input));
+      } catch (e) {
+        await record({
+          userId: u.id,
+          examId: id,
+          type: "ENTRY_REJECTED",
+          metadata: {
+            reason: e instanceof HttpError ? e.message : "Request rejected",
+          },
+        });
+        throw e;
+      }
+    }
+    if (action === "checkin") {
+      if (u.role === "STUDENT") {
+        await enrolledExam(id, u);
+        await query(
+          sql`INSERT INTO checkins(exam_id,user_id) VALUES(${id},${u.id}) ON CONFLICT DO NOTHING`,
+        );
+      } else {
+        await ownedExam(id, u);
+        const v = z.object({ studentId: uuid }).parse(await body(req));
+        await query(
+          sql`UPDATE checkins SET approved=true WHERE exam_id=${id} AND user_id=${v.studentId}`,
+        );
+        await record({
+          userId: u.id,
+          examId: id,
+          type: "ENTRY_APPROVED",
+          metadata: v,
+        });
+      }
+      return json({ ok: true });
+    }
+    if (u.role === "STUDENT") {
+      if (method !== "GET" || action)
+        throw new HttpError(403, "Teacher access required.");
+      const e = await enrolledExam(id, u);
+      if (["DRAFT", "ARCHIVED"].includes(e.status))
+        throw new HttpError(404, "Exam unavailable.");
+      const { policy } = await effectivePolicy(e, u.id);
+      return json({
+        id: e.id,
+        title: e.title,
+        instructions: e.instructions,
+        starts_at: e.starts_at,
+        ends_at: e.ends_at,
+        duration_minutes: e.duration_minutes,
+        status: e.status,
+        policy,
+        classroom: e.classroom,
+      });
+    }
+    teacher(u);
+    const e = await ownedExam(id, u);
+    if (action === "room-code")
+      return json({
+        code: classroomCode(e.code_secret),
+        expiresAt: new Date(
+          (Math.floor(Date.now() / 90000) + 1) * 90000,
+        ).toISOString(),
+      });
+    if (action === "export") {
+      const rows = await reportRows(id, u);
+      if (url.searchParams.get("format") === "xlsx") {
+        const workbook = new ExcelJS.Workbook();
+        const sheet = workbook.addWorksheet("Exam report");
+        rows.forEach((r) =>
+          sheet.addRow(r.map((v) => (v instanceof Date ? v.toISOString() : v))),
+        );
+        sheet.getRow(1).font = { bold: true };
+        sheet.columns.forEach((c) => (c.width = 24));
+        return new Response(new Uint8Array(await workbook.xlsx.writeBuffer()), {
+          headers: {
+            "Content-Type":
+              "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            "Content-Disposition": 'attachment; filename="exam-report.xlsx"',
+            "Cache-Control": "no-store",
+          },
+        });
+      }
+      return new Response(csv(rows), {
+        headers: {
+          "Content-Type": "text/csv; charset=utf-8",
+          "Content-Disposition": 'attachment; filename="exam-report.csv"',
+          "Cache-Control": "no-store",
+        },
+      });
+    }
+    if (action === "sheets") {
+      await syncSheets(await reportRows(id, u));
+      await record({ userId: u.id, examId: id, type: "SHEETS_SYNCED" });
+      return json({ ok: true });
+    }
+    if (action === "monitor") {
+      // Expiry processing is also on reads, independent of a student's browser.
+      await db.transaction(async (tx) => {
+        const active = await query(
+          sql`SELECT * FROM attempts WHERE exam_id=${id} AND status='ACTIVE' AND deadline<=now() FOR UPDATE`,
+          tx,
+        );
+        if (e.status !== "PAUSED")
+          for (const a of active)
+            await finish(tx, a, "AUTO_SUBMITTED_TIME", u.id);
+      });
+      const students = await query(
+        sql`SELECT u.id AS user_id,u.name,u.student_id,a.*,(SELECT count(*)::int FROM answers an WHERE an.attempt_id=a.id AND an.value NOT IN('null'::jsonb,'""'::jsonb)) AS answered,k.approved,k.created_at AS checkin_at FROM enrollments n JOIN users u ON u.id=n.user_id LEFT JOIN attempts a ON a.user_id=u.id AND a.exam_id=${id} LEFT JOIN checkins k ON k.user_id=u.id AND k.exam_id=${id} WHERE n.course_id=${e.course_id} ORDER BY u.name`,
+      );
+      const events = await query(
+        sql`SELECT ae.*,u.name FROM audit_events ae LEFT JOIN users u ON u.id=ae.user_id WHERE ae.exam_id=${id} ORDER BY sequence DESC LIMIT 100`,
+      );
+      const scores = students
+        .filter((s) => s.score !== null && s.score !== undefined)
+        .map((s) => Number(s.score))
+        .sort((a, b) => a - b);
+      const stats = {
+        graded: scores.length,
+        average: scores.length
+          ? scores.reduce((a, b) => a + b, 0) / scores.length
+          : null,
+        median: scores.length
+          ? (scores[Math.floor((scores.length - 1) / 2)] +
+              scores[Math.floor(scores.length / 2)]) /
+            2
+          : null,
+        highest: scores.at(-1) ?? null,
+        lowest: scores[0] ?? null,
+        warnings: students.reduce((a, s) => a + (s.warnings ?? 0), 0),
+      };
+      return json({
+        students,
+        events,
+        stats,
+        serverTime: new Date().toISOString(),
+      });
+    }
+    if (action === "questions") {
+      const v = z
+        .object({ questionId: uuid, remove: z.boolean().default(false) })
+        .parse(await body(req));
+      if (e.status !== "DRAFT")
+        throw new HttpError(409, "Only draft exams can change questions.");
+      const [q] = await query(
+        sql`SELECT id FROM questions WHERE id=${v.questionId} AND (${u.role === "ADMIN"} OR teacher_id=${u.id})`,
+      );
+      if (!q) throw new HttpError(403, "Question access denied.");
+      await db.transaction(async (tx) => {
+        const [locked] = await query(
+          sql`SELECT status FROM exams WHERE id=${id} FOR UPDATE`,
+          tx,
+        );
+        if (locked.status !== "DRAFT")
+          throw new HttpError(409, "Only drafts can change questions.");
+        if (v.remove)
+          await tx.execute(
+            sql`DELETE FROM exam_questions WHERE exam_id=${id} AND question_id=${v.questionId}`,
+          );
+        else
+          await tx.execute(
+            sql`INSERT INTO exam_questions(exam_id,question_id,position) VALUES(${id},${v.questionId},(SELECT COALESCE(max(position),-1)+1 FROM exam_questions WHERE exam_id=${id})) ON CONFLICT DO NOTHING`,
+          );
+      });
+      await record({
+        userId: u.id,
+        examId: id,
+        type: v.remove ? "QUESTION_REMOVED" : "QUESTION_ATTACHED",
+        metadata: v,
+      });
+      return json({ ok: true });
+    }
+    if (action === "duplicate") {
+      const eid = randomUUID();
+      await db.transaction(async (tx) => {
+        await tx.execute(
+          sql`INSERT INTO exams(id,course_id,title,instructions,starts_at,ends_at,duration_minutes,policy,classroom,code_secret,passing_score) SELECT ${eid},course_id,title||' (copy)',instructions,starts_at,ends_at,duration_minutes,policy,classroom,${randomBytes(32).toString("hex")},passing_score FROM exams WHERE id=${id}`,
+        );
+        await tx.execute(
+          sql`INSERT INTO exam_questions(exam_id,question_id,position) SELECT ${eid},question_id,position FROM exam_questions WHERE exam_id=${id}`,
+        );
+        await audit(tx, {
+          userId: u.id,
+          examId: eid,
+          type: "EXAM_DUPLICATED",
+          metadata: { source: id },
+        });
+      });
+      return json({ id: eid });
+    }
+    if (action === "control") {
+      const v = z
+        .object({
+          action: z.enum([
+            "publish",
+            "schedule",
+            "pause",
+            "resume",
+            "close",
+            "archive",
+            "release",
+            "extend",
+          ]),
+          minutes: z.number().int().min(1).max(600).optional(),
+        })
+        .parse(await body(req));
+      await db.transaction(async (tx) => {
+        const [current] = await query(
+          sql`SELECT * FROM exams WHERE id=${id} FOR UPDATE`,
+          tx,
+        );
+        if (v.action === "publish" || v.action === "schedule") {
+          if (current.status !== "DRAFT")
+            throw new HttpError(409, "Only drafts can be published.");
+          if (
+            !(
+              await query(
+                sql`SELECT question_id FROM exam_questions WHERE exam_id=${id}`,
+                tx,
+              )
+            ).length
+          )
+            throw new HttpError(400, "Add questions before publishing.");
+          if (current.policy.location && !current.classroom)
+            throw new HttpError(400, "Configure a classroom first.");
+          await tx.execute(
+            sql`UPDATE exams SET status=${v.action === "schedule" ? "SCHEDULED" : "PUBLISHED"} WHERE id=${id}`,
+          );
+        } else if (v.action === "pause") {
+          if (!["LIVE", "PUBLISHED", "SCHEDULED"].includes(current.status))
+            throw new HttpError(409, "Exam cannot be paused.");
+          await tx.execute(
+            sql`UPDATE exams SET status='PAUSED',paused_at=now() WHERE id=${id}`,
+          );
+        } else if (v.action === "resume") {
+          if (current.status !== "PAUSED")
+            throw new HttpError(409, "Exam is not paused.");
+          await tx.execute(
+            sql`UPDATE attempts SET deadline=deadline+(now()-${current.paused_at}::timestamptz) WHERE exam_id=${id} AND status='ACTIVE'`,
+          );
+          await tx.execute(
+            sql`UPDATE exams SET status='LIVE',ends_at=ends_at+(now()-paused_at),paused_at=NULL WHERE id=${id}`,
+          );
+        } else if (v.action === "extend") {
+          if (!v.minutes) throw new HttpError(400, "Minutes required.");
+          await tx.execute(
+            sql`UPDATE attempts SET deadline=deadline+${v.minutes}*interval '1 minute' WHERE exam_id=${id} AND status='ACTIVE'`,
+          );
+          await tx.execute(
+            sql`UPDATE exams SET ends_at=ends_at+${v.minutes}*interval '1 minute' WHERE id=${id}`,
+          );
+        } else if (v.action === "release")
+          await tx.execute(
+            sql`UPDATE exams SET results_released=true WHERE id=${id}`,
+          );
+        else {
+          const active = await query(
+            sql`SELECT * FROM attempts WHERE exam_id=${id} AND status='ACTIVE' FOR UPDATE`,
+            tx,
+          );
+          for (const a of active)
+            await finish(tx, a, "TEACHER_SUBMITTED", u.id);
+          await tx.execute(
+            sql`UPDATE exams SET status=${v.action === "close" ? "CLOSED" : "ARCHIVED"} WHERE id=${id}`,
+          );
+        }
+        await audit(tx, {
+          userId: u.id,
+          examId: id,
+          type: "EXAM_" + v.action.toUpperCase(),
+          metadata: v,
+        });
+      });
+      return json({ ok: true });
+    }
+    if (action === "accommodations") {
+      const v = z
+        .object({
+          studentId: uuid,
+          extraMinutes: z.number().int().min(0).max(600),
+          warningExempt: z.boolean(),
+          cameraExempt: z.boolean(),
+          microphoneExempt: z.boolean(),
+        })
+        .parse(await body(req));
+      const [en] = await query(
+        sql`SELECT user_id FROM enrollments WHERE course_id=${e.course_id} AND user_id=${v.studentId}`,
+      );
+      if (!en) throw new HttpError(400, "Student must be enrolled.");
+      await query(
+        sql`INSERT INTO accommodations(exam_id,user_id,extra_minutes,warning_exempt,camera_exempt,microphone_exempt) VALUES(${id},${v.studentId},${v.extraMinutes},${v.warningExempt},${v.cameraExempt},${v.microphoneExempt}) ON CONFLICT(exam_id,user_id) DO UPDATE SET extra_minutes=EXCLUDED.extra_minutes,warning_exempt=EXCLUDED.warning_exempt,camera_exempt=EXCLUDED.camera_exempt,microphone_exempt=EXCLUDED.microphone_exempt`,
+      );
+      await record({
+        userId: u.id,
+        examId: id,
+        type: "ACCOMMODATION_UPDATED",
+        metadata: v,
+      });
+      return json({ ok: true });
+    }
+    if (method === "PATCH") {
+      if (e.status !== "DRAFT")
+        throw new HttpError(409, "Only drafts can be edited.");
+      const v = examSchema.parse(await body(req));
+      await courseAccess(v.courseId, u);
+      await query(
+        sql`UPDATE exams SET title=${v.title},instructions=${v.instructions},course_id=${v.courseId},starts_at=${v.startsAt},ends_at=${v.endsAt},duration_minutes=${v.duration},policy=${JSON.stringify(v.policy)}::jsonb,classroom=${JSON.stringify(v.classroom)}::jsonb,passing_score=${v.passingScore} WHERE id=${id}`,
+      );
+      await record({ userId: u.id, examId: id, type: "EXAM_UPDATED" });
+      return json({ ok: true });
+    }
+    const safe = { ...e };
+    delete safe.code_secret;
+    return json({
+      ...safe,
+      questions: await query(
+        sql`SELECT q.* FROM exam_questions eq JOIN questions q ON q.id=eq.question_id WHERE eq.exam_id=${id} ORDER BY position`,
+      ),
+      files: await query(
+        sql`SELECT id,name,mime,extracted_text FROM files WHERE exam_id=${id} AND attempt_id IS NULL`,
+      ),
+    });
+  }
+  if (resource === "attempts") {
+    uuid.parse(id);
+    const device = req.headers.get("x-exam-device") ?? undefined;
+    if (method === "GET") {
+      return json(
+        await db.transaction(async (tx) => {
+          const a = await lockedAttempt(id, u, tx, device);
+          const [e] = await query(
+            sql`SELECT * FROM exams WHERE id=${a.exam_id}`,
+            tx,
+          );
+          const { policy } = await effectivePolicy(e, a.user_id, tx);
+          const questions = await query(
+            sql`SELECT q.id,q.type,q.prompt,q.marks,q.options FROM questions q WHERE q.id IN(SELECT jsonb_array_elements_text(question_order)::uuid FROM attempts WHERE id=${id})`,
+            tx,
+          );
+          const answers = await query(
+            sql`SELECT question_id,value,version,${u.role !== "STUDENT" || e.results_released} AS released,CASE WHEN ${u.role !== "STUDENT" || e.results_released} THEN mark ELSE NULL END AS mark,CASE WHEN ${u.role !== "STUDENT" || e.results_released} THEN feedback ELSE '' END AS feedback FROM answers WHERE attempt_id=${id}`,
+            tx,
+          );
+          const safe = {
+            id: a.id,
+            exam_id: a.exam_id,
+            status: a.status,
+            started_at: a.started_at,
+            deadline: a.deadline,
+            warnings: a.warnings,
+            location_status: a.location_status,
+            question_order: a.question_order,
+            score: u.role !== "STUDENT" || e.results_released ? a.score : null,
+            feedback:
+              u.role !== "STUDENT" || e.results_released ? a.feedback : "",
+            device_state: a.device_state,
+          };
+          return {
+            ...safe,
+            title: e.title,
+            examStatus: e.status,
+            policy,
+            remainingMs: Math.max(
+              0,
+              new Date(a.deadline).getTime() -
+                (e.status === "PAUSED"
+                  ? new Date(e.paused_at).getTime()
+                  : Date.now()),
+            ),
+            serverTime: new Date().toISOString(),
+            questions: questions.map((q) => ({
+              ...q,
+              options: a.option_order[q.id] ?? q.options,
+            })),
+            answers,
+            files: await query(
+              sql`SELECT id,name,mime,extracted_text FROM files WHERE exam_id=${a.exam_id} AND attempt_id IS NULL`,
+              tx,
+            ),
+            notifications: await query(
+              sql`SELECT id,message,created_at FROM notifications WHERE attempt_id=${id} ORDER BY created_at DESC LIMIT 5`,
+              tx,
+            ),
+            ...(u.role === "STUDENT"
+              ? {}
+              : {
+                  events: await query(
+                    sql`SELECT * FROM audit_events WHERE attempt_id=${id} ORDER BY sequence`,
+                    tx,
+                  ),
+                  solutions: await query(
+                    sql`SELECT id,solution,rubric FROM questions WHERE id IN(SELECT jsonb_array_elements_text(question_order)::uuid FROM attempts WHERE id=${id})`,
+                    tx,
+                  ),
+                }),
+          };
+        }),
+      );
+    }
+    const b = await body(req);
+    if (action === "control") {
+      teacher(u);
+      const v = z
+        .object({
+          action: z.enum([
+            "force-submit",
+            "terminate",
+            "reopen",
+            "extend",
+            "reset-warnings",
+            "waive-warning",
+            "review",
+            "message",
+            "reentry",
+          ]),
+          note: z.string().min(3).max(3000),
+          minutes: z.number().int().min(1).max(600).optional(),
+          eventId: uuid.optional(),
+        })
+        .parse(b);
+      await db.transaction(async (tx) => {
+        const a = await lockedAttempt(id, u, tx);
+        if (["force-submit", "terminate"].includes(v.action))
+          await finish(
+            tx,
+            a,
+            v.action === "terminate"
+              ? "TEACHER_TERMINATED"
+              : "TEACHER_SUBMITTED",
+            u.id,
+          );
+        else if (v.action === "extend") {
+          if (!v.minutes) throw new HttpError(400, "Minutes required.");
+          await tx.execute(
+            sql`UPDATE attempts SET deadline=deadline+${v.minutes}*interval '1 minute' WHERE id=${id}`,
+          );
+        } else if (v.action === "reopen") {
+          if (!v.minutes)
+            throw new HttpError(400, "Specify the reopened duration.");
+          await tx.execute(
+            sql`UPDATE attempts SET status='ACTIVE',submitted_at=NULL,score=NULL,deadline=now()+${v.minutes}*interval '1 minute' WHERE id=${id}`,
+          );
+        } else if (v.action === "reentry") {
+          await tx.execute(
+            sql`UPDATE attempts SET device_session_id=${randomUUID()} WHERE id=${id}`,
+          );
+        } else if (v.action === "reset-warnings")
+          await tx.execute(sql`UPDATE attempts SET warnings=0 WHERE id=${id}`);
+        else if (v.action === "waive-warning") {
+          if (!v.eventId) throw new HttpError(400, "Select a warning event.");
+          const [warning] = await query(
+            sql`SELECT id FROM audit_events WHERE id=${v.eventId} AND attempt_id=${id} AND event_type='WARNING_ISSUED'`,
+            tx,
+          );
+          if (!warning) throw new HttpError(400, "Warning not found.");
+          const [existing] = await query(
+            sql`SELECT id FROM audit_events WHERE attempt_id=${id} AND event_type='ADMIN_waive-warning' AND metadata->>'eventId'=${v.eventId}`,
+            tx,
+          );
+          if (existing)
+            throw new HttpError(409, "This warning was already waived.");
+          await tx.execute(
+            sql`UPDATE attempts SET warnings=GREATEST(0,warnings-1) WHERE id=${id}`,
+          );
+        } else if (v.action === "message")
+          await tx.execute(
+            sql`INSERT INTO notifications(id,attempt_id,message) VALUES(${randomUUID()},${id},${v.note})`,
+          );
+        await audit(tx, {
+          userId: u.id,
+          examId: a.exam_id,
+          attemptId: id,
+          type: "ADMIN_" + v.action,
+          metadata: v,
+        });
+      });
+      return json({ ok: true });
+    }
+    if (action === "recover") {
+      if (u.role !== "STUDENT")
+        throw new HttpError(403, "Student access required.");
+      const v = z.object({ deviceSessionId: uuid }).parse(b);
+      await db.transaction(async (tx) => {
+        const [a] = await query(
+          sql`SELECT * FROM attempts WHERE id=${id} AND user_id=${u.id} FOR UPDATE`,
+          tx,
+        );
+        if (!a) throw new HttpError(403, "Attempt access denied.");
+        const [last] = await query(
+          sql`SELECT event_type FROM audit_events WHERE attempt_id=${id} AND event_type IN('ADMIN_reentry','SESSION_RECOVERED') ORDER BY sequence DESC LIMIT 1`,
+          tx,
+        );
+        if (last?.event_type !== "ADMIN_reentry")
+          throw new HttpError(403, "Ask your teacher to allow re-entry.");
+        await tx.execute(
+          sql`UPDATE attempts SET device_session_id=${v.deviceSessionId} WHERE id=${id}`,
+        );
+        await audit(tx, {
+          userId: u.id,
+          examId: a.exam_id,
+          attemptId: id,
+          type: "SESSION_RECOVERED",
+        });
+      });
+      return json({ ok: true });
+    }
+    if (action === "grade") {
+      teacher(u);
+      const v = z
+        .object({
+          marks: z
+            .array(
+              z.object({
+                questionId: uuid,
+                mark: z.number().min(0).max(1000),
+                feedback: z.string().max(4000),
+              }),
+            )
+            .max(200),
+          feedback: z.string().max(4000),
+        })
+        .parse(b);
+      await db.transaction(async (tx) => {
+        const a = await lockedAttempt(id, u, tx);
+        if (a.status === "ACTIVE")
+          throw new HttpError(409, "Submit the attempt before grading.");
+        for (const m of v.marks) {
+          if (!a.question_order.includes(m.questionId))
+            throw new HttpError(400, "Question not in attempt.");
+          const [q] = await query(
+            sql`SELECT marks FROM questions WHERE id=${m.questionId}`,
+            tx,
+          );
+          if (m.mark > Number(q.marks))
+            throw new HttpError(400, "Mark exceeds question maximum.");
+          await tx.execute(
+            sql`UPDATE answers SET mark=${m.mark},feedback=${m.feedback} WHERE attempt_id=${id} AND question_id=${m.questionId}`,
+          );
+        }
+        await tx.execute(
+          sql`UPDATE attempts SET feedback=${v.feedback},score=(SELECT CASE WHEN count(*) FILTER(WHERE mark IS NULL)>0 THEN NULL ELSE sum(mark) END FROM answers WHERE attempt_id=${id}) WHERE id=${id}`,
+        );
+        await audit(tx, {
+          userId: u.id,
+          examId: a.exam_id,
+          attemptId: id,
+          type: "GRADE_UPDATED",
+          metadata: v,
+        });
+      });
+      return json({ ok: true });
+    }
+    if (u.role !== "STUDENT")
+      throw new HttpError(403, "Student access required.");
+    const v = z
+      .object({
+        answers: answersSchema.default([]),
+        events: z
+          .array(
+            z.object({
+              id: uuid,
+              type: z.enum([
+                "TAB_HIDDEN",
+                "WINDOW_BLUR",
+                "FULLSCREEN_EXIT",
+                "CAMERA_DISABLED",
+                "MICROPHONE_DISABLED",
+                "SCREEN_SHARE_STOPPED",
+                "LOCATION_CHECK",
+                "LOCATION_UNAVAILABLE",
+                "NETWORK_DISCONNECTED",
+                "NETWORK_RECONNECTED",
+                "PASTE_ATTEMPT",
+              ]),
+              metadata: z
+                .record(
+                  z.string(),
+                  z.union([
+                    z.string().max(300),
+                    z.number(),
+                    z.boolean(),
+                    z.null(),
+                  ]),
+                )
+                .default({}),
+            }),
+          )
+          .max(30)
+          .default([]),
+        deviceState: z
+          .object({
+            camera: z.boolean(),
+            microphone: z.boolean(),
+            fullscreen: z.boolean(),
+            online: z.boolean(),
+          })
+          .optional(),
+      })
+      .parse(b);
+    if (!["sync", "submit"].includes(action))
+      throw new HttpError(404, "Unknown operation.");
+    return json(
+      await db.transaction(async (tx) => {
+        const a = await lockedAttempt(id, u, tx, device);
+        const [e] = await query(
+          sql`SELECT status,paused_at FROM exams WHERE id=${a.exam_id}`,
+          tx,
+        );
+        const answersAccepted = a.status === "ACTIVE" && e.status !== "PAUSED";
+        if (answersAccepted) {
+          await saveAnswers(tx, a, v.answers);
+          for (const ev of v.events)
+            await event(tx, a, u, ev.type, ev.metadata, ev.id);
+          if (action === "submit" && a.status === "ACTIVE") {
+            await finish(tx, a, "SUBMITTED", u.id);
+            a.status = "SUBMITTED";
+          }
+        }
+        if (v.deviceState)
+          await tx.execute(
+            sql`UPDATE attempts SET device_state=${JSON.stringify(v.deviceState)}::jsonb,last_heartbeat_at=now() WHERE id=${id}`,
+          );
+        return {
+          status: a.status,
+          warnings: a.warnings,
+          deadline: a.deadline,
+          examStatus: e.status,
+          serverTime: new Date().toISOString(),
+          saved: answersAccepted,
+          answersAccepted,
+          remainingMs: Math.max(
+            0,
+            new Date(a.deadline).getTime() -
+              (e.status === "PAUSED"
+                ? new Date(e.paused_at).getTime()
+                : Date.now()),
+          ),
+        };
+      }),
+    );
+  }
+  if (resource === "audit") {
+    teacher(u);
+    const rows = await query(
+      sql`SELECT a.*,u.name,u.student_id,u.role FROM audit_events a LEFT JOIN users u ON u.id=a.user_id LEFT JOIN exams e ON e.id=a.exam_id LEFT JOIN courses c ON c.id=e.course_id WHERE ${u.role === "ADMIN"} OR c.teacher_id=${u.id} OR a.user_id=${u.id} OR (a.exam_id IS NULL AND u.id IN(SELECT n.user_id FROM enrollments n JOIN courses co ON co.id=n.course_id WHERE co.teacher_id=${u.id})) ORDER BY sequence DESC LIMIT 1000`,
+    );
+    if (url.searchParams.get("format") === "csv")
+      return new Response(
+        csv([
+          [
+            "Timestamp",
+            "Name",
+            "Student ID",
+            "Event",
+            "Severity",
+            "Metadata",
+            "Hash",
+          ],
+          ...rows.map((r) => [
+            r.created_at,
+            r.name,
+            r.student_id,
+            r.event_type,
+            r.severity,
+            JSON.stringify(r.metadata),
+            r.event_hash,
+          ]),
+        ]),
+        {
+          headers: {
+            "Content-Type": "text/csv",
+            "Content-Disposition": 'attachment; filename="audit.csv"',
+            "Cache-Control": "no-store",
+          },
+        },
+      );
+    return json(rows);
+  }
+  if (resource === "ai") {
+    teacher(u);
+    const v = z
+      .object({ prompt: z.string().min(10).max(20000) })
+      .parse(await body(req));
+    if (!(await rateLimit("ai:" + u.id, 5, 60)))
+      throw new HttpError(429, "Please wait before requesting another draft.");
+    return json({ text: await ai(v.prompt) });
+  }
+  if (resource === "files") {
+    if (method === "POST") {
+      if (!(await rateLimit("upload:" + u.id, 10, 600)))
+        throw new HttpError(429, "Upload limit reached. Please wait.");
+      if (!process.env.BLOB_READ_WRITE_TOKEN)
+        throw new HttpError(
+          503,
+          "Private storage is not configured. Set BLOB_READ_WRITE_TOKEN.",
+        );
+      if (Number(req.headers.get("content-length") ?? 0) > 4500000)
+        throw new HttpError(413, "Upload limit is 4 MB.");
+      const form = await req.formData();
+      const file = form.get("file");
+      const examId = uuid.parse(form.get("examId"));
+      const attemptId = form.get("attemptId")
+        ? uuid.parse(form.get("attemptId"))
+        : null;
+      if (!(file instanceof File) || file.size > 4000000)
+        throw new HttpError(400, "A file up to 4 MB is required.");
+      if (u.role === "STUDENT") {
+        if (!attemptId)
+          throw new HttpError(400, "An active attempt is required.");
+        await db.transaction(async (tx) => {
+          const a = await lockedAttempt(
+            attemptId,
+            u,
+            tx,
+            req.headers.get("x-exam-device") ?? undefined,
+          );
+          if (a.exam_id !== examId || a.status !== "ACTIVE")
+            throw new HttpError(403, "Upload access denied.");
+        });
+      } else {
+        const exam = await ownedExam(examId, u);
+        if (exam.status !== "DRAFT")
+          throw new HttpError(409, "Materials can only be added to a draft.");
+      }
+      const ext = file.name.split(".").pop()?.toLowerCase();
+      const types: Record<string, string> = {
+        pdf: "application/pdf",
+        png: "image/png",
+        jpg: "image/jpeg",
+        jpeg: "image/jpeg",
+        txt: "text/plain",
+        docx: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+      };
+      if (!ext || types[ext] !== file.type)
+        throw new HttpError(
+          400,
+          "Allowed files: PDF, DOCX, PNG, JPEG and TXT.",
+        );
+      const bytes = Buffer.from(await file.arrayBuffer());
+      if (
+        (ext === "pdf" && !bytes.subarray(0, 5).equals(Buffer.from("%PDF-"))) ||
+        (ext === "png" &&
+          bytes.subarray(0, 8).toString("hex") !== "89504e470d0a1a0a") ||
+        (["jpg", "jpeg"].includes(ext) &&
+          bytes.subarray(0, 3).toString("hex") !== "ffd8ff") ||
+        (ext === "docx" && bytes.subarray(0, 4).toString("hex") !== "504b0304")
+      )
+        throw new HttpError(
+          400,
+          "File content does not match the claimed type.",
+        );
+      let extractedText = "";
+      if (ext === "txt")
+        extractedText = bytes.toString("utf8").slice(0, 200000);
+      if (ext === "docx") {
+        const files = unzipSync(bytes, {
+          filter: (entry) => {
+            if (entry.name !== "word/document.xml") return false;
+            if (entry.originalSize > 2000000)
+              throw new HttpError(400, "Document text is too large.");
+            return true;
+          },
+        });
+        if (!files["word/document.xml"])
+          throw new HttpError(400, "Invalid Word document.");
+        extractedText = strFromU8(files["word/document.xml"])
+          .replace(/<\/w:p>/g, "\n")
+          .replace(/<[^>]*>/g, "")
+          .replace(/&lt;/g, "<")
+          .replace(/&gt;/g, ">")
+          .replace(/&quot;/g, '"')
+          .replace(/&amp;/g, "&")
+          .slice(0, 200000);
+      }
+      const fid = randomUUID();
+      const blob = await put(`exams/${examId}/${fid}.${ext}`, bytes, {
+        access: "private",
+        contentType: file.type,
+        addRandomSuffix: true,
+      });
+      await query(
+        sql`INSERT INTO files(id,exam_id,attempt_id,owner_id,name,mime,url,size,extracted_text) VALUES(${fid},${examId},${attemptId},${u.id},${file.name.slice(0, 180)},${file.type},${blob.url},${file.size},${extractedText})`,
+      );
+      await record({
+        userId: u.id,
+        examId,
+        attemptId: attemptId ?? undefined,
+        type: "FILE_UPLOADED",
+        metadata: { fileId: fid },
+      });
+      return json({ id: fid, name: file.name });
+    }
+    uuid.parse(id);
+    const [f] = await query(sql`SELECT * FROM files WHERE id=${id}`);
+    if (!f) throw new HttpError(404, "File not found.");
+    const [brandingSetting] = await query(
+      sql`SELECT value FROM settings WHERE id='institution'`,
+    );
+    const isLogo =
+      brandingSetting?.value.logo === "/api/platform/files/" + id &&
+      ["image/png", "image/jpeg"].includes(f.mime);
+    if (u.role === "STUDENT" && !isLogo) {
+      const [a] = await query(
+        sql`SELECT a.id FROM attempts a WHERE a.exam_id=${f.exam_id} AND a.user_id=${u.id}`,
+      );
+      if (!a || (f.attempt_id && f.owner_id !== u.id))
+        throw new HttpError(403, "File access denied.");
+    } else if (!isLogo) await ownedExam(f.exam_id, u);
+    const blob = await get(f.url, { access: "private" });
+    if (!blob || blob.statusCode !== 200)
+      throw new HttpError(404, "File unavailable.");
+    return new Response(blob.stream, {
+      headers: {
+        "Content-Type": f.mime,
+        "Content-Disposition": `inline; filename="${f.name.replace(/[^a-zA-Z0-9._-]/g, "_")}"`,
+        "Cache-Control": "private, no-store",
+        "X-Content-Type-Options": "nosniff",
+        "Content-Security-Policy": "sandbox; default-src 'none'",
+      },
+    });
+  }
+  throw new HttpError(404, "Resource not found.");
+}
+async function handler(
+  req: Request,
+  { params }: { params: Promise<{ path: string[] }> },
+) {
+  try {
+    return await dispatch(req, (await params).path);
+  } catch (e) {
+    if (e instanceof HttpError) return jsonError(e.message, e.status);
+    if (e instanceof z.ZodError)
+      return jsonError(
+        e.issues.map((i) => i.path.join(".") + ": " + i.message).join("; "),
+        400,
+      );
+    const code =
+      (e as { code?: string; cause?: { code?: string } })?.cause?.code ??
+      (e as { code?: string })?.code;
+    if (code === "23505")
+      return jsonError(
+        "This record already exists or another attempt is active.",
+        409,
+      );
+    console.error(
+      "Platform request failed:",
+      e instanceof Error ? e.name : "Error",
+    );
+    return jsonError(
+      "The request could not be completed. Please retry or contact your administrator.",
+      500,
+    );
+  }
+}
+function jsonError(error: string, status: number) {
+  return NextResponse.json(
+    { error },
+    { status, headers: { "Cache-Control": "no-store" } },
+  );
+}
+export { handler as GET, handler as POST, handler as PATCH };
