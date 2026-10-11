@@ -164,6 +164,7 @@ export const authOptions: NextAuthOptions = {
           name: u.name,
           email: u.email,
           version: u.session_version,
+          role: u.role,
         };
       },
     }),
@@ -186,6 +187,7 @@ export const authOptions: NextAuthOptions = {
         name: local.name,
         email: local.email,
         version: local.session_version,
+        role: local.role,
       });
       await query(sql`UPDATE users SET last_login=now() WHERE id=${local.id}`);
       await record({
@@ -199,6 +201,7 @@ export const authOptions: NextAuthOptions = {
       if (user) {
         token.uid = user.id;
         token.version = (user as unknown as { version: number }).version;
+        token.role = (user as unknown as { role: string }).role;
       }
       return token;
     },
@@ -208,6 +211,9 @@ export const authOptions: NextAuthOptions = {
           String(token.uid);
         (session.user as unknown as { version: number }).version = Number(
           token.version,
+        );
+        (session.user as unknown as { role: string }).role = String(
+          token.role ?? "",
         );
       }
       return session;

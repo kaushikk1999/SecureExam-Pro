@@ -1,13 +1,15 @@
 "use client";
 import { useState, useEffect } from "react";
-import { signIn, getProviders } from "next-auth/react";
+import { signIn, signOut, getProviders } from "next-auth/react";
 import { ShieldCheck, ArrowRight, LockKeyhole } from "lucide-react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
+import { matchesLoginAudience } from "@/lib/auth-role";
 export default function Login() {
   const router = useRouter();
   const [error, setError] = useState(""),
     [busy, setBusy] = useState(false);
+  const [audience, setAudience] = useState<"student" | "teacher">("student");
 
   const [sso, setSso] = useState(false);
   const [google, setGoogle] = useState(false);
@@ -18,11 +20,33 @@ export default function Login() {
         setGoogle(Boolean(p?.google));
       })
       .catch(() => {});
-    if (new URLSearchParams(window.location.search).has("error"))
+    const params = new URLSearchParams(window.location.search);
+    const requestedRole = params.get("role");
+    if (requestedRole === "student" || requestedRole === "teacher") {
+      setAudience(requestedRole);
+      void fetch("/api/auth/session", { cache: "no-store" })
+        .then((response) => response.json())
+        .then(async (session) => {
+          const role = session?.user?.role;
+          if (!role) return;
+          const allowed = matchesLoginAudience(role, requestedRole);
+          if (allowed) router.replace("/workspace");
+          else {
+            await signOut({ redirect: false });
+            setError(
+              requestedRole === "teacher"
+                ? "This account is not set up for teacher access. Choose Student sign in or contact your administrator."
+                : "This account is set up for teacher access. Choose Teacher sign in instead.",
+            );
+          }
+        })
+        .catch(() => {});
+    }
+    if (params.has("error"))
       setError(
-        "Google or university sign-in was not completed. Use an existing registered account, or sign in with your password and authenticator code.",
+        "Sign-in could not be completed. Check your account access or contact your administrator.",
       );
-  }, []);
+  }, [router]);
   const [brand, setBrand] = useState({
     brand: "SecureExam Pro",
     institution: "Bangkok University",
@@ -33,6 +57,26 @@ export default function Login() {
       .then(setBrand)
       .catch(() => {});
   }, []);
+  async function completeSignIn(role: "student" | "teacher") {
+    const response = await fetch("/api/auth/session", { cache: "no-store" });
+    const session = await response.json();
+    const actualRole = session?.user?.role;
+    if (!actualRole) {
+      setError("Sign-in completed, but we could not verify your account role.");
+      return;
+    }
+    const allowed = matchesLoginAudience(actualRole, role);
+    if (!allowed) {
+      await signOut({ redirect: false });
+      setError(
+        role === "teacher"
+          ? "This account is not set up for teacher access. Choose Student sign in or contact your administrator."
+          : "This account is set up for teacher access. Choose Teacher sign in instead.",
+      );
+      return;
+    }
+    router.replace("/workspace");
+  }
   return (
     <main className="login-page">
       <section className="login-story">
@@ -60,28 +104,66 @@ export default function Login() {
           <span className="brand-icon">
             <LockKeyhole />
           </span>
-          <h2>Welcome back</h2>
+          <h2>
+            {audience === "student" ? "Student sign in" : "Teacher sign in"}
+          </h2>
           <p className="muted">
-            Sign in with your university examination account.
+            {audience === "student"
+              ? "Access your exams, practice, and learning progress."
+              : "Access your courses, exams, reports, and instructor tools."}
           </p>
+          <div
+            className="login-role-picker"
+            role="group"
+            aria-label="Choose sign-in type"
+          >
+            <button
+              type="button"
+              className={audience === "student" ? "selected" : ""}
+              aria-pressed={audience === "student"}
+              onClick={() => {
+                setAudience("student");
+                setError("");
+              }}
+            >
+              <strong>Student</strong>
+              <span>Take exams and view results</span>
+            </button>
+            <button
+              type="button"
+              className={audience === "teacher" ? "selected" : ""}
+              aria-pressed={audience === "teacher"}
+              onClick={() => {
+                setAudience("teacher");
+                setError("");
+              }}
+            >
+              <strong>Teacher</strong>
+              <span>Manage classes and exams</span>
+            </button>
+          </div>
           {google && (
             <button
               className="primary large"
               onClick={() =>
-                void signIn("google", { callbackUrl: "/workspace" })
+                void signIn("google", {
+                  callbackUrl: `/login?role=${audience}`,
+                })
               }
             >
-              Continue with Google
+              Continue as {audience} with Google
             </button>
           )}
           {sso && (
             <button
               className="primary large"
               onClick={() =>
-                void signIn("university", { callbackUrl: "/workspace" })
+                void signIn("university", {
+                  callbackUrl: `/login?role=${audience}`,
+                })
               }
             >
-              Continue with university SSO
+              Continue as {audience} with university SSO
             </button>
           )}
           <form
@@ -101,7 +183,7 @@ export default function Login() {
                   setError(
                     "Sign-in failed. Check your credentials and authenticator code, or contact your instructor.",
                   );
-                else router.push("/workspace");
+                else await completeSignIn(audience);
               } catch {
                 setError("Unable to connect. Please retry.");
               } finally {
@@ -143,13 +225,14 @@ export default function Login() {
               </p>
             )}
             <button className="primary large" disabled={busy}>
-              {busy ? "Signing in…" : "Sign in securely"}{" "}
+              {busy ? "Signing in…" : `Sign in as ${audience}`}{" "}
               <ArrowRight size={17} />
             </button>
           </form>
           <p className="small muted">
-            Accounts are provided by your instructor. Teacher registration is
-            not public.
+            {audience === "student"
+              ? "Use the university account assigned to you."
+              : "Teacher access is provisioned by the university administrator."}
           </p>
           <Link href="/">← Back to SecureExam</Link>
         </div>

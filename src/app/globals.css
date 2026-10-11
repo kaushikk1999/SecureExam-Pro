@@ -342,6 +342,37 @@ input[type="radio"] {
   font-size: 30px;
   margin-top: 28px;
 }
+.login-role-picker {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+  margin: 22px 0 16px;
+}
+.login-role-picker button {
+  display: grid;
+  gap: 5px;
+  padding: 14px;
+  text-align: left;
+  color: #243b53;
+  background: #f8fafc;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  cursor: pointer;
+}
+.login-role-picker button.selected {
+  color: #123c5a;
+  background: #eef7fc;
+  border-color: #2d759c;
+  box-shadow: 0 0 0 2px #2d759c18;
+}
+.login-role-picker button strong {
+  font-size: 14px;
+}
+.login-role-picker button span {
+  color: var(--muted);
+  font-size: 11px;
+  line-height: 1.4;
+}
 .login-form form {
   margin: 30px 0;
 }
@@ -1881,6 +1912,19 @@ fieldset {
 }
 
 /* Keep expanded role navigation usable on short screens. */
-.sidebar nav { min-height: 0; overflow-y: auto; flex: 1; }
-.sidebar > .brand, .sidebar > .institution, .sidebar > .nav-label, .sidebar-bottom { flex-shrink: 0; }
-@media (max-height: 850px) { .sidebar .security-note { display: none; } }
+.sidebar nav {
+  min-height: 0;
+  overflow-y: auto;
+  flex: 1;
+}
+.sidebar > .brand,
+.sidebar > .institution,
+.sidebar > .nav-label,
+.sidebar-bottom {
+  flex-shrink: 0;
+}
+@media (max-height: 850px) {
+  .sidebar .security-note {
+    display: none;
+  }
+}
