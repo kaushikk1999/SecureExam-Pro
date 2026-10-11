@@ -2520,23 +2520,95 @@ function SettingsPage({ isAdmin }: { isAdmin: boolean }) {
 }
 function StudentHome({ user }: { user: Actor }) {
   const { data: exams, error } = useData("exams", 10000);
+  const [now, setNow] = useState(0);
+  useEffect(() => {
+    const timer = setInterval(() => setNow(Date.now()), 1000);
+    return () => clearInterval(timer);
+  }, []);
+  const availableNow = (exams ?? []).filter(
+    (exam: any) =>
+      ["LIVE", "PUBLISHED", "SCHEDULED"].includes(exam.status) &&
+      new Date(exam.starts_at).getTime() <= now &&
+      new Date(exam.ends_at).getTime() > now &&
+      (!exam.attempt_status || exam.attempt_status === "ACTIVE"),
+  );
+  const upcoming = (exams ?? []).filter(
+    (exam: any) =>
+      ["LIVE", "PUBLISHED", "SCHEDULED"].includes(exam.status) &&
+      new Date(exam.starts_at).getTime() > now &&
+      !exam.attempt_status,
+  );
   return (
     <>
       <Heading
         eyebrow="YOUR STUDENT WORKSPACE"
         title={"Ready when you are, " + user.name.split(" ")[0] + "."}
-        description="Find your examination, check your equipment, and take a moment to prepare."
+        description="Published exams for your courses appear here. Open an exam to complete its required checks before starting."
       />
       <div className="notice">
         <ShieldCheck size={20} /> Keep your university account private. Read the
         monitoring notice before each examination.
       </div>
       <ErrorBox message={error} />
+      {availableNow.length > 0 && (
+        <section
+          className="student-exam-alert"
+          aria-labelledby="student-exam-alert-title"
+          aria-live="polite"
+        >
+          <div className="student-exam-alert-heading">
+            <span className="student-exam-alert-icon">
+              <Radio size={21} />
+            </span>
+            <div>
+              <span className="eyebrow">EXAM OPEN NOW</span>
+              <h2 id="student-exam-alert-title">
+                {availableNow.length === 1
+                  ? "Your exam is ready"
+                  : `${availableNow.length} exams are ready`}
+              </h2>
+              <p>
+                Choose your exam to run the required device, location, and
+                classroom checks. The exam starts only after every required
+                check passes.
+              </p>
+            </div>
+          </div>
+          <div className="student-exam-alert-list">
+            {availableNow.map((exam: any) => (
+              <div key={exam.id}>
+                <span>
+                  <strong>{exam.course_code}</strong>
+                  {exam.section ? ` · ${exam.section}` : ""} · {exam.title}
+                </span>
+                <Link className="button primary" href={`/exam/${exam.id}`}>
+                  {exam.attempt_status === "ACTIVE"
+                    ? "Resume exam"
+                    : "Start security checks"}
+                  <ArrowUpRight size={16} />
+                </Link>
+              </div>
+            ))}
+          </div>
+        </section>
+      )}
       <div className="exam-grid">
         {exams?.map((e: any) => (
-          <article className="exam-card" key={e.id}>
+          <article
+            className={
+              availableNow.some((exam: any) => exam.id === e.id)
+                ? "exam-card exam-card-ready"
+                : upcoming.some((exam: any) => exam.id === e.id)
+                  ? "exam-card exam-card-upcoming"
+                  : "exam-card"
+            }
+            key={e.id}
+          >
             <div>
               <span className="course-tag">{e.course_code}</span>
+              {e.section && (
+                <span className="course-tag">Section {e.section}</span>
+              )}
               <Status value={e.attempt_status ?? e.status} />
             </div>
             <h2>{e.title}</h2>
@@ -2549,14 +2621,27 @@ function StudentHome({ user }: { user: Actor }) {
               </p>
             )}
             <Markdown text={e.instructions} />
-            <Link className="button primary" href={"/exam/" + e.id}>
-              {e.attempt_status === "ACTIVE"
-                ? "Resume examination"
-                : e.attempt_status
-                  ? "View submission"
-                  : "Security check"}{" "}
-              <ArrowUpRight size={16} />
-            </Link>
+            {e.attempt_status === "ACTIVE" ? (
+              <Link className="button primary" href={"/exam/" + e.id}>
+                Resume examination <ArrowUpRight size={16} />
+              </Link>
+            ) : e.attempt_status ? (
+              <Link className="button" href={"/exam/" + e.id}>
+                View submission <ArrowUpRight size={16} />
+              </Link>
+            ) : ["LIVE", "PUBLISHED", "SCHEDULED"].includes(e.status) &&
+              new Date(e.starts_at).getTime() > now ? (
+              <Link className="button" href={"/exam/" + e.id}>
+                Prepare checks · opens {time(e.starts_at)}
+                <ArrowUpRight size={16} />
+              </Link>
+            ) : availableNow.some((exam: any) => exam.id === e.id) ? (
+              <Link className="button primary" href={"/exam/" + e.id}>
+                Start security checks <ArrowUpRight size={16} />
+              </Link>
+            ) : (
+              <button disabled>Exam unavailable</button>
+            )}
           </article>
         ))}
       </div>

@@ -21,7 +21,7 @@ import {
   Send,
 } from "lucide-react";
 import type { Actor } from "@/lib/auth";
-import { api, Markdown, ErrorBox, Loading } from "./ui";
+import { api, Markdown, ErrorBox, Loading, time } from "./ui";
 import { Upload } from "./workspace";
 const Editor = dynamic(() => import("@monaco-editor/react"), { ssr: false });
 loader.config({ paths: { vs: "/monaco/vs" } });
@@ -59,6 +59,7 @@ export default function ExamRoom({
     [online, setOnline] = useState(true),
     [warning, setWarning] = useState(""),
     [seconds, setSeconds] = useState(0),
+    [clockNow, setClockNow] = useState(0),
     [fullscreen, setFullscreen] = useState(true);
   const device = useRef(""),
     stream = useRef<MediaStream | null>(null),
@@ -74,6 +75,11 @@ export default function ExamRoom({
     anchor = useRef({ remaining: 0, at: 0 }),
     debounce = useRef<ReturnType<typeof setTimeout> | null>(null);
   const key = "exam-draft:" + user.id + ":" + examId;
+  useEffect(() => {
+    if (!exam || attempt) return;
+    const timer = setInterval(() => setClockNow(Date.now()), 1000);
+    return () => clearInterval(timer);
+  }, [exam, attempt]);
   const headers = () => ({ "x-exam-device": device.current });
   const persist = useCallback(
     () => set(key, { answers: answers.current, events: events.current }),
@@ -576,8 +582,14 @@ export default function ExamRoom({
     );
   if (!attempt) {
     const p = exam.policy;
+    const examOpen =
+      ["LIVE", "PUBLISHED", "SCHEDULED"].includes(exam.status) &&
+      new Date(exam.starts_at).getTime() <= clockNow &&
+      new Date(exam.ends_at).getTime() > clockNow;
     const allowed =
+      examOpen &&
       accepted &&
+      online &&
       permissionReady &&
       (!p.camera || checks.camera) &&
       (!p.microphone || checks.microphone) &&
@@ -719,6 +731,16 @@ export default function ExamRoom({
             />{" "}
             I have read the monitoring notice and examination instructions.
           </label>
+          {!examOpen && (
+            <div className="notice" role="status">
+              <Clock3 size={19} />
+              {clockNow < new Date(exam.starts_at).getTime()
+                ? `This exam opens at ${time(exam.starts_at)}. You can complete the checks now; starting unlocks when the exam opens.`
+                : exam.status === "PAUSED"
+                  ? "This exam is paused by your instructor. You can start after it is reopened."
+                  : "This exam is closed. Review your submission from your workspace."}
+            </div>
+          )}
           <ErrorBox message={error} />
           <button
             className="primary large"

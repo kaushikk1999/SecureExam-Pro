@@ -411,7 +411,7 @@ async function dispatch(req: Request, parts: string[]) {
         if (u.role === "STUDENT")
           return json(
             await query(
-              sql`SELECT e.id,e.title,e.instructions,e.starts_at,e.ends_at,e.duration_minutes,e.status,c.code AS course_code,a.id AS attempt_id,a.status AS attempt_status,CASE WHEN e.results_released THEN a.score ELSE NULL END AS score FROM exams e JOIN courses c ON c.id=e.course_id JOIN enrollments n ON n.course_id=c.id LEFT JOIN attempts a ON a.exam_id=e.id AND a.user_id=${u.id} WHERE n.user_id=${u.id} AND n.eligible=true AND e.status NOT IN('DRAFT','ARCHIVED') ORDER BY e.starts_at DESC`,
+              sql`SELECT e.id,e.title,e.instructions,e.starts_at,e.ends_at,e.duration_minutes,e.status,c.code AS course_code,c.section,a.id AS attempt_id,a.status AS attempt_status,CASE WHEN e.results_released THEN a.score ELSE NULL END AS score FROM exams e JOIN courses c ON c.id=e.course_id JOIN enrollments n ON n.course_id=c.id LEFT JOIN attempts a ON a.exam_id=e.id AND a.user_id=${u.id} WHERE n.user_id=${u.id} AND n.eligible=true AND e.status NOT IN('DRAFT','ARCHIVED') ORDER BY e.starts_at DESC`,
             ),
           );
         return json(
