@@ -23,6 +23,7 @@
     "@electric-sql/pglite": "0.5.8",
     "@monaco-editor/react": "4.7.0",
     "@vercel/blob": "2.8.1",
+    "@vercel/oidc": "^4.0.0",
     "bcryptjs": "3.0.3",
     "csv-parse": "7.0.3",
     "drizzle-orm": "0.45.4",

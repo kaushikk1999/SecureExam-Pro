@@ -162,7 +162,13 @@ async function dispatch(req: Request, parts: string[]) {
         integrations: {
           ai: process.env.OLLAMA_ENABLED === "true",
           storage: !!process.env.BLOB_READ_WRITE_TOKEN,
-          sheets: !!process.env.GOOGLE_SHEET_ID,
+          sheets: Boolean(
+            process.env.GOOGLE_SHEET_ID &&
+              process.env.GCP_PROJECT_NUMBER &&
+              process.env.GCP_WORKLOAD_IDENTITY_POOL_ID &&
+              process.env.GCP_WORKLOAD_IDENTITY_POOL_PROVIDER_ID &&
+              process.env.GCP_SERVICE_ACCOUNT_EMAIL,
+          ),
         },
       });
     }

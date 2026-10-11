@@ -1,22 +1,34 @@
-import { JWT } from "google-auth-library";
+import { getVercelOidcToken } from "@vercel/oidc";
+import { ExternalAccountClient } from "google-auth-library";
 import { HttpError } from "./auth";
+
 export async function syncSheets(rows: unknown[][]) {
-  if (
-    !process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL ||
-    !process.env.GOOGLE_PRIVATE_KEY ||
-    !process.env.GOOGLE_SHEET_ID
-  )
+  const projectNumber = process.env.GCP_PROJECT_NUMBER;
+  const poolId = process.env.GCP_WORKLOAD_IDENTITY_POOL_ID;
+  const providerId = process.env.GCP_WORKLOAD_IDENTITY_POOL_PROVIDER_ID;
+  const serviceAccountEmail = process.env.GCP_SERVICE_ACCOUNT_EMAIL;
+  const spreadsheetId = process.env.GOOGLE_SHEET_ID;
+
+  if (!projectNumber || !poolId || !providerId || !serviceAccountEmail || !spreadsheetId)
     throw new HttpError(
       503,
-      "Configure GOOGLE_SERVICE_ACCOUNT_EMAIL, GOOGLE_PRIVATE_KEY and GOOGLE_SHEET_ID.",
+      "Configure the Google Cloud federation settings and GOOGLE_SHEET_ID.",
     );
-  const auth = new JWT({
-    email: process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL,
-    key: process.env.GOOGLE_PRIVATE_KEY.replace(/\\n/g, "\n"),
+
+  const auth = ExternalAccountClient.fromJSON({
+    type: "external_account",
+    audience: `//iam.googleapis.com/projects/${projectNumber}/locations/global/workloadIdentityPools/${poolId}/providers/${providerId}`,
+    subject_token_type: "urn:ietf:params:oauth:token-type:jwt",
+    token_url: "https://sts.googleapis.com/v1/token",
+    service_account_impersonation_url: `https://iamcredentials.googleapis.com/v1/projects/-/serviceAccounts/${serviceAccountEmail}:generateAccessToken`,
     scopes: ["https://www.googleapis.com/auth/spreadsheets"],
+    subject_token_supplier: { getSubjectToken: getVercelOidcToken },
   });
+
+  if (!auth) throw new HttpError(503, "Google Cloud federation is misconfigured.");
+
   await auth.request({
-    url: `https://sheets.googleapis.com/v4/spreadsheets/${encodeURIComponent(process.env.GOOGLE_SHEET_ID)}/values/SecureExam!A1:append`,
+    url: `https://sheets.googleapis.com/v4/spreadsheets/${encodeURIComponent(spreadsheetId)}/values/SecureExam!A1:append`,
     method: "POST",
     params: { valueInputOption: "RAW", insertDataOption: "INSERT_ROWS" },
     data: { values: rows },

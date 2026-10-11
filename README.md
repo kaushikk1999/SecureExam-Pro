@@ -63,7 +63,7 @@ Copy [.env.example](.env.example). Never commit `.env`, database files, exports 
 
 Required production settings: `DATABASE_PROVIDER=postgres`, `DATABASE_URL`, `AUTH_SECRET`, `NEXTAUTH_URL`, `NEXT_PUBLIC_APP_URL`, `CRON_SECRET`. Use a strong random secret, and HTTPS public URLs with exactly the same origin.
 
-Optional: `BLOB_READ_WRITE_TOKEN`; `GOOGLE_SERVICE_ACCOUNT_EMAIL`, `GOOGLE_PRIVATE_KEY`, `GOOGLE_SHEET_ID`; `OLLAMA_ENABLED`, `OLLAMA_BASE_URL`, `OLLAMA_API_KEY`, `OLLAMA_MODEL`; `MFA_ENCRYPTION_KEY`, `REQUIRE_TEACHER_MFA`.
+Optional: `BLOB_READ_WRITE_TOKEN`; Google Sheets export uses Vercel OIDC and Google Workload Identity Federation, configured with `GCP_PROJECT_NUMBER`, `GCP_WORKLOAD_IDENTITY_POOL_ID`, `GCP_WORKLOAD_IDENTITY_POOL_PROVIDER_ID`, `GCP_SERVICE_ACCOUNT_EMAIL`, and `GOOGLE_SHEET_ID` (the spreadsheet needs a `SecureExam` tab shared with the service account as Editor); `OLLAMA_ENABLED`, `OLLAMA_BASE_URL`, `OLLAMA_API_KEY`, `OLLAMA_MODEL`; `MFA_ENCRYPTION_KEY`, `REQUIRE_TEACHER_MFA`.
 
 `SEED_PASSWORD` is local-only. Bootstrap variables are one-time administrator provisioning inputs and must be removed afterward.
 
