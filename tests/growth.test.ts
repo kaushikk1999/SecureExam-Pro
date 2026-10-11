@@ -322,6 +322,17 @@ it("binds existing Google accounts and provisions verified university accounts s
   expect(await resolveGoogleIdentity(p)).toBeNull();
   await db.execute(sql`UPDATE users SET mfa_secret=NULL WHERE id=${student}`);
 
+  vi.stubEnv("GOOGLE_AUTO_PROVISION_DOMAINS", "");
+  vi.stubEnv("GOOGLE_TEACHER_EMAILS", "");
+  const defaultBuStudent = await resolveGoogleIdentity({
+    iss: "https://accounts.google.com",
+    sub: "google-default-bu-student",
+    email: "first.login@bu.ac.th",
+    email_verified: true,
+    hd: "bu.ac.th",
+  });
+  expect(defaultBuStudent?.role).toBe("STUDENT");
+
   vi.stubEnv("GOOGLE_AUTO_PROVISION_DOMAINS", "bu.ac.th");
   vi.stubEnv("GOOGLE_TEACHER_EMAILS", "kaushik.k@bu.ac.th");
   const buTeacher = await resolveGoogleIdentity({
