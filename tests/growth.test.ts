@@ -12,6 +12,8 @@ const { db, query } = await import("../src/lib/db");
 const { GET, POST } = await import("../src/app/api/platform/[...path]/route");
 const { resolveGoogleIdentity, resolveUniversityIdentity } =
   await import("../src/lib/sso");
+const { ensureDefaultCoursesForUser } =
+  await import("../src/lib/course-provisioning");
 const admin = randomUUID(),
   teacher = randomUUID(),
   foreign = randomUUID(),
@@ -394,11 +396,47 @@ it("requires explicit issuer/subject mappings for custom OIDC", async () => {
   );
   delete process.env.REQUIRE_TEACHER_MFA;
 });
+it("provisions the configured teacher's default course sections once", async () => {
+  vi.stubEnv("DEFAULT_COURSE_OWNER_EMAIL", "teacher@test.local");
+  const owner = { id: teacher, email: "teacher@test.local", role: "TEACHER" };
+  await ensureDefaultCoursesForUser(owner);
+  await ensureDefaultCoursesForUser(owner);
+  const courses = await query(
+    sql`SELECT code,name,section FROM courses WHERE teacher_id=${teacher} AND code IN ('IBA214','IBA360','IBE102') ORDER BY code,section`,
+  );
+  expect(courses).toEqual([
+    { code: "IBA214", name: "Technology for Business", section: "256C" },
+    { code: "IBA214", name: "Technology for Business", section: "256D" },
+    {
+      code: "IBA360",
+      name: "Data Structures and Algorithms",
+      section: "356A",
+    },
+    {
+      code: "IBE102",
+      name: "Digital Business Technology",
+      section: "153A",
+    },
+  ]);
+
+  await ensureDefaultCoursesForUser({
+    id: student,
+    email: "student@gmail.com",
+    role: "STUDENT",
+  });
+  expect(
+    await query(sql`SELECT id FROM courses WHERE teacher_id=${student}`),
+  ).toHaveLength(0);
+});
 it("does not expose removed LMS synchronization routes", async () => {
   login(admin);
   expect(
-    (await request("integrations/preview", { kind: "ROSTER", targetId: course }))
-      .status,
+    (
+      await request("integrations/preview", {
+        kind: "ROSTER",
+        targetId: course,
+      })
+    ).status,
   ).toBe(404);
 });
 

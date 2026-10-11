@@ -9,6 +9,7 @@ import { TOTP, Secret } from "otpauth";
 import { createDecipheriv, createHash, randomUUID } from "node:crypto";
 import { query } from "./db";
 import { rateLimit, record } from "./audit";
+import { ensureDefaultCoursesForUser } from "./course-provisioning";
 export function decryptSecret(value: string) {
   const [iv, tag, data] = value.split(".");
   const key = createHash("sha256")
@@ -159,6 +160,11 @@ export const authOptions: NextAuthOptions = {
         });
         if (!ok) return null;
         await query(sql`UPDATE users SET last_login=now() WHERE id=${u.id}`);
+        await ensureDefaultCoursesForUser({
+          id: u.id,
+          email: u.email,
+          role: u.role,
+        });
         return {
           id: u.id,
           name: u.name,
@@ -190,6 +196,11 @@ export const authOptions: NextAuthOptions = {
         role: local.role,
       });
       await query(sql`UPDATE users SET last_login=now() WHERE id=${local.id}`);
+      await ensureDefaultCoursesForUser({
+        id: local.id,
+        email: local.email,
+        role: local.role,
+      });
       await record({
         userId: local.id,
         type: "SSO_LOGIN_SUCCESS",

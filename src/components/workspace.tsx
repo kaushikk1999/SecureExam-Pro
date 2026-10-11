@@ -29,6 +29,7 @@ import {
   X,
 } from "lucide-react";
 import type { Actor } from "@/lib/auth";
+import { COURSE_CATALOG } from "@/lib/course-data";
 import {
   api,
   useData,
@@ -1205,24 +1206,7 @@ function Students() {
     [message, setMessage] = useState(""),
     [courseCode, setCourseCode] = useState(""),
     [courseSection, setCourseSection] = useState("");
-  const courseCatalog = [
-    {
-      code: "IBA214",
-      name: "Technology for Business",
-      sections: ["256C", "256D"],
-    },
-    {
-      code: "IBA360",
-      name: "Data Structures and Algorithms",
-      sections: ["356A"],
-    },
-    {
-      code: "IBE102",
-      name: "Digital Business Technology",
-      sections: ["153A"],
-    },
-  ];
-  const selectedCourse = courseCatalog.find((c) => c.code === courseCode);
+  const selectedCourse = COURSE_CATALOG.find((c) => c.code === courseCode);
   async function submit(e: React.FormEvent<HTMLFormElement>) {
     e.preventDefault();
     const f = Object.fromEntries(new FormData(e.currentTarget));
@@ -1300,7 +1284,7 @@ function Students() {
                     }}
                   >
                     <option value="">Select a subject</option>
-                    {courseCatalog.map((course) => (
+                    {COURSE_CATALOG.map((course) => (
                       <option key={course.code} value={course.code}>
                         {course.code} · {course.name}
                       </option>
