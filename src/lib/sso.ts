@@ -2,6 +2,7 @@ import { sql } from "drizzle-orm";
 import { randomBytes, randomUUID } from "node:crypto";
 import { hash } from "bcryptjs";
 import { db, query } from "./db";
+import { isStudentEmailAllowed } from "./auth-role";
 // The OIDC library validates signature, issuer, audience, state and nonce before this callback.
 // Application authorization still requires an explicit issuer + subject mapping.
 export async function resolveUniversityIdentity(
@@ -20,6 +21,7 @@ export async function resolveUniversityIdentity(
     sql`SELECT u.* FROM sso_identities s JOIN users u ON u.id=s.user_id WHERE s.issuer=${issuer} AND s.subject=${profile.sub} AND u.active=true`,
   );
   if (!u) return null;
+  if (u.role === "STUDENT" && !isStudentEmailAllowed(u.email)) return null;
   if (
     u.mfa_secret ||
     (u.role !== "STUDENT" && process.env.REQUIRE_TEACHER_MFA === "true")
@@ -69,6 +71,11 @@ export async function resolveGoogleIdentity(
   // Keep support for BU staff accounts when they authenticate through Google.
   autoProvisionDomains.add("bu.ac.th");
   const teacherEmails = configuredValues(process.env.GOOGLE_TEACHER_EMAILS);
+  const isApprovedTeacher = teacherEmails.has(email);
+  const isApprovedStudent = isStudentEmailAllowed(email);
+  const explicitStudentAllowlist = configuredValues(
+    process.env.STUDENT_LOGIN_EMAILS,
+  );
   return db.transaction(async (tx) => {
     const issuer = "https://accounts.google.com";
     const [mapped] = await query(
@@ -77,18 +84,25 @@ export async function resolveGoogleIdentity(
     );
     let u = mapped;
     if (!u) {
-      if (
-        !email.endsWith("@gmail.com") &&
-        !verifiedWorkspace
-      )
-        return null;
+      if (!email.endsWith("@gmail.com") && !verifiedWorkspace) return null;
       const [existing] = await query(
         sql`SELECT * FROM users WHERE lower(email)=${email} FOR UPDATE`,
         tx,
       );
       if (existing && !existing.active) return null;
       u = existing;
-      if (!u && verifiedWorkspace && autoProvisionDomains.has(emailDomain)) {
+      if (u?.role === "STUDENT" && !isStudentEmailAllowed(u.email)) return null;
+      const canProvisionTrustedWorkspace =
+        verifiedWorkspace && autoProvisionDomains.has(emailDomain);
+      const canProvisionExactStudent =
+        explicitStudentAllowlist.has(email) && email.endsWith("@gmail.com");
+      if (
+        !u &&
+        (isApprovedTeacher
+          ? canProvisionTrustedWorkspace
+          : isApprovedStudent &&
+            (canProvisionTrustedWorkspace || canProvisionExactStudent))
+      ) {
         const id = randomUUID();
         const displayName =
           typeof profile.name === "string" && profile.name.trim()
@@ -98,7 +112,7 @@ export async function resolveGoogleIdentity(
           randomBytes(32).toString("base64url"),
           12,
         );
-        const role = teacherEmails.has(email) ? "TEACHER" : "STUDENT";
+        const role = isApprovedTeacher ? "TEACHER" : "STUDENT";
         const [created] = await query(
           sql`INSERT INTO users(id,email,name,password_hash,role) VALUES(${id},${email},${displayName},${passwordHash},${role}) ON CONFLICT (email) DO NOTHING RETURNING *`,
           tx,
@@ -134,6 +148,7 @@ export async function resolveGoogleIdentity(
       );
       if (identity?.user_id !== u.id) return null;
     }
+    if (u.role === "STUDENT" && !isStudentEmailAllowed(u.email)) return null;
     if (
       u.mfa_secret ||
       (u.role !== "STUDENT" && process.env.REQUIRE_TEACHER_MFA === "true")

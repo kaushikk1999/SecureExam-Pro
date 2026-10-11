@@ -342,6 +342,33 @@ it("binds existing Google accounts and provisions verified university accounts s
     }),
   ).toBeNull();
 
+  vi.stubEnv("STUDENT_LOGIN_EMAILS", "kaushikds1999@gmail.com");
+  const testStudent = await resolveGoogleIdentity({
+    iss: "https://accounts.google.com",
+    sub: "google-exact-test-student",
+    email: "kaushikds1999@gmail.com",
+    email_verified: true,
+    name: "Demo Student",
+  });
+  expect(testStudent?.role).toBe("STUDENT");
+  expect(
+    await resolveGoogleIdentity({
+      iss: "https://accounts.google.com",
+      sub: "google-unlisted-test-student",
+      email: "another.student@gmail.com",
+      email_verified: true,
+    }),
+  ).toBeNull();
+  expect(
+    await resolveGoogleIdentity({
+      iss: "https://accounts.google.com",
+      sub: "google-default-bu-student",
+      email: "first.login@bumail.net",
+      email_verified: true,
+      hd: "bumail.net",
+    }),
+  ).toBeNull();
+
   vi.stubEnv("GOOGLE_AUTO_PROVISION_DOMAINS", "bu.ac.th");
   vi.stubEnv("GOOGLE_TEACHER_EMAILS", "kaushik.k@bu.ac.th");
   const buTeacher = await resolveGoogleIdentity({
@@ -362,7 +389,7 @@ it("binds existing Google accounts and provisions verified university accounts s
     email_verified: true,
     hd: "bu.ac.th",
   });
-  expect(buStudent?.role).toBe("STUDENT");
+  expect(buStudent).toBeNull();
 
   expect(
     await resolveGoogleIdentity({
@@ -383,6 +410,7 @@ it("binds existing Google accounts and provisions verified university accounts s
     }),
   ).toBeNull();
 
+  vi.stubEnv("STUDENT_LOGIN_EMAILS", "");
   const preprovisioned = randomUUID();
   await db.execute(
     sql`INSERT INTO users(id,email,name,password_hash,role) VALUES(${preprovisioned},'already.student@bu.ac.th','Existing Student','unused','STUDENT')`,

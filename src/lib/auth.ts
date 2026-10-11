@@ -10,6 +10,7 @@ import { createDecipheriv, createHash, randomUUID } from "node:crypto";
 import { query } from "./db";
 import { rateLimit, record } from "./audit";
 import { ensureDefaultCoursesForUser } from "./course-provisioning";
+import { isStudentEmailAllowed } from "./auth-role";
 export function decryptSecret(value: string) {
   const [iv, tag, data] = value.split(".");
   const key = createHash("sha256")
@@ -92,7 +93,8 @@ export const authOptions: NextAuthOptions = {
             u?.password_hash ??
               "$2b$12$C6UzMDM.H6dfI/f/IKcEe.9yTTt7vwAibdBo3wfDOPQdlTCpHF9Ya",
           )) &&
-          u?.active,
+          u?.active &&
+          (u.role !== "STUDENT" || isStudentEmailAllowed(u.email)),
         );
         if (process.env.VERCEL && email.endsWith(".test")) ok = false;
         if (ok && u.mfa_secret) {
@@ -254,6 +256,8 @@ export async function actor(roles?: Actor["role"][]): Promise<Actor> {
     sql`SELECT id,name,email,role,student_id FROM users WHERE id=${u.id} AND active=true AND session_version=${u.version}`,
   );
   if (!row) throw new HttpError(401, "Session expired.");
+  if (row.role === "STUDENT" && !isStudentEmailAllowed(row.email))
+    throw new HttpError(401, "Student access is limited to approved accounts.");
   if (roles && !roles.includes(row.role))
     throw new HttpError(403, "You do not have permission for this action.");
   return row as Actor;
