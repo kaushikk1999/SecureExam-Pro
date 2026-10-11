@@ -293,7 +293,7 @@ it("rejects concurrent stale decisions and permits one student reopening", async
     ),
   ).toBe(5);
 });
-it("binds verified Google identities to existing accounts without creating accounts", async () => {
+it("binds existing Google accounts and provisions verified university accounts safely", async () => {
   const p = {
     iss: "https://accounts.google.com",
     sub: "google-student",
@@ -319,6 +319,61 @@ it("binds verified Google identities to existing accounts without creating accou
   );
   expect(await resolveGoogleIdentity(p)).toBeNull();
   await db.execute(sql`UPDATE users SET mfa_secret=NULL WHERE id=${student}`);
+
+  vi.stubEnv("GOOGLE_AUTO_PROVISION_DOMAINS", "bu.ac.th");
+  vi.stubEnv("GOOGLE_TEACHER_EMAILS", "kaushik.k@bu.ac.th");
+  const buTeacher = await resolveGoogleIdentity({
+    iss: "https://accounts.google.com",
+    sub: "google-bu-teacher",
+    email: "kaushik.k@bu.ac.th",
+    email_verified: true,
+    hd: "bu.ac.th",
+    name: "Kaushik K",
+  });
+  expect(buTeacher?.role).toBe("TEACHER");
+  expect(buTeacher?.name).toBe("Kaushik K");
+
+  const buStudent = await resolveGoogleIdentity({
+    iss: "https://accounts.google.com",
+    sub: "google-bu-student",
+    email: "new.student@bu.ac.th",
+    email_verified: true,
+    hd: "bu.ac.th",
+  });
+  expect(buStudent?.role).toBe("STUDENT");
+
+  expect(
+    await resolveGoogleIdentity({
+      iss: "https://accounts.google.com",
+      sub: "google-forged-domain",
+      email: "fake@bu.ac.th",
+      email_verified: true,
+      hd: "attacker.example",
+    }),
+  ).toBeNull();
+  expect(
+    await resolveGoogleIdentity({
+      iss: "https://accounts.google.com",
+      sub: "google-unlisted-domain",
+      email: "new@other.ac.th",
+      email_verified: true,
+      hd: "other.ac.th",
+    }),
+  ).toBeNull();
+
+  const preprovisioned = randomUUID();
+  await db.execute(
+    sql`INSERT INTO users(id,email,name,password_hash,role) VALUES(${preprovisioned},'already.student@bu.ac.th','Existing Student','unused','STUDENT')`,
+  );
+  const linkedExisting = await resolveGoogleIdentity({
+    iss: "https://accounts.google.com",
+    sub: "google-existing-student",
+    email: "already.student@bu.ac.th",
+    email_verified: true,
+    hd: "bu.ac.th",
+  });
+  expect(linkedExisting?.id).toBe(preprovisioned);
+  expect(linkedExisting?.role).toBe("STUDENT");
 });
 it("requires explicit issuer/subject mappings for custom OIDC", async () => {
   process.env.SSO_ISSUER = "https://identity.example.test";

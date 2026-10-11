@@ -829,10 +829,11 @@ function Integrations() {
             </strong>
           </div>
           <p>
-            Google login matches a verified Google-managed email to an
-            existing active account. Unregistered users cannot create accounts
-            here. Configure GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET on the
-            server.
+            Google login can create accounts for verified Workspace domains
+            listed in GOOGLE_AUTO_PROVISION_DOMAINS. New users start as
+            students; only exact addresses listed in GOOGLE_TEACHER_EMAILS
+            receive teacher access. Existing roles are preserved. Configure
+            these settings and the Google OAuth credentials on the server.
           </p>
           <div className={styles.row}>
             <span>Optional OpenID Connect</span>
