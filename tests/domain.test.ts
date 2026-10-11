@@ -12,6 +12,8 @@ import {
   classroomCode,
   CLASSROOM_CODE_WINDOW_MS,
   validClassroomCode,
+  createExamEnrollmentInvite,
+  validExamEnrollmentInvite,
 } from "../src/lib/domain";
 const room = { latitude: 14, longitude: 100, radius: 100, accuracy: 30 };
 describe("location uncertainty", () => {
@@ -30,6 +32,46 @@ describe("location uncertainty", () => {
       geofence({ latitude: 14.00095, longitude: 100, accuracy: 20 }, room)
         .clearlyOutside,
     ).toBe(false));
+});
+describe("exam course enrollment invitations", () => {
+  const secret = "a".repeat(64);
+  const examId = "d6a1c12e-1188-46ea-9a19-4e522ed2da9e";
+  const courseId = "c9a15d3a-79c8-45bb-9e62-0987654321ab";
+
+  it("binds invitations to the exam and its course", () => {
+    const token = createExamEnrollmentInvite(secret, examId, courseId);
+    expect(validExamEnrollmentInvite(secret, examId, courseId, token)).toBe(
+      true,
+    );
+    expect(
+      validExamEnrollmentInvite(secret, examId, "another-course", token),
+    ).toBe(false);
+    expect(
+      validExamEnrollmentInvite(secret, "another-exam", courseId, token),
+    ).toBe(false);
+  });
+
+  it("supports classroom-code timestamps and rejects malformed tokens", () => {
+    const token = createExamEnrollmentInvite(
+      `${secret}:1791811200000`,
+      examId,
+      courseId,
+    );
+    expect(
+      validExamEnrollmentInvite(
+        `${secret}:1791811200000`,
+        examId,
+        courseId,
+        token,
+      ),
+    ).toBe(true);
+    expect(
+      validExamEnrollmentInvite(secret, examId, courseId, "not-a-token"),
+    ).toBe(false);
+    expect(() =>
+      createExamEnrollmentInvite("invalid", examId, courseId),
+    ).toThrow("Exam invitation key is invalid.");
+  });
 });
 describe("objective policy", () => {
   it("auto submits at the fifth warning", () =>

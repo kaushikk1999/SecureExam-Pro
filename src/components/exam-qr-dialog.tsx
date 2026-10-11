@@ -4,6 +4,7 @@ import { useEffect, useRef, useState } from "react";
 import Image from "next/image";
 import QRCode from "qrcode";
 import { Copy, Maximize2, QrCode, X } from "lucide-react";
+import { api } from "./ui";
 
 export default function ExamQrDialog({
   examId,
@@ -27,25 +28,32 @@ export default function ExamQrDialog({
   useEffect(() => {
     if (!open) return;
     let active = true;
-    const url = new URL(`/exam/${examId}`, window.location.origin).toString();
-    setExamUrl(url);
+    setExamUrl("");
     setImage("");
     setMessage("");
-    void QRCode.toDataURL(url, {
-      errorCorrectionLevel: "H",
-      margin: 2,
-      width: 360,
-      color: { dark: "#142c45", light: "#ffffff" },
-    })
-      .then((dataUrl) => {
+    void (async () => {
+      try {
+        const { token } = await api(`exams/${examId}/enrollment-invite`);
+        if (!active) return;
+        const url = new URL(`/exam/${examId}`, window.location.origin);
+        url.searchParams.set("invite", token);
+        const link = url.toString();
+        setExamUrl(link);
+        const dataUrl = await QRCode.toDataURL(link, {
+          errorCorrectionLevel: "H",
+          margin: 2,
+          width: 360,
+          color: { dark: "#142c45", light: "#ffffff" },
+        });
         if (active) setImage(dataUrl);
-      })
-      .catch(() => {
+      } catch (error) {
         if (active)
           setMessage(
-            "Could not create the QR code. Copy the exam link instead.",
+            (error as Error).message ||
+              "Could not create the QR code. Please try again.",
           );
-      });
+      }
+    })();
     return () => {
       active = false;
     };
@@ -103,7 +111,7 @@ export default function ExamQrDialog({
             <div className="exam-qr-heading">
               <div>
                 <span className="eyebrow">STUDENT EXAM ACCESS</span>
-                <h2 id="exam-qr-title">Scan to open this exam</h2>
+                <h2 id="exam-qr-title">Scan to join this exam</h2>
               </div>
               <button aria-label="Close exam QR" onClick={() => setOpen(false)}>
                 <X size={18} />
@@ -129,9 +137,10 @@ export default function ExamQrDialog({
               )}
             </div>
             <p className="exam-qr-help">
-              Students scan with their phone camera, sign in, and return
-              directly to this exam. They still need to be enrolled in this
-              course and meet the exam entry requirements.
+              Approved student accounts can scan this code, sign in, and be
+              enrolled in this course automatically before returning to the
+              exam. Enrollment is available while the exam is open; students
+              must still meet the exam entry requirements.
             </p>
             {examUrl && <code className="exam-qr-link">{examUrl}</code>}
             <div className="actions exam-qr-actions">

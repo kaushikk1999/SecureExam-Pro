@@ -28,6 +28,14 @@ describe("role-specific sign-in", () => {
 it("allows only a local exam deep link as the student sign-in return path", () => {
   const examId = "d6a1c12e-1188-46ea-9a19-4e522ed2da9e";
   expect(safeStudentReturnPath(`/exam/${examId}`)).toBe(`/exam/${examId}`);
+  const invite = "a".repeat(64);
+  expect(safeStudentReturnPath(`/exam/${examId}?invite=${invite}`)).toBe(
+    `/exam/${examId}?invite=${invite}`,
+  );
+  expect(safeStudentReturnPath(`/exam/${examId}?invite=bad`)).toBeNull();
+  expect(
+    safeStudentReturnPath(`/exam/${examId}?invite=${invite}&next=/workspace`),
+  ).toBeNull();
   expect(safeStudentReturnPath("/workspace")).toBeNull();
   expect(safeStudentReturnPath("https://example.com/phishing")).toBeNull();
   expect(safeStudentReturnPath(`//example.com/exam/${examId}`)).toBeNull();

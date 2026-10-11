@@ -25,6 +25,8 @@ import {
   classroomCode,
   classroomCodeSecret,
   CLASSROOM_CODE_WINDOW_MS,
+  createExamEnrollmentInvite,
+  validExamEnrollmentInvite,
   csv,
 } from "@/lib/domain";
 import {
@@ -127,6 +129,7 @@ async function dispatch(req: Request, parts: string[]) {
         "sync",
         "submit",
         "recover",
+        "self-enroll",
       ].includes(action))
   )
     throw new HttpError(405, "This operation requires POST.");
@@ -467,6 +470,64 @@ async function dispatch(req: Request, parts: string[]) {
       }
       return json({ ok: true });
     }
+    if (action === "self-enroll") {
+      if (method !== "POST") throw new HttpError(405, "POST required.");
+      if (u.role !== "STUDENT")
+        throw new HttpError(403, "Only student accounts can self-enroll.");
+      const v = z
+        .object({ token: z.string().regex(/^[a-f0-9]{64}$/) })
+        .parse(await body(req));
+      const result = await db.transaction(async (tx) => {
+        const [exam] = await query(
+          sql`SELECT id,course_id,status,ends_at,code_secret FROM exams WHERE id=${id} FOR UPDATE`,
+          tx,
+        );
+        if (!exam) throw new HttpError(404, "Exam not found.");
+        const [existing] = await query(
+          sql`SELECT eligible FROM enrollments WHERE course_id=${exam.course_id} AND user_id=${u.id} FOR UPDATE`,
+          tx,
+        );
+        if (existing) {
+          if (!existing.eligible)
+            throw new HttpError(
+              403,
+              "Your enrollment for this course is disabled. Contact your instructor.",
+            );
+          return { enrolled: false };
+        }
+        if (
+          ["DRAFT", "CLOSED", "ARCHIVED"].includes(exam.status) ||
+          new Date(exam.ends_at).getTime() <= Date.now()
+        )
+          throw new HttpError(
+            409,
+            "Course enrollment for this exam is closed.",
+          );
+        if (
+          !validExamEnrollmentInvite(
+            exam.code_secret,
+            exam.id,
+            exam.course_id,
+            v.token,
+          )
+        )
+          throw new HttpError(
+            403,
+            "This course enrollment QR code is invalid.",
+          );
+        await tx.execute(
+          sql`INSERT INTO enrollments(course_id,user_id) VALUES(${exam.course_id},${u.id}) ON CONFLICT DO NOTHING`,
+        );
+        await audit(tx, {
+          userId: u.id,
+          examId: id,
+          type: "STUDENT_SELF_ENROLLED",
+          metadata: { courseId: exam.course_id },
+        });
+        return { enrolled: true };
+      });
+      return json({ ok: true, ...result });
+    }
     if (u.role === "STUDENT") {
       if (method !== "GET" || action)
         throw new HttpError(403, "Teacher access required.");
@@ -488,6 +549,12 @@ async function dispatch(req: Request, parts: string[]) {
     }
     teacher(u);
     const e = await ownedExam(id, u);
+    if (action === "enrollment-invite") {
+      if (method !== "GET") throw new HttpError(405, "GET required.");
+      return json({
+        token: createExamEnrollmentInvite(e.code_secret, e.id, e.course_id),
+      });
+    }
     if (action === "room-code") {
       const nowMs = Date.now();
       const roomCode = await db.transaction(async (tx) => {

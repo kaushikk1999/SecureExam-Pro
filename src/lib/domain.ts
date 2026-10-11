@@ -1,4 +1,4 @@
-import { createHash, createHmac } from "node:crypto";
+import { createHash, createHmac, timingSafeEqual } from "node:crypto";
 import { z } from "zod";
 export const policySchema = z.object({
   camera: z.boolean().default(true),
@@ -146,6 +146,34 @@ export function validClassroomCode(
 }
 export function classroomCodeSecret(secret: string, issuedAt: number) {
   return `${secret}:${issuedAt}`;
+}
+function examInviteKey(storedSecret: string) {
+  return /^([a-f0-9]{64})(?::\d+)?$/.exec(storedSecret)?.[1] ?? null;
+}
+export function createExamEnrollmentInvite(
+  storedSecret: string,
+  examId: string,
+  courseId: string,
+) {
+  const key = examInviteKey(storedSecret);
+  if (!key) throw new Error("Exam invitation key is invalid.");
+  return createHmac("sha256", key)
+    .update(`exam-course-enrollment:v1:${examId}:${courseId}`)
+    .digest("hex");
+}
+export function validExamEnrollmentInvite(
+  storedSecret: string,
+  examId: string,
+  courseId: string,
+  token: string,
+) {
+  if (!/^[a-f0-9]{64}$/.test(token)) return false;
+  const key = examInviteKey(storedSecret);
+  if (!key) return false;
+  const expected = createHmac("sha256", key)
+    .update(`exam-course-enrollment:v1:${examId}:${courseId}`)
+    .digest();
+  return timingSafeEqual(expected, Buffer.from(token, "hex"));
 }
 export function remaining(deadline: string | Date, now = Date.now()) {
   return Math.max(0, new Date(deadline).getTime() - now);

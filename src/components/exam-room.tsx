@@ -29,9 +29,11 @@ type QueuedAnswer = { questionId: string; value: any; version: number };
 type QueuedEvent = { id: string; type: string; metadata: Record<string, any> };
 export default function ExamRoom({
   examId,
+  enrollmentToken,
   user,
 }: {
   examId: string;
+  enrollmentToken: string | null;
   user: Actor;
 }) {
   const [exam, setExam] = useState<any>(null),
@@ -211,17 +213,22 @@ export default function ExamRoom({
         window.innerWidth >= 768,
       fullscreen: document.fullscreenEnabled,
     }));
-    Promise.all([api("exams/" + examId), api("exams")])
-      .then(([e, list]) => {
-        setExam(e);
-        setExisting(list.find((x: any) => x.id === examId && x.attempt_id));
-      })
-      .catch((e) => setError(e.message));
+    async function loadExam() {
+      if (enrollmentToken)
+        await api(`exams/${examId}/self-enroll`, { token: enrollmentToken });
+      const [e, list] = await Promise.all([
+        api("exams/" + examId),
+        api("exams"),
+      ]);
+      setExam(e);
+      setExisting(list.find((x: any) => x.id === examId && x.attempt_id));
+    }
+    void loadExam().catch((e) => setError(e.message));
     return () => {
       stream.current?.getTracks().forEach((t) => t.stop());
       screenStream.current?.getTracks().forEach((t) => t.stop());
     };
-  }, [examId]);
+  }, [examId, enrollmentToken]);
   useEffect(() => {
     if (video.current && stream.current)
       video.current.srcObject = stream.current;
