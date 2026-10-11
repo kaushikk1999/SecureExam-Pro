@@ -804,7 +804,7 @@ function ExamDetail({ id }: { id: string }) {
       {code && (
         <div className="room-code">
           {code}
-          <small>Refresh to generate the current 90-second code.</small>
+          <small>Refresh to generate the current 5-minute code.</small>
         </div>
       )}
       {message && (

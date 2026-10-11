@@ -20,7 +20,12 @@ import {
   saveAnswers,
   effectivePolicy,
 } from "@/lib/exams";
-import { classroomSchema, classroomCode, csv } from "@/lib/domain";
+import {
+  classroomSchema,
+  classroomCode,
+  CLASSROOM_CODE_WINDOW_MS,
+  csv,
+} from "@/lib/domain";
 import {
   examSchema,
   questionSchema,
@@ -486,7 +491,8 @@ async function dispatch(req: Request, parts: string[]) {
       return json({
         code: classroomCode(e.code_secret),
         expiresAt: new Date(
-          (Math.floor(Date.now() / 90000) + 1) * 90000,
+          (Math.floor(Date.now() / CLASSROOM_CODE_WINDOW_MS) + 1) *
+            CLASSROOM_CODE_WINDOW_MS,
         ).toISOString(),
       });
     if (action === "export") {

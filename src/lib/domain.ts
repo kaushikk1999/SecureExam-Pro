@@ -112,9 +112,11 @@ export function auditHash(previous: string, data: unknown) {
     .update(previous + "\n" + canonical(data))
     .digest("hex");
 }
+export const CLASSROOM_CODE_WINDOW_MS = 5 * 60_000;
+
 export function classroomCode(secret: string, time = Date.now()) {
   const n = createHmac("sha256", secret)
-    .update(String(Math.floor(time / 90000)))
+    .update(String(Math.floor(time / CLASSROOM_CODE_WINDOW_MS)))
     .digest()
     .readUInt32BE(0);
   return String(n % 1000000).padStart(6, "0");

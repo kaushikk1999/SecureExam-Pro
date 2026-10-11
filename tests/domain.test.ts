@@ -10,6 +10,7 @@ import {
   csv,
   auditHash,
   classroomCode,
+  CLASSROOM_CODE_WINDOW_MS,
 } from "../src/lib/domain";
 const room = { latitude: 14, longitude: 100, radius: 100, accuracy: 30 };
 describe("location uncertainty", () => {
@@ -81,9 +82,11 @@ describe("determinism and grades", () => {
       auditHash("GENESIS", { event: 2 }),
     ));
   it("room codes rotate by time window", () => {
-    expect(classroomCode("secret", 1000)).toBe(classroomCode("secret", 2000));
+    expect(classroomCode("secret", 1000)).toBe(
+      classroomCode("secret", CLASSROOM_CODE_WINDOW_MS - 1),
+    );
     expect(classroomCode("secret", 1000)).not.toBe(
-      classroomCode("secret", 100000),
+      classroomCode("secret", CLASSROOM_CODE_WINDOW_MS),
     );
   });
 });
