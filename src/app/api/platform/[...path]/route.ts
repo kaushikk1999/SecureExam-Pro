@@ -214,10 +214,42 @@ async function dispatch(req: Request, parts: string[]) {
   }
   if (resource === "courses") {
     teacher(u);
+    if (id && action === "students" && method === "GET") {
+      await courseAccess(id, u);
+      return json(
+        await query(
+          sql`SELECT u.id,u.name,u.email,u.student_id,u.section,u.active,n.eligible FROM enrollments n JOIN users u ON u.id=n.user_id WHERE n.course_id=${id} ORDER BY u.name`,
+        ),
+      );
+    }
+    if (id && action === "enroll" && method === "POST") {
+      await courseAccess(id, u);
+      const v = z
+        .object({ email: z.string().email().max(254) })
+        .parse(await body(req));
+      const email = v.email.trim().toLowerCase();
+      const [student] = await query(
+        sql`SELECT id FROM users WHERE lower(email)=${email} AND role='STUDENT' AND active=true`,
+      );
+      if (!student)
+        throw new HttpError(
+          404,
+          "No active student account found for that email. Ask the student to sign in once with their approved account, then try again.",
+        );
+      await query(
+        sql`INSERT INTO enrollments(course_id,user_id) VALUES(${id},${student.id}) ON CONFLICT DO NOTHING`,
+      );
+      await record({
+        userId: u.id,
+        type: "STUDENT_ENROLLED",
+        metadata: { courseId: id, studentId: student.id },
+      });
+      return json({ ok: true });
+    }
     if (method === "GET")
       return json(
         await query(
-          sql`SELECT * FROM courses WHERE ${u.role === "ADMIN"} OR teacher_id=${u.id} ORDER BY code`,
+          sql`SELECT c.*,(SELECT count(*)::int FROM enrollments n WHERE n.course_id=c.id) AS enrolled_count FROM courses c WHERE ${u.role === "ADMIN"} OR c.teacher_id=${u.id} ORDER BY c.code,c.section`,
         ),
       );
     const v = z

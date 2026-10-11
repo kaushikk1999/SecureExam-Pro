@@ -19,7 +19,9 @@ test("explains the correct BU student account after Google access is denied", as
 }) => {
   await page.goto("/login?error=AccessDenied");
   await expect(page.locator("p[role='alert']")).toContainText("@bumail.net");
-  await expect(page.locator("p[role='alert']")).toContainText("@bu.ac.th");
+  await expect(page.locator("p[role='alert']")).toContainText(
+    "contact your instructor",
+  );
 });
 test("teacher workspace, authoring, audit and responsive layout", async ({
   page,
@@ -33,6 +35,41 @@ test("teacher workspace, authoring, audit and responsive layout", async ({
     path: ".data/dashboard-desktop.png",
     fullPage: true,
   });
+  await page
+    .getByRole("link", { name: "Students & courses", exact: true })
+    .click();
+  const courses = await (
+    await page.request.get("/api/platform/courses")
+  ).json();
+  const course = courses[0];
+  const email = `roster-${Date.now()}@example.test`;
+  const createdStudent = await page.request.post("/api/platform/students", {
+    headers: { origin: "http://localhost:3000" },
+    data: {
+      name: "Roster Test Student",
+      email,
+      studentId: `R${Date.now()}`,
+      section: course.section,
+      password: "roster-test-password-2026",
+    },
+  });
+  expect(createdStudent.ok()).toBeTruthy();
+  await page
+    .getByRole("button", {
+      name: `View roster for ${course.code} section ${course.section || "unspecified"}`,
+    })
+    .click();
+  await expect(
+    page.getByText(`${course.code} · ${course.section}`),
+  ).toBeVisible();
+  await expect(
+    page.getByText(`${course.enrolled_count} enrolled students`),
+  ).toBeVisible();
+  await page.getByLabel("Enroll an existing student by email").fill(email);
+  await page.getByRole("button", { name: "Enroll student" }).click();
+  await expect(
+    page.getByRole("cell", { name: email, exact: true }),
+  ).toBeVisible();
   await page.getByRole("link", { name: "Examinations", exact: true }).click();
   await expect(
     page.getByRole("heading", { name: "Examinations", exact: true, level: 1 }),

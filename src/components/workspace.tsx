@@ -1215,8 +1215,50 @@ function Students() {
     [search, setSearch] = useState(""),
     [message, setMessage] = useState(""),
     [courseCode, setCourseCode] = useState(""),
-    [courseSection, setCourseSection] = useState("");
+    [courseSection, setCourseSection] = useState(""),
+    [selectedCourseId, setSelectedCourseId] = useState(""),
+    [roster, setRoster] = useState<any[] | null>(null),
+    [rosterLoading, setRosterLoading] = useState(false),
+    [rosterError, setRosterError] = useState(""),
+    [enrollEmail, setEnrollEmail] = useState("");
   const selectedCourse = COURSE_CATALOG.find((c) => c.code === courseCode);
+  const selectedRosterCourse = courses?.find(
+    (course: any) => course.id === selectedCourseId,
+  );
+  async function toggleCourseRoster(courseId: string) {
+    if (courseId === selectedCourseId) {
+      setSelectedCourseId("");
+      setRoster(null);
+      setRosterError("");
+      return;
+    }
+    setSelectedCourseId(courseId);
+    setRoster(null);
+    setRosterError("");
+    setRosterLoading(true);
+    try {
+      setRoster(await api(`courses/${courseId}/students`));
+    } catch (err) {
+      setRosterError((err as Error).message);
+    } finally {
+      setRosterLoading(false);
+    }
+  }
+  async function enrollByEmail(e: React.FormEvent<HTMLFormElement>) {
+    e.preventDefault();
+    if (!selectedCourseId) return;
+    setRosterError("");
+    try {
+      await api(`courses/${selectedCourseId}/enroll`, { email: enrollEmail });
+      setEnrollEmail("");
+      setMessage("Student enrolled in this course.");
+      setRoster(await api(`courses/${selectedCourseId}/students`));
+      await refresh();
+      await refreshCourses();
+    } catch (err) {
+      setRosterError((err as Error).message);
+    }
+  }
   async function submit(e: React.FormEvent<HTMLFormElement>) {
     e.preventDefault();
     const f = Object.fromEntries(new FormData(e.currentTarget));
@@ -1389,12 +1431,98 @@ function Students() {
       )}
       <div className="course-list">
         {courses?.map((c: any) => (
-          <span className="course-pill" key={c.id}>
+          <button
+            aria-expanded={selectedCourseId === c.id}
+            aria-label={`View roster for ${c.code} section ${c.section || "unspecified"}`}
+            className={`course-pill course-pill-button${selectedCourseId === c.id ? " selected" : ""}`}
+            key={c.id}
+            onClick={() => void toggleCourseRoster(c.id)}
+            type="button"
+          >
             <GraduationCap size={17} />
-            <b>{c.code}</b> {c.name} · {c.section}
-          </span>
+            <span>
+              <b>{c.code}</b> {c.name} · {c.section || "No section"}
+            </span>
+            <strong className="course-enrollment-count">
+              {c.enrolled_count ?? 0} enrolled
+            </strong>
+          </button>
         ))}
       </div>
+      {selectedCourseId && (
+        <section className="panel course-roster" aria-live="polite">
+          <div className="course-roster-heading">
+            <div>
+              <span className="eyebrow">COURSE ROSTER</span>
+              <h2>
+                {selectedRosterCourse?.code} ·{" "}
+                {selectedRosterCourse?.section || "No section"}
+              </h2>
+              <p>
+                {roster?.length ?? selectedRosterCourse?.enrolled_count ?? 0}{" "}
+                enrolled students
+              </p>
+            </div>
+            <button
+              type="button"
+              onClick={() => void toggleCourseRoster(selectedCourseId)}
+            >
+              Close roster
+            </button>
+          </div>
+          <form className="course-enroll-form" onSubmit={enrollByEmail}>
+            <label>
+              Enroll an existing student by email
+              <input
+                type="email"
+                required
+                value={enrollEmail}
+                onChange={(event) => setEnrollEmail(event.target.value)}
+                placeholder="student@university.edu"
+              />
+            </label>
+            <button className="primary" type="submit">
+              <Plus size={16} /> Enroll student
+            </button>
+          </form>
+          <p className="small muted">
+            The student must have signed in once with their approved account.
+            Their access is limited to this course.
+          </p>
+          <ErrorBox message={rosterError} />
+          {rosterLoading ? (
+            <Loading />
+          ) : roster?.length ? (
+            <div className="table-wrap course-roster-table">
+              <table>
+                <thead>
+                  <tr>
+                    <th>Student</th>
+                    <th>Email</th>
+                    <th>Student ID</th>
+                    <th>Status</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {roster.map((student: any) => (
+                    <tr key={student.id}>
+                      <td>{student.name}</td>
+                      <td>{student.email}</td>
+                      <td>{student.student_id}</td>
+                      <td>{student.active ? "Active" : "Inactive"}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          ) : (
+            <p className="course-roster-empty">
+              No students enrolled yet. Enter a student email above to add the
+              first one.
+            </p>
+          )}
+        </section>
+      )}
       <div className="list-tools">
         <Search size={18} />
         <input
@@ -1419,7 +1547,7 @@ function Students() {
           <tbody>
             {students
               ?.filter((s: any) =>
-                (s.name + s.student_id + s.section)
+                (s.name + s.email + s.student_id + s.section)
                   .toLowerCase()
                   .includes(search.toLowerCase()),
               )
