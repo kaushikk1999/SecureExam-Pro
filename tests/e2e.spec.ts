@@ -52,6 +52,13 @@ test("teacher workspace, authoring, audit and responsive layout", async ({
   await expect(page.getByText("QUESTION 1 ·")).toBeVisible();
   await page.getByRole("button", { name: "Publish examination" }).click();
   await expect(page.locator(".page-heading .status")).toHaveText("published");
+  await page.getByRole("button", { name: "Show exam QR" }).click();
+  await expect(page.getByRole("dialog")).toBeVisible();
+  await expect(
+    page.getByRole("img", { name: `QR code for ${title}` }),
+  ).toBeVisible();
+  await expect(page.locator(".exam-qr-link")).toContainText(/\/exam\//);
+  await page.getByRole("button", { name: "Close exam QR" }).click();
   await page.getByRole("link", { name: "Login & audit", exact: true }).click();
   await expect(
     page.getByRole("heading", { name: "Login & attendance audit" }),

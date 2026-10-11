@@ -7,12 +7,14 @@ export default async function Page({
 }: {
   params: Promise<{ id: string }>;
 }) {
+  const { id } = await params;
   let user;
   try {
     user = await actor(["STUDENT"]);
   } catch (e) {
-    if (e instanceof HttpError) redirect("/login");
+    if (e instanceof HttpError)
+      redirect(`/login?role=student&next=${encodeURIComponent(`/exam/${id}`)}`);
     throw e;
   }
-  return <ExamRoom examId={(await params).id} user={user} />;
+  return <ExamRoom examId={id} user={user} />;
 }

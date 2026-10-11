@@ -30,6 +30,7 @@ import {
 } from "lucide-react";
 import type { Actor } from "@/lib/auth";
 import { COURSE_CATALOG } from "@/lib/course-data";
+import ExamQrDialog from "./exam-qr-dialog";
 import {
   api,
   useData,
@@ -760,6 +761,15 @@ function ExamDetail({ id }: { id: string }) {
         )}
       </Heading>
       <div className="actions action-bar">
+        {e.status !== "DRAFT" && e.status !== "ARCHIVED" && (
+          <ExamQrDialog
+            examId={id}
+            title={e.title}
+            courseCode={e.course_code}
+            courseName={e.course_name}
+            section={e.course_section}
+          />
+        )}
         {e.status === "DRAFT" && (
           <button onClick={() => setEditing(!editing)}>
             Edit configuration

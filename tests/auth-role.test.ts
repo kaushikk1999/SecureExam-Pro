@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   isStudentEmailAllowed,
   matchesLoginAudience,
+  safeStudentReturnPath,
 } from "../src/lib/auth-role";
 
 describe("role-specific sign-in", () => {
@@ -22,6 +23,14 @@ describe("role-specific sign-in", () => {
     expect(matchesLoginAudience("", "teacher")).toBe(false);
     expect(matchesLoginAudience("GUEST", "teacher")).toBe(false);
   });
+});
+
+it("allows only a local exam deep link as the student sign-in return path", () => {
+  const examId = "d6a1c12e-1188-46ea-9a19-4e522ed2da9e";
+  expect(safeStudentReturnPath(`/exam/${examId}`)).toBe(`/exam/${examId}`);
+  expect(safeStudentReturnPath("/workspace")).toBeNull();
+  expect(safeStudentReturnPath("https://example.com/phishing")).toBeNull();
+  expect(safeStudentReturnPath(`//example.com/exam/${examId}`)).toBeNull();
 });
 
 it("allows only exact student emails when a temporary allowlist is configured", () => {

@@ -1126,6 +1126,113 @@ pre {
   letter-spacing: 0;
   font-size: 11px;
 }
+.exam-qr-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 1000;
+  display: grid;
+  place-items: center;
+  padding: 22px;
+  background: rgb(9 23 39 / 72%);
+  backdrop-filter: blur(5px);
+}
+.exam-qr-panel {
+  position: relative;
+  width: min(100%, 560px);
+  max-height: calc(100dvh - 44px);
+  overflow: auto;
+  padding: 28px;
+  border: 1px solid #e5ebf1;
+  border-radius: 18px;
+  background: white;
+  box-shadow: 0 26px 80px rgb(0 0 0 / 24%);
+}
+.exam-qr-panel:fullscreen {
+  display: grid;
+  width: 100vw;
+  max-width: none;
+  height: 100vh;
+  max-height: none;
+  align-content: center;
+  justify-items: center;
+  border: 0;
+  border-radius: 0;
+  padding: 28px;
+}
+.exam-qr-heading {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 15px;
+}
+.exam-qr-heading h2 {
+  margin-bottom: 0;
+  font-size: 23px;
+}
+.exam-qr-course {
+  margin: 18px 0;
+  color: var(--muted);
+  line-height: 1.7;
+}
+.exam-qr-course strong {
+  color: var(--ink);
+}
+.exam-qr-image {
+  display: grid;
+  min-height: 280px;
+  place-items: center;
+  padding: 16px;
+  border: 1px solid var(--line);
+  border-radius: 15px;
+  background: white;
+}
+.exam-qr-image img {
+  display: block;
+  width: min(100%, 360px);
+  height: auto;
+  image-rendering: pixelated;
+}
+.exam-qr-panel:fullscreen .exam-qr-image {
+  min-height: 0;
+  border: 0;
+}
+.exam-qr-panel:fullscreen .exam-qr-image img {
+  width: min(52vh, 560px);
+}
+.exam-qr-help {
+  margin: 16px 0 10px;
+  color: var(--muted);
+  font-size: 12px;
+}
+.exam-qr-link {
+  display: block;
+  overflow-wrap: anywhere;
+  padding: 9px 11px;
+  border-radius: 7px;
+  background: var(--surface);
+  color: var(--ink);
+  font-size: 11px;
+}
+.exam-qr-actions {
+  flex-wrap: wrap;
+  margin-top: 18px;
+}
+.exam-qr-panel:fullscreen .exam-qr-actions,
+.exam-qr-panel:fullscreen .exam-qr-help,
+.exam-qr-panel:fullscreen .exam-qr-link {
+  display: none;
+}
+@media (max-width: 560px) {
+  .exam-qr-panel {
+    padding: 20px;
+  }
+  .exam-qr-image {
+    min-height: 220px;
+  }
+  .exam-qr-actions > button {
+    flex: 1 1 100%;
+  }
+}
 .upload {
   display: inline-flex;
   flex-direction: column;

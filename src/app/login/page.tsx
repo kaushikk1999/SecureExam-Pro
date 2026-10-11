@@ -4,7 +4,7 @@ import { signIn, signOut, getProviders } from "next-auth/react";
 import { ShieldCheck, ArrowRight, LockKeyhole } from "lucide-react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { matchesLoginAudience } from "@/lib/auth-role";
+import { matchesLoginAudience, safeStudentReturnPath } from "@/lib/auth-role";
 export default function Login() {
   const router = useRouter();
   const [error, setError] = useState(""),
@@ -22,6 +22,10 @@ export default function Login() {
       .catch(() => {});
     const params = new URLSearchParams(window.location.search);
     const requestedRole = params.get("role");
+    const returnTo =
+      requestedRole === "student"
+        ? (safeStudentReturnPath(params.get("next")) ?? "/workspace")
+        : "/workspace";
     if (requestedRole === "student" || requestedRole === "teacher") {
       setAudience(requestedRole);
       void fetch("/api/auth/session", { cache: "no-store" })
@@ -30,7 +34,7 @@ export default function Login() {
           const role = session?.user?.role;
           if (!role) return;
           const allowed = matchesLoginAudience(role, requestedRole);
-          if (allowed) router.replace("/workspace");
+          if (allowed) router.replace(returnTo);
           else {
             await signOut({ redirect: false });
             setError(
@@ -78,7 +82,21 @@ export default function Login() {
       );
       return;
     }
-    router.replace("/workspace");
+    const params = new URLSearchParams(window.location.search);
+    const returnTo =
+      role === "student"
+        ? (safeStudentReturnPath(params.get("next")) ?? "/workspace")
+        : "/workspace";
+    router.replace(returnTo);
+  }
+  function authCallbackUrl(role: "student" | "teacher") {
+    const next =
+      role === "student"
+        ? safeStudentReturnPath(
+            new URLSearchParams(window.location.search).get("next"),
+          )
+        : null;
+    return `/login?role=${role}${next ? `&next=${encodeURIComponent(next)}` : ""}`;
   }
   return (
     <main className="login-page">
@@ -150,7 +168,7 @@ export default function Login() {
               className="primary large"
               onClick={() =>
                 void signIn("google", {
-                  callbackUrl: `/login?role=${audience}`,
+                  callbackUrl: authCallbackUrl(audience),
                 })
               }
             >
@@ -162,7 +180,7 @@ export default function Login() {
               className="primary large"
               onClick={() =>
                 void signIn("university", {
-                  callbackUrl: `/login?role=${audience}`,
+                  callbackUrl: authCallbackUrl(audience),
                 })
               }
             >

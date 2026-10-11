@@ -15,7 +15,7 @@ import {
 } from "./domain";
 export async function ownedExam(id: string, u: Actor, tx?: Tx) {
   const [e] = await query(
-    sql`SELECT e.*,c.teacher_id,c.code AS course_code,c.name AS course_name FROM exams e JOIN courses c ON c.id=e.course_id WHERE e.id=${id}`,
+    sql`SELECT e.*,c.teacher_id,c.code AS course_code,c.name AS course_name,c.section AS course_section FROM exams e JOIN courses c ON c.id=e.course_id WHERE e.id=${id}`,
     tx,
   );
   if (!e) throw new HttpError(404, "Exam not found.");
