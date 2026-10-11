@@ -18,22 +18,6 @@ Set `SSO_ISSUER`, `SSO_CLIENT_ID`, and `SSO_CLIENT_SECRET`; the issuer must exac
 
 If local MFA is configured or teacher MFA is mandatory, the ID token must include `SSO_REQUIRED_AMR` (default `mfa`) in its `amr` list. Verify the provider's actual claim policy before enabling access. Mapping changes revoke the affected user's current application sessions. See [NextAuth's OAuth provider configuration](https://next-auth.js.org/configuration/providers/oauth).
 
-## Optional Canvas LMS
-
-Canvas was selected as the initial adapter; no university Canvas instance is connected by default. Set `CANVAS_BASE_URL` to its HTTPS origin (no path) and `CANVAS_ACCESS_TOKEN` to a server-side token with the required enrollment-read and submission-grade permissions. Only administrators can configure mappings or run synchronization.
-
-1. Map a local course to a Canvas course ID.
-2. Preview its roster. Active StudentEnrollment entries must expose a usable email/login ID. The preview shows existing-account enrollments and new student accounts. Review every entry, then confirm within 15 minutes. Data is fetched again and changes invalidate the preview.
-3. Imports add student accounts and enrollments atomically, preserving existing roles, account names, passwords, disabled status and eligibility. They never remove enrollments. Imported new accounts have an unknown random password: use verified Google login, explicit SSO mapping or the existing administrator password-setting workflow. Importing accounts does not email credentials.
-4. Map a local exam to a Canvas assignment ID within that mapped course. Release grades locally first.
-5. Preview grade synchronization. Each batch contains at most 20 completed attempts. Choose starting record 0, then the displayed next starting record for subsequent batches. Unmapped students and incompletely graded attempts are explicitly skipped. Verify skipped records and repeat from a fresh preview after correcting them.
-6. Confirm the reviewed changes. Each write sends the absolute percentage earned, without silently clamping negative marks. The server rechecks the grade and result-release status before each write. Canvas controls whether its own grades are posted to students according to its assignment policy.
-7. Inspect Sync history. Partial failures are reported per student. Retry by creating a new preview; absolute grade writes and enrollment uniqueness make repeated sends safe. A process interrupted while RUNNING retains completed grade-write results; preview again after checking the history. Large institutions should deploy a durable job runner before increasing the bounded batch sizes.
-
-Roster pagination is bounded at 20 pages of 100 records. Foreign-origin pagination URLs and redirects are rejected so the Canvas token is not forwarded elsewhere. No existing role or student eligibility is changed, and no official exam attempt is created by import.
-
-API references: [Canvas enrollments](https://developerdocs.instructure.com/services/canvas/resources/enrollments) and [Canvas submissions](https://developerdocs.instructure.com/services/canvas/resources/submissions).
-
 ## Deployment and rollback
 
 Run `npm run db:migrate` before starting the new build. Migration 005 is additive. Keep a normal database backup for production deployment. To roll back application code, restore the prior source/build; the additional tables can remain, preserving practice and appeal history. The local pre-expansion source archive is `.data/backups/before-expansion.tar.gz`; it is a code snapshot, not a database backup.

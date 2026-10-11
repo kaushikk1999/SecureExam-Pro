@@ -12,7 +12,6 @@ const { db, query } = await import("../src/lib/db");
 const { GET, POST } = await import("../src/app/api/platform/[...path]/route");
 const { resolveGoogleIdentity, resolveUniversityIdentity } =
   await import("../src/lib/sso");
-const { canvasFetch } = await import("../src/lib/university-integrations");
 const admin = randomUUID(),
   teacher = randomUUID(),
   foreign = randomUUID(),
@@ -340,127 +339,12 @@ it("requires explicit issuer/subject mappings for custom OIDC", async () => {
   );
   delete process.env.REQUIRE_TEACHER_MFA;
 });
-it("fails cleanly when Canvas is not configured", async () => {
-  delete process.env.CANVAS_BASE_URL;
-  delete process.env.CANVAS_ACCESS_TOKEN;
+it("does not expose removed LMS synchronization routes", async () => {
   login(admin);
   expect(
-    (
-      await request("integrations/preview", {
-        kind: "ROSTER",
-        targetId: course,
-      })
-    ).status,
-  ).toBe(503);
-});
-function canvasMock() {
-  process.env.CANVAS_BASE_URL = "https://canvas.example.test";
-  process.env.CANVAS_ACCESS_TOKEN = "test-token";
-  const mock = vi.fn(
-    async () =>
-      new Response(
-        JSON.stringify([
-          { user: { id: 42, name: "Student", login_id: "student@gmail.com" } },
-          {
-            user: {
-              id: 43,
-              name: "New Student",
-              login_id: "imported@gmail.com",
-            },
-          },
-        ]),
-        { status: 200, headers: { "content-type": "application/json" } },
-      ),
-  );
-  vi.stubGlobal("fetch", mock);
-  return mock;
-}
-it("previews and imports roster/account enrollment changes idempotently", async () => {
-  canvasMock();
-  login(admin);
-  await ok("integrations/mapping", {
-    kind: "course",
-    localId: course,
-    externalId: "7",
-  });
-  const p = await ok("integrations/preview", {
-    kind: "ROSTER",
-    targetId: course,
-  });
-  expect(p.preview.entries[1].action).toContain("Create");
-  await ok("integrations/confirm/" + p.id, {});
-  expect((await request("integrations/confirm/" + p.id, {})).status).toBe(409);
-  const next = await ok("integrations/preview", {
-    kind: "ROSTER",
-    targetId: course,
-  });
-  await ok("integrations/confirm/" + next.id, {});
-  expect(
-    (
-      await query(
-        sql`SELECT count(*)::int AS n FROM users WHERE email='imported@gmail.com'`,
-      )
-    )[0].n,
-  ).toBe(1);
-  expect(
-    (
-      await query(
-        sql`SELECT count(*)::int AS n FROM enrollments WHERE course_id=${course}`,
-      )
-    )[0].n,
-  ).toBe(2);
-});
-it("rejects changed grade previews and sends absolute released percentages", async () => {
-  const fetch = canvasMock();
-  login(admin);
-  await ok("integrations/mapping", {
-    kind: "exam",
-    localId: exam,
-    externalId: "9",
-  });
-  let p = await ok("integrations/preview", { kind: "GRADES", targetId: exam });
-  expect(p.preview.entries[0].percent).toBe(50);
-  await db.execute(sql`UPDATE attempts SET score=6 WHERE id=${attempt}`);
-  expect((await request("integrations/confirm/" + p.id, {})).status).toBe(409);
-  p = await ok("integrations/preview", { kind: "GRADES", targetId: exam });
-  await ok("integrations/confirm/" + p.id, {});
-  expect(fetch).toHaveBeenCalled();
-  const init = (fetch.mock.calls.at(-1) as any)[1];
-  expect(JSON.parse(init.body).submission.posted_grade).toBe("60.0000%");
-  await db.execute(
-    sql`UPDATE exams SET results_released=false WHERE id=${exam}`,
-  );
-  expect(
-    (await request("integrations/preview", { kind: "GRADES", targetId: exam }))
+    (await request("integrations/preview", { kind: "ROSTER", targetId: course }))
       .status,
-  ).toBe(409);
-  await db.execute(
-    sql`UPDATE exams SET results_released=true WHERE id=${exam}`,
-  );
-});
-it("records partial Canvas failures without claiming success", async () => {
-  canvasMock();
-  login(admin);
-  const p = await ok("integrations/preview", {
-    kind: "GRADES",
-    targetId: exam,
-  });
-  vi.stubGlobal(
-    "fetch",
-    vi.fn(async () => new Response("", { status: 403 })),
-  );
-  const r = await ok("integrations/confirm/" + p.id, {});
-  expect(r.status).toBe("PARTIAL");
-  expect(r.results[0].status).toBe("FAILED");
-});
-it("never sends the Canvas token to another origin or a redirect", async () => {
-  const fetch = canvasMock();
-  await expect(
-    canvasFetch("https://evil.example/api/v1/users"),
-  ).rejects.toThrow("Invalid Canvas");
-  expect(fetch).not.toHaveBeenCalled();
-  await canvasFetch("/api/v1/courses/7");
-  expect((fetch.mock.calls[0] as any)[1].redirect).toBe("error");
+  ).toBe(404);
 });
 
 it("shows only unexpired disconnected attempts in the instructor support queue", async () => {
@@ -479,38 +363,4 @@ it("shows only unexpired disconnected attempts in the instructor support queue",
   await db.execute(
     sql`UPDATE attempts SET status='SUBMITTED' WHERE id=${attempt}`,
   );
-});
-it("bounds grade synchronization previews and exposes the next batch", async () => {
-  canvasMock();
-  login(admin);
-  for (let i = 0; i < 21; i++) {
-    const id = randomUUID();
-    await db.execute(
-      sql`INSERT INTO users(id,email,name,password_hash,role) VALUES(${id},${"batch-" + i + "@test.local"},'Batch student','unused','STUDENT')`,
-    );
-    await db.execute(
-      sql`INSERT INTO attempts(id,exam_id,user_id,device_session_id,status,question_order,deadline,score) VALUES(${randomUUID()},${exam},${id},${randomUUID()},'SUBMITTED',${JSON.stringify([question])}::jsonb,now(),7)`,
-    );
-  }
-  const first = await ok("integrations/preview", {
-    kind: "GRADES",
-    targetId: exam,
-    offset: 0,
-  });
-  expect(first.preview.entries).toHaveLength(20);
-  expect(first.preview.nextOffset).toBe(20);
-  const second = await ok("integrations/preview", {
-    kind: "GRADES",
-    targetId: exam,
-    offset: 20,
-  });
-  expect(second.preview.entries).toHaveLength(2);
-  expect(second.preview.nextOffset).toBeNull();
-  expect(
-    first.preview.entries
-      .map((r: any) => r.id)
-      .filter((id: string) =>
-        second.preview.entries.some((r: any) => r.id === id),
-      ),
-  ).toEqual([]);
 });

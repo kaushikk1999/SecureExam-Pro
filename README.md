@@ -10,7 +10,7 @@ A Next.js examination workspace for Bangkok University, with PostgreSQL as the a
 - Vercel configuration is included. No cloud deployment has been performed.
 - Private file storage, Google Sheets and Ollama are disabled gracefully until configured.
 - Expansion: isolated practice/readiness, instructor action center, student learning, question analytics and incident appeals are available in role-specific workspace navigation.
-- Google login and optional custom OIDC/Canvas integrations are implemented but require provider credentials. See [system design](docs/EXPANSION-DESIGN.md) and [integration setup](docs/UNIVERSITY-INTEGRATIONS.md).
+- Google login and optional custom university OpenID Connect are implemented but require provider credentials. See [system design](docs/EXPANSION-DESIGN.md) and [integration setup](docs/UNIVERSITY-INTEGRATIONS.md).
 
 ## 2. Architecture
 

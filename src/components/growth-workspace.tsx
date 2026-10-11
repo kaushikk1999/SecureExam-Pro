@@ -808,288 +808,87 @@ function Appeals({ user }: { user: Actor }) {
 function Integrations() {
   const { data, error, refresh } = useData("growth/integrations");
   const task = useTask();
-  const [preview, setPreview] = useState<any>(null);
   return (
     <>
       <Intro
-        title="University integrations"
-        text="Administrator-managed login, roster import and released-grade synchronization."
+        title="Sign-in integrations"
+        text="Administrator-managed Google and university sign-in."
         icon={Plug}
       />
       <ErrorBox message={error} />
       <Feedback task={task} />
       {!data ? (
-        error ? null : (
-          <Loading />
-        )
+        error ? null : <Loading />
       ) : (
-        <>
-          <section className={styles.card}>
-            <h2>Google & university login</h2>
-            <div className={styles.row}>
-              <span>Google login</span>
-              <strong>
-                {data.google?.configured ? "Configured" : "Not configured"}
-              </strong>
-            </div>
-            <p>
-              Google login matches a verified Google-managed email to an
-              existing active account. Unregistered users cannot create accounts
-              here. Configure GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET on the
-              server.
-            </p>
-            <div className={styles.row}>
-              <span>Optional OpenID Connect</span>
-              <strong>
-                {data.sso.configured ? "Configured" : "Not configured"}
-              </strong>
-            </div>
-            <p>
-              Custom university providers use an administrator-approved issuer
-              and subject mapping. Existing passwords and roles stay intact.
-            </p>
-            {data.sso.configured && (
-              <>
-                <p>Issuer: {data.sso.issuer}</p>
-                <form
-                  className={styles.form}
-                  onSubmit={(e) => {
-                    e.preventDefault();
-                    const f = new FormData(e.currentTarget);
-                    void task.run(async () => {
-                      await api("growth/integrations/identity", {
-                        email: f.get("email"),
-                        subject: f.get("subject"),
-                        remove: f.get("mode") === "remove",
-                      });
-                      await refresh();
+        <section className={styles.card}>
+          <h2>Google & university login</h2>
+          <div className={styles.row}>
+            <span>Google login</span>
+            <strong>
+              {data.google?.configured ? "Configured" : "Not configured"}
+            </strong>
+          </div>
+          <p>
+            Google login matches a verified Google-managed email to an
+            existing active account. Unregistered users cannot create accounts
+            here. Configure GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET on the
+            server.
+          </p>
+          <div className={styles.row}>
+            <span>Optional OpenID Connect</span>
+            <strong>
+              {data.sso.configured ? "Configured" : "Not configured"}
+            </strong>
+          </div>
+          <p>
+            Custom university providers use an administrator-approved issuer
+            and subject mapping. Existing passwords and roles stay intact.
+          </p>
+          {data.sso.configured && (
+            <>
+              <p>Issuer: {data.sso.issuer}</p>
+              <form
+                className={styles.form}
+                onSubmit={(e) => {
+                  e.preventDefault();
+                  const f = new FormData(e.currentTarget);
+                  void task.run(async () => {
+                    await api("growth/integrations/identity", {
+                      email: f.get("email"),
+                      subject: f.get("subject"),
+                      remove: f.get("mode") === "remove",
                     });
-                  }}
-                >
-                  <label>
-                    Existing account email
-                    <input name="email" type="email" required />
-                  </label>
-                  <label>
-                    Provider subject identifier
-                    <input name="subject" required maxLength={255} />
-                  </label>
-                  <label>
-                    Action
-                    <select name="mode">
-                      <option value="add">Link identity</option>
-                      <option value="remove">
-                        Unlink identity and revoke sessions
-                      </option>
-                    </select>
-                  </label>
-                  <button disabled={task.busy}>Save identity mapping</button>
-                </form>
-                {data.identities.map((i: any) => (
-                  <p key={i.subject}>
-                    {i.email} · {i.subject}
-                  </p>
-                ))}
-              </>
-            )}
-          </section>
-          <section className={styles.card}>
-            <h2>Canvas LMS</h2>
-            <p>
-              {data.canvas.configured
-                ? `Configured: ${data.canvas.origin}`
-                : "Not connected. Set CANVAS_BASE_URL and CANVAS_ACCESS_TOKEN on the server."}
-            </p>
-            <p>
-              Roster import adds student accounts and enrollments. It never
-              deletes students or changes roles. Newly imported accounts need
-              Google/SSO access or an administrator-issued password. Grade
-              synchronization sends released, completed grades as percentages.
-            </p>
-            <div className={styles.columns}>
-              {(["course", "exam"] as const).map((kind) => (
-                <form
-                  className={styles.form}
-                  key={kind}
-                  onSubmit={(e) => {
-                    e.preventDefault();
-                    const f = new FormData(e.currentTarget);
-                    void task.run(async () => {
-                      await api("growth/integrations/mapping", {
-                        kind,
-                        localId: f.get("localId"),
-                        externalId: f.get("externalId"),
-                      });
-                      await refresh();
-                    });
-                  }}
-                >
-                  <h3>
-                    {kind === "course"
-                      ? "Course mapping"
-                      : "Assignment mapping"}
-                  </h3>
-                  <label>
-                    Local {kind}
-                    <select name="localId" required>
-                      <option value="">Choose {kind}</option>
-                      {(kind === "course" ? data.courses : data.exams).map(
-                        (r: any) => (
-                          <option key={r.id} value={r.id}>
-                            {r.title ?? r.code + " " + r.name}
-                            {r.external_id ? " → " + r.external_id : ""}
-                          </option>
-                        ),
-                      )}
-                    </select>
-                  </label>
-                  <label>
-                    Canvas {kind === "course" ? "course" : "assignment"} ID
-                    <input name="externalId" required pattern="[0-9]{1,20}" />
-                  </label>
-                  <button disabled={task.busy}>Save {kind} mapping</button>
-                </form>
-              ))}
-            </div>
-          </section>
-          <section className={styles.card}>
-            <h2>Preview synchronization</h2>
-            <div className={styles.columns}>
-              {(["ROSTER", "GRADES"] as const).map((kind) => (
-                <form
-                  className={styles.form}
-                  key={kind}
-                  onSubmit={(e) => {
-                    e.preventDefault();
-                    const f = new FormData(e.currentTarget);
-                    void task.run(async () => {
-                      setPreview(
-                        await api("growth/integrations/preview", {
-                          kind,
-                          targetId: f.get("targetId"),
-                          offset: Number(f.get("offset") ?? 0),
-                        }),
-                      );
-                    }, "Preview ready. Review the exact changes before confirming.");
-                  }}
-                >
-                  <label>
-                    {kind === "ROSTER"
-                      ? "Import course roster"
-                      : "Send released exam grades"}
-                    <select name="targetId" required>
-                      <option value="">Choose target</option>
-                      {(kind === "ROSTER" ? data.courses : data.exams).map(
-                        (r: any) => (
-                          <option key={r.id} value={r.id}>
-                            {r.title ?? r.code + " " + r.name}
-                          </option>
-                        ),
-                      )}
-                    </select>
-                  </label>
-                  {kind === "GRADES" && (
-                    <label>
-                      Starting record (0 for first batch)
-                      <input
-                        name="offset"
-                        type="number"
-                        min="0"
-                        max="100000"
-                        defaultValue="0"
-                      />
-                    </label>
-                  )}
-                  <button disabled={task.busy || !data.canvas.configured}>
-                    Preview {kind.toLowerCase()}
-                  </button>
-                </form>
-              ))}
-            </div>
-            {preview && (
-              <div className={styles.case}>
-                <h3>
-                  {preview.kind} preview · {preview.preview.entries.length}{" "}
-                  records
-                </h3>
-                <p>
-                  Expires after 15 minutes. Data is rechecked on confirmation.
-                  Grade sync runs in batches of 20.
+                    await refresh();
+                  });
+                }}
+              >
+                <label>
+                  Existing account email
+                  <input name="email" type="email" required />
+                </label>
+                <label>
+                  Provider subject identifier
+                  <input name="subject" required maxLength={255} />
+                </label>
+                <label>
+                  Action
+                  <select name="mode">
+                    <option value="add">Link identity</option>
+                    <option value="remove">
+                      Unlink identity and revoke sessions
+                    </option>
+                  </select>
+                </label>
+                <button disabled={task.busy}>Save identity mapping</button>
+              </form>
+              {data.identities.map((i: any) => (
+                <p key={i.subject}>
+                  {i.email} · {i.subject}
                 </p>
-                {preview.preview.nextOffset != null && (
-                  <p>
-                    Next batch starts at record {preview.preview.nextOffset} of{" "}
-                    {preview.preview.total}. Preview that starting record after
-                    this batch.
-                  </p>
-                )}
-                <div className={styles.tableWrap}>
-                  <table>
-                    <thead>
-                      <tr>
-                        <th>Student</th>
-                        <th>Change</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {preview.preview.entries.map((r: any, i: number) => (
-                        <tr key={i}>
-                          <td>
-                            {r.name}
-                            <small>{r.email}</small>
-                          </td>
-                          <td>
-                            {r.action ??
-                              r.skip ??
-                              `${Number(r.percent).toFixed(2)}% → Canvas`}
-                          </td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-                <button
-                  className="primary"
-                  disabled={task.busy}
-                  onClick={() =>
-                    void task.run(async () => {
-                      const r = await api(
-                        "growth/integrations/confirm/" + preview.id,
-                        {},
-                      );
-                      setPreview(null);
-                      await refresh();
-                      if (r.status === "PARTIAL")
-                        throw new Error(
-                          "Some records were skipped or failed. Review sync history before retrying.",
-                        );
-                    }, "Synchronization complete.")
-                  }
-                >
-                  Confirm these changes
-                </button>
-              </div>
-            )}
-          </section>
-          <section className={styles.card}>
-            <h2>Sync history</h2>
-            {!data.runs.length && <p>No synchronization runs yet.</p>}
-            {data.runs.map((r: any) => (
-              <details className={styles.details} key={r.id}>
-                <summary>
-                  {r.kind} · {r.status} · {time(r.created_at)}
-                </summary>
-                {r.status === "RUNNING" && (
-                  <p>
-                    If this run was interrupted, preview again to safely retry
-                    absolute grade writes or roster enrollment.
-                  </p>
-                )}
-                <pre>{JSON.stringify(r.result, null, 2)}</pre>
-              </details>
-            ))}
-          </section>
-        </>
+              ))}
+            </>
+          )}
+        </section>
       )}
     </>
   );

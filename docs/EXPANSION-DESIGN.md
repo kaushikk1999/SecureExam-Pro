@@ -10,10 +10,8 @@ flowchart LR
   API --> Practice[Isolated practice saves]
   API --> Reports[Read-only learning and analytics]
   API --> Cases[Transactional appeals and review]
-  API --> LMS[Preview / confirm LMS synchronization]
   Reports --> Core[Existing exam database]
   Cases --> Audit[Append-only audit]
-  LMS --> Canvas[Canvas API adapter]
   Google[Google login] --> Auth
   OIDC[University OpenID Connect] --> Auth[Existing session and role checks]
 ```
@@ -24,12 +22,12 @@ flowchart LR
 2. **Action center:** Instructor-scoped pending check-ins, active attempts with stale heartbeats, unreviewed warning events, and pending appeals. Approvals reuse existing check-in authorization. Event reviews are durable and audited. Stale heartbeat means connection needs attention, not misconduct.
 3. **Learning:** Students see only their completed attempts for exams with released results. Normalize scores against available marks; separate pending grading from zero. Group marked answers by topic and include instructor feedback. Practice is excluded.
 4. **Analytics:** Teachers see only their courses. Aggregate completed, graded responses, sample size, average credit, blank rate and option distributions. Low average credit suggests review, not that a question is defective. Small samples are labeled. Practice is excluded.
-5. **SSO/LMS:** Optional environment-configured OpenID Connect using discovery, PKCE/state/nonce and issuer/subject mappings explicitly assigned by an administrator. Never auto-promote. Custom OIDC requires explicit issuer/subject mapping. Google login can bind a verified Google-managed email to an existing active local account, then uses the stable subject; it never creates public accounts or bypasses local OTP requirements. Optional Canvas adapter; secrets remain server-side. Administrator maps local courses and exams to Canvas IDs, previews roster/account enrollment changes and released grade writes, then confirms a stored preview. Tokens only go to the configured HTTPS origin. Sync results and failures remain visible. No removal of existing enrollments; no role changes. Preview and retry semantics prevent surprise broad writes.
+5. **Sign-in integrations:** Optional environment-configured OpenID Connect using discovery, PKCE/state/nonce and issuer/subject mappings explicitly assigned by an administrator. Never auto-promote. Custom OIDC requires explicit issuer/subject mapping. Google login can bind a verified Google-managed email to an existing active local account, then uses the stable subject; it never creates public accounts or bypasses local OTP requirements.
 6. **Appeals:** Student selects their own recorded warning, submits explanation; owner instructor/admin reviews and records a reasoned decision. Version checks prevent overwriting concurrent decisions. Timeline preserves prior decisions and one student reopening request. Decisions do not silently change marks, warnings or attempts; existing instructor controls remain explicit.
 
 ## Data and authorization
 
-Migration 005 adds practice_sessions, incident_reviews, appeals, appeal_messages, sso_identities, lms_course_links, lms_exam_links, lms_users and integration_runs. References point to existing users/exams/events. All extension requests pass existing origin, session-version and rate-limit checks. Mutations use strict schemas and transactions. Student evidence responses expose event type/time/severity, not private instructor metadata.
+Migration 005 adds practice_sessions, incident_reviews, appeals, appeal_messages, sso_identities and legacy LMS tables. The LMS tables remain unused for compatibility with databases where the migration has already run. References point to existing users/exams/events. All extension requests pass existing origin, session-version and rate-limit checks. Mutations use strict schemas and transactions. Student evidence responses expose event type/time/severity, not private instructor metadata.
 
 ## API boundaries
 
@@ -42,10 +40,10 @@ All routes below are relative to `/api/platform/growth`:
 | GET learning | Student, own records | Released results, feedback and topic aggregates |
 | GET analytics | Owner instructor/admin | Completed-response statistics |
 | GET/POST appeals; POST appeals/:id/update | Student owner or course instructor/admin | Explanation, review, decision and one reopening |
-| GET integrations; POST integrations/* | Admin | Configuration status, identity/course mappings, preview/confirm sync |
+| GET integrations; POST integrations/identity | Admin | Sign-in provider status and custom OIDC identity mappings |
 
-Grade writes are bounded to 20 records per confirmed preview. Imports never change roles, disable accounts or remove enrollment. PostgreSQL row locks protect appeal versions; unique constraints protect provider subjects, incident reviews and roster identities.
+PostgreSQL row locks protect appeal versions; unique constraints protect provider subjects and incident reviews.
 
 ## Rollout and validation
 
-Apply the additive migration before serving new code. Build/typecheck/lint; run existing domain/lifecycle tests plus extension isolation, release gating, ownership, concurrent version, import idempotency and integration failure tests. Browser checks cover new navigation and forms. Provider calls are tested with mocks; real SSO and LMS acceptance require the institution's configured provider and sandbox credentials. For rollback, restore prior source/build; additive tables can remain, preserving new records.
+Apply the additive migration before serving new code. Build/typecheck/lint; run existing domain/lifecycle tests plus extension isolation, ownership, concurrent version and identity mapping tests. Browser checks cover new navigation and forms. Real SSO acceptance requires the institution's configured provider. For rollback, restore prior source/build; additive tables can remain, preserving new records.

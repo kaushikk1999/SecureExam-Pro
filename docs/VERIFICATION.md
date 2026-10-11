@@ -75,8 +75,8 @@ The additive 005 migration was applied to local PostgreSQL. The optimized applic
 | Audit verification | Zero integrity failures after extension and browser workflows |
 | Visual review | Desktop and 390px mobile practice layouts inspected; no horizontal overflow; warning forms collapsed for scanability |
 
-The additional tests cover practice isolation and stale saves, grade-release gating and student privacy, teacher course isolation, bounded grade previews, stale-preview rejection, partial sync failures, issuer/subject ownership, Google verified-email binding and MFA restrictions, expired-session filtering, incident review uniqueness and appeal version transitions/reopening. Canvas HTTP calls in the automated integration tests are mocked: **no real LMS writes were performed**.
+The additional tests cover practice isolation and stale saves, grade-release gating and student privacy, teacher course isolation, removed LMS route rejection, issuer/subject ownership, Google verified-email binding and MFA restrictions, expired-session filtering, incident review uniqueness and appeal version transitions/reopening.
 
 Two browser test selectors were corrected for persistent local data and Next.js's accessibility route announcer. Repeated verification logins hit the existing login rate limit; only the local seeded teacher's test throttle record was reset before the targeted rerun. No application security threshold was weakened.
 
-Google OAuth credentials and Canvas credentials are absent in the local environment. Their integration code, configuration UI, authorization and failure handling are implemented, but real Google sign-in and real Canvas acceptance are **not verified or enabled**. Follow [UNIVERSITY-INTEGRATIONS.md](UNIVERSITY-INTEGRATIONS.md) to configure them. Ordinary credentials login continues to work.
+Google and custom university OpenID Connect provider credentials are environment-specific; real provider acceptance must be checked against the configured production providers. Canvas integration has been removed from the application. Ordinary credentials login continues to work.
