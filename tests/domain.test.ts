@@ -11,6 +11,7 @@ import {
   auditHash,
   classroomCode,
   CLASSROOM_CODE_WINDOW_MS,
+  validClassroomCode,
 } from "../src/lib/domain";
 const room = { latitude: 14, longitude: 100, radius: 100, accuracy: 30 };
 describe("location uncertainty", () => {
@@ -81,12 +82,24 @@ describe("determinism and grades", () => {
     expect(auditHash("GENESIS", { event: 1 })).not.toBe(
       auditHash("GENESIS", { event: 2 }),
     ));
-  it("room codes rotate by time window", () => {
-    expect(classroomCode("secret", 1000)).toBe(
-      classroomCode("secret", CLASSROOM_CODE_WINDOW_MS - 1),
-    );
-    expect(classroomCode("secret", 1000)).not.toBe(
-      classroomCode("secret", CLASSROOM_CODE_WINDOW_MS),
-    );
+  it("room codes remain valid for five minutes after issue", () => {
+    const issuedAt = 123456;
+    const secret = "a".repeat(64);
+    const code = classroomCode(secret, issuedAt);
+    const storedSecret = `${secret}:${issuedAt}`;
+    expect(classroomCode(secret, issuedAt)).toBe(code);
+    expect(validClassroomCode(storedSecret, code, issuedAt)).toBe(true);
+    expect(
+      validClassroomCode(
+        storedSecret,
+        code,
+        issuedAt + CLASSROOM_CODE_WINDOW_MS - 1,
+      ),
+    ).toBe(true);
+    expect(
+      validClassroomCode(storedSecret, code, issuedAt + CLASSROOM_CODE_WINDOW_MS),
+    ).toBe(false);
+    expect(validClassroomCode(storedSecret, code, issuedAt - 1)).toBe(false);
+    expect(validClassroomCode(storedSecret, "000000", issuedAt)).toBe(false);
   });
 });

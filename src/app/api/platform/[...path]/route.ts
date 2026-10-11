@@ -23,6 +23,7 @@ import {
 import {
   classroomSchema,
   classroomCode,
+  classroomCodeSecret,
   CLASSROOM_CODE_WINDOW_MS,
   csv,
 } from "@/lib/domain";
@@ -487,14 +488,35 @@ async function dispatch(req: Request, parts: string[]) {
     }
     teacher(u);
     const e = await ownedExam(id, u);
-    if (action === "room-code")
+    if (action === "room-code") {
+      const nowMs = Date.now();
+      const roomCode = await db.transaction(async (tx) => {
+        const [current] = await query(
+          sql`SELECT code_secret FROM exams WHERE id=${id} FOR UPDATE`,
+          tx,
+        );
+        const match = /^([a-f0-9]{64}):(\d+)$/.exec(current.code_secret);
+        const secret = match?.[1] ?? current.code_secret;
+        let issuedAt = match ? Number(match[2]) : 0;
+        if (
+          !issuedAt ||
+          issuedAt > nowMs ||
+          nowMs >= issuedAt + CLASSROOM_CODE_WINDOW_MS
+        ) {
+          issuedAt = nowMs;
+          await tx.execute(
+            sql`UPDATE exams SET code_secret=${classroomCodeSecret(secret, issuedAt)} WHERE id=${id}`,
+          );
+        }
+        return { secret, issuedAt };
+      });
       return json({
-        code: classroomCode(e.code_secret),
+        code: classroomCode(roomCode.secret, roomCode.issuedAt),
         expiresAt: new Date(
-          (Math.floor(Date.now() / CLASSROOM_CODE_WINDOW_MS) + 1) *
-            CLASSROOM_CODE_WINDOW_MS,
+          roomCode.issuedAt + CLASSROOM_CODE_WINDOW_MS,
         ).toISOString(),
       });
+    }
     if (action === "export") {
       const rows = await reportRows(id, u);
       if (url.searchParams.get("format") === "xlsx") {

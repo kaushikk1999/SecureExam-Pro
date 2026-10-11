@@ -4,7 +4,7 @@ import { db, query, type Tx } from "./db";
 import { audit } from "./audit";
 import { HttpError, type Actor } from "./auth";
 import {
-  classroomCode,
+  validClassroomCode,
   deadline,
   geofence,
   grade,
@@ -190,7 +190,10 @@ export async function startAttempt(
           "You are currently outside the authorized examination location. Please enter the assigned classroom and retry.",
         );
     }
-    if (p.classroomCode && input.code !== classroomCode(e.code_secret))
+    if (
+      p.classroomCode &&
+      !validClassroomCode(e.code_secret, input.code)
+    )
       throw new HttpError(400, "Classroom code is incorrect or expired.");
     if (p.teacherApproval) {
       const [check] = await query(

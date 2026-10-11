@@ -116,10 +116,36 @@ export const CLASSROOM_CODE_WINDOW_MS = 5 * 60_000;
 
 export function classroomCode(secret: string, time = Date.now()) {
   const n = createHmac("sha256", secret)
+    .update(String(time))
+    .digest()
+    .readUInt32BE(0);
+  return String(n % 1000000).padStart(6, "0");
+}
+function legacyClassroomCode(secret: string, time = Date.now()) {
+  const n = createHmac("sha256", secret)
     .update(String(Math.floor(time / CLASSROOM_CODE_WINDOW_MS)))
     .digest()
     .readUInt32BE(0);
   return String(n % 1000000).padStart(6, "0");
+}
+export function validClassroomCode(
+  storedSecret: string,
+  code: string,
+  now = Date.now(),
+) {
+  const match = /^([a-f0-9]{64}):(\d+)$/.exec(storedSecret);
+  const secret = match?.[1] ?? storedSecret;
+  if (!match) return code === legacyClassroomCode(secret, now);
+  const issuedAtMs = Number(match[2]);
+  return (
+    Number.isFinite(issuedAtMs) &&
+    issuedAtMs <= now &&
+    now < issuedAtMs + CLASSROOM_CODE_WINDOW_MS &&
+    code === classroomCode(secret, issuedAtMs)
+  );
+}
+export function classroomCodeSecret(secret: string, issuedAt: number) {
+  return `${secret}:${issuedAt}`;
 }
 export function remaining(deadline: string | Date, now = Date.now()) {
   return Math.max(0, new Date(deadline).getTime() - now);
