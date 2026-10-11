@@ -2,13 +2,25 @@ import "dotenv/config";
 import { test, expect, type Page } from "@playwright/test";
 async function login(page: Page, email: string) {
   await page.goto("/login");
+  const audience = email === "teacher@example.test" ? "teacher" : "student";
+  await page
+    .getByRole("group", { name: "Choose sign-in type" })
+    .getByRole("button", { name: new RegExp(audience, "i") })
+    .click();
   await page.getByLabel("University email").fill(email);
   await page
     .getByLabel("Password", { exact: true })
     .fill(process.env.SEED_PASSWORD!);
-  await page.getByRole("button", { name: "Sign in securely" }).click();
+  await page.getByRole("button", { name: `Sign in as ${audience}` }).click();
   await expect(page).toHaveURL(/workspace/);
 }
+test("explains the correct BU student account after Google access is denied", async ({
+  page,
+}) => {
+  await page.goto("/login?error=AccessDenied");
+  await expect(page.locator("p[role='alert']")).toContainText("@bumail.net");
+  await expect(page.locator("p[role='alert']")).toContainText("@bu.ac.th");
+});
 test("teacher workspace, authoring, audit and responsive layout", async ({
   page,
 }) => {
@@ -377,7 +389,7 @@ test("new instructor action center, analytics, appeals and integration controls 
     ["Action center", "Instructor action center"],
     ["Question analytics", "Question analytics"],
     ["Incident appeals", "Incident appeals"],
-    ["University integrations", "University integrations"],
+    ["University integrations", "Google & university login"],
   ]) {
     await page.getByRole("link", { name: link, exact: true }).click();
     await expect(
@@ -398,8 +410,10 @@ test("new instructor action center, analytics, appeals and integration controls 
     page.getByRole("heading", { name: "Google & university login" }),
   ).toBeVisible();
   await expect(
-    page.getByRole("button", { name: "Preview roster" }),
-  ).toBeDisabled();
+    page.getByText(
+      /verified Bangkok University student Workspace accounts ending in @bumail\.net/,
+    ),
+  ).toBeVisible();
   await page.screenshot({
     path: ".data/integrations-desktop.png",
     fullPage: true,

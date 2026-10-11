@@ -327,11 +327,20 @@ it("binds existing Google accounts and provisions verified university accounts s
   const defaultBuStudent = await resolveGoogleIdentity({
     iss: "https://accounts.google.com",
     sub: "google-default-bu-student",
-    email: "first.login@bu.ac.th",
+    email: "first.login@bumail.net",
     email_verified: true,
-    hd: "bu.ac.th",
+    hd: "bumail.net",
   });
   expect(defaultBuStudent?.role).toBe("STUDENT");
+  expect(
+    await resolveGoogleIdentity({
+      iss: "https://accounts.google.com",
+      sub: "google-incomplete-bu-domain",
+      email: "student@bu.ac",
+      email_verified: true,
+      hd: "bu.ac",
+    }),
+  ).toBeNull();
 
   vi.stubEnv("GOOGLE_AUTO_PROVISION_DOMAINS", "bu.ac.th");
   vi.stubEnv("GOOGLE_TEACHER_EMAILS", "kaushik.k@bu.ac.th");

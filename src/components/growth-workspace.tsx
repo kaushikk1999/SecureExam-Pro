@@ -829,11 +829,12 @@ function Integrations() {
             </strong>
           </div>
           <p>
-            Google login can create accounts for verified Workspace domains
-            listed in GOOGLE_AUTO_PROVISION_DOMAINS. New users start as
-            students; only exact addresses listed in GOOGLE_TEACHER_EMAILS
-            receive teacher access. Existing roles are preserved. Configure
-            these settings and the Google OAuth credentials on the server.
+            Google login can create student accounts for verified Bangkok
+            University student Workspace accounts ending in @bumail.net. Other
+            domains can be allowed through GOOGLE_AUTO_PROVISION_DOMAINS. Only
+            exact addresses listed in GOOGLE_TEACHER_EMAILS receive teacher
+            access. Existing roles are preserved. Configure the Google OAuth
+            credentials on the server.
           </p>
           <div className={styles.row}>
             <span>Optional OpenID Connect</span>

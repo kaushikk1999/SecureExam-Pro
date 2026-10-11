@@ -42,9 +42,12 @@ export default function Login() {
         })
         .catch(() => {});
     }
-    if (params.has("error"))
+    const authError = params.get("error");
+    if (authError)
       setError(
-        "Sign-in could not be completed. Check your account access or contact your administrator.",
+        authError === "AccessDenied"
+          ? "For student Google sign-in, use your verified Bangkok University Workspace account ending in @bumail.net. The @bu.ac address is incomplete; BU lists @bu.ac.th for staff Microsoft 365 accounts. If you still cannot sign in, contact BU IT."
+          : "Sign-in could not be completed. Check your account access or contact your administrator.",
       );
   }, [router]);
   const [brand, setBrand] = useState({

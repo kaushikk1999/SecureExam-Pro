@@ -63,8 +63,10 @@ export async function resolveGoogleIdentity(
   const autoProvisionDomains = configuredValues(
     process.env.GOOGLE_AUTO_PROVISION_DOMAINS,
   );
-  // This deployment is for Bangkok University: verified BU Workspace users
-  // must be able to register even if the optional Vercel allowlist is unset.
+  // BU students use Google Workspace accounts on bumail.net. Keep this enabled
+  // even when the optional Vercel allowlist is unset.
+  autoProvisionDomains.add("bumail.net");
+  // Keep support for BU staff accounts when they authenticate through Google.
   autoProvisionDomains.add("bu.ac.th");
   const teacherEmails = configuredValues(process.env.GOOGLE_TEACHER_EMAILS);
   return db.transaction(async (tx) => {
