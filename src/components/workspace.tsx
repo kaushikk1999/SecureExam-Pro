@@ -728,20 +728,26 @@ function ExamDetail({ id }: { id: string }) {
     [message, setMessage] = useState(""),
     [editing, setEditing] = useState(false),
     [code, setCode] = useState("");
-  async function action(a: string) {
+  const [controlDialog, setControlDialog] = useState<
+    "extend" | "close" | "archive" | null
+  >(null);
+  const [minutes, setMinutes] = useState("15");
+  const [busy, setBusy] = useState(false);
+  async function action(a: string, extraMinutes?: number) {
+    setBusy(true);
+    setMessage("");
     try {
-      if (
-        ["close", "archive"].includes(a) &&
-        !confirm("This submits all active attempts. Continue?")
-      )
-        return;
-      const minutes =
-        a === "extend" ? Number(prompt("Extra minutes", "15")) : undefined;
-      await api(`exams/${id}/control`, { action: a, minutes });
+      await api(`exams/${id}/control`, {
+        action: a,
+        ...(a === "extend" ? { minutes: extraMinutes } : {}),
+      });
       await refresh();
       setMessage("Change saved.");
+      setControlDialog(null);
     } catch (err) {
       setMessage((err as Error).message);
+    } finally {
+      setBusy(false);
     }
   }
   if (error) return <ErrorBox message={error} />;
@@ -776,35 +782,186 @@ function ExamDetail({ id }: { id: string }) {
           </button>
         )}
         <button
+          disabled={busy}
           onClick={async () => {
-            const r = await api(`exams/${id}/duplicate`, {});
-            router.push("/workspace/exams/" + r.id);
+            setBusy(true);
+            setMessage("");
+            try {
+              const r = await api(`exams/${id}/duplicate`, {});
+              router.push("/workspace/exams/" + r.id);
+            } catch (err) {
+              setMessage((err as Error).message);
+            } finally {
+              setBusy(false);
+            }
           }}
         >
           Duplicate
         </button>
         <button
-          onClick={() => action(e.status === "PAUSED" ? "resume" : "pause")}
+          disabled={busy}
+          onClick={() =>
+            void action(e.status === "PAUSED" ? "resume" : "pause")
+          }
         >
           {e.status === "PAUSED" ? "Resume" : "Pause"} exam
         </button>
-        <button onClick={() => action("extend")}>Add time</button>
-        <button onClick={() => action("close")}>Close exam</button>
-        <button onClick={() => action("release")}>Release results</button>
-        <button onClick={() => action("archive")}>Archive</button>
+        <button
+          disabled={busy}
+          onClick={() => {
+            setMessage("");
+            setMinutes("15");
+            setControlDialog("extend");
+          }}
+        >
+          Add time
+        </button>
+        <button
+          disabled={busy}
+          onClick={() => {
+            setMessage("");
+            setControlDialog("close");
+          }}
+        >
+          Close exam
+        </button>
+        <button disabled={busy} onClick={() => void action("release")}>
+          Release results
+        </button>
+        <button
+          disabled={busy}
+          onClick={() => {
+            setMessage("");
+            setControlDialog("archive");
+          }}
+        >
+          Archive
+        </button>
         <button
           onClick={async () => {
-            const c = await api(`exams/${id}/room-code`);
-            setCode(c.code + " · valid until " + time(c.expiresAt));
+            setBusy(true);
+            setMessage("");
+            try {
+              const c = await api(`exams/${id}/room-code`);
+              setCode(c.code + " · valid until " + time(c.expiresAt));
+            } catch (err) {
+              setMessage((err as Error).message);
+            } finally {
+              setBusy(false);
+            }
           }}
+          disabled={busy}
         >
           Show room code
         </button>
       </div>
+      {controlDialog && (
+        <div
+          className="exam-control-backdrop"
+          onMouseDown={(event) => {
+            if (event.target === event.currentTarget && !busy) {
+              setControlDialog(null);
+              setMessage("");
+            }
+          }}
+        >
+          <section
+            aria-labelledby="exam-control-title"
+            aria-modal="true"
+            className="exam-control-dialog"
+            role="dialog"
+          >
+            <div className="exam-qr-heading">
+              <h2 id="exam-control-title">
+                {controlDialog === "extend"
+                  ? "Add time to this exam"
+                  : controlDialog === "close"
+                    ? "Close this exam?"
+                    : "Archive this exam?"}
+              </h2>
+              <button
+                aria-label="Cancel exam action"
+                disabled={busy}
+                onClick={() => {
+                  setControlDialog(null);
+                  setMessage("");
+                }}
+                type="button"
+              >
+                <X size={18} />
+              </button>
+            </div>
+            {controlDialog === "extend" ? (
+              <label>
+                Extra minutes
+                <input
+                  autoFocus
+                  max="600"
+                  min="1"
+                  onChange={(event) => setMinutes(event.target.value)}
+                  required
+                  type="number"
+                  value={minutes}
+                />
+                <small>Enter a value from 1 to 600 minutes.</small>
+                <small>
+                  If the exam has already closed, add enough minutes to move its
+                  closing time into the future.
+                </small>
+              </label>
+            ) : (
+              <p>
+                This will submit any active student attempts and then{" "}
+                {controlDialog === "close" ? "close" : "archive"} the exam.
+              </p>
+            )}
+            {message && <ErrorBox message={message} />}
+            <div className="actions exam-control-actions">
+              <button
+                disabled={busy}
+                onClick={() => {
+                  setControlDialog(null);
+                  setMessage("");
+                }}
+                type="button"
+              >
+                Cancel
+              </button>
+              <button
+                className="primary"
+                disabled={
+                  busy ||
+                  (controlDialog === "extend" &&
+                    (!Number.isInteger(Number(minutes)) ||
+                      Number(minutes) < 1 ||
+                      Number(minutes) > 600))
+                }
+                onClick={() =>
+                  void action(
+                    controlDialog,
+                    controlDialog === "extend" ? Number(minutes) : undefined,
+                  )
+                }
+                type="button"
+              >
+                {busy
+                  ? "Saving…"
+                  : controlDialog === "extend"
+                    ? "Add time"
+                    : controlDialog === "close"
+                      ? "Close exam"
+                      : "Archive exam"}
+              </button>
+            </div>
+          </section>
+        </div>
+      )}
       {code && (
         <div className="room-code">
           {code}
-          <small>This code is valid for 5 minutes. Refresh after it expires.</small>
+          <small>
+            This code is valid for 5 minutes. Refresh after it expires.
+          </small>
         </div>
       )}
       {message && (
