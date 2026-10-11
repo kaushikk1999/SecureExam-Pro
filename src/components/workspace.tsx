@@ -1202,7 +1202,27 @@ function Students() {
     { data: courses, refresh: refreshCourses } = useData("courses");
   const [mode, setMode] = useState(""),
     [search, setSearch] = useState(""),
-    [message, setMessage] = useState("");
+    [message, setMessage] = useState(""),
+    [courseCode, setCourseCode] = useState(""),
+    [courseSection, setCourseSection] = useState("");
+  const courseCatalog = [
+    {
+      code: "IBA214",
+      name: "Technology for Business",
+      sections: ["256C", "256D"],
+    },
+    {
+      code: "IBA360",
+      name: "Data Structures and Algorithms",
+      sections: ["356A"],
+    },
+    {
+      code: "IBE102",
+      name: "Digital Business Technology",
+      sections: ["153A"],
+    },
+  ];
+  const selectedCourse = courseCatalog.find((c) => c.code === courseCode);
   async function submit(e: React.FormEvent<HTMLFormElement>) {
     e.preventDefault();
     const f = Object.fromEntries(new FormData(e.currentTarget));
@@ -1216,6 +1236,8 @@ function Students() {
         f,
       );
       setMode("");
+      setCourseCode("");
+      setCourseSection("");
       setMessage("Saved successfully.");
       await refresh();
       await refreshCourses();
@@ -1229,7 +1251,13 @@ function Students() {
         title="Students & courses"
         description="Keep your class organized and give every student the right access."
       >
-        <button onClick={() => setMode(mode === "course" ? "" : "course")}>
+        <button
+          onClick={() => {
+            setMode(mode === "course" ? "" : "course");
+            setCourseCode("");
+            setCourseSection("");
+          }}
+        >
           New course
         </button>
         <button onClick={() => setMode(mode === "import" ? "" : "import")}>
@@ -1261,17 +1289,46 @@ function Students() {
             {mode === "course" ? (
               <div className="form-grid">
                 <label>
-                  Course code
-                  <input required name="code" />
-                </label>
-                <label>
-                  Course name
-                  <input required name="name" />
+                  Subject
+                  <select
+                    required
+                    name="code"
+                    value={courseCode}
+                    onChange={(event) => {
+                      setCourseCode(event.target.value);
+                      setCourseSection("");
+                    }}
+                  >
+                    <option value="">Select a subject</option>
+                    {courseCatalog.map((course) => (
+                      <option key={course.code} value={course.code}>
+                        {course.code} · {course.name}
+                      </option>
+                    ))}
+                  </select>
                 </label>
                 <label>
                   Section
-                  <input name="section" />
+                  <select
+                    required
+                    name="section"
+                    value={courseSection}
+                    disabled={!selectedCourse}
+                    onChange={(event) => setCourseSection(event.target.value)}
+                  >
+                    <option value="">Select a section</option>
+                    {selectedCourse?.sections.map((section) => (
+                      <option key={section} value={section}>
+                        {section}
+                      </option>
+                    ))}
+                  </select>
                 </label>
+                <input
+                  type="hidden"
+                  name="name"
+                  value={selectedCourse?.name ?? ""}
+                />
               </div>
             ) : (
               <>
