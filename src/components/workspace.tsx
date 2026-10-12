@@ -31,6 +31,7 @@ import {
 import type { Actor } from "@/lib/auth";
 import { COURSE_CATALOG } from "@/lib/course-data";
 import ExamQrDialog from "./exam-qr-dialog";
+import CourseEnrollmentQrDialog from "./course-enrollment-qr-dialog";
 import {
   api,
   useData,
@@ -1591,22 +1592,29 @@ function Students() {
       )}
       <div className="course-list">
         {courses?.map((c: any) => (
-          <button
-            aria-expanded={selectedCourseId === c.id}
-            aria-label={`View roster for ${c.code} section ${c.section || "unspecified"}`}
-            className={`course-pill course-pill-button${selectedCourseId === c.id ? " selected" : ""}`}
-            key={c.id}
-            onClick={() => void toggleCourseRoster(c.id)}
-            type="button"
-          >
-            <GraduationCap size={17} />
-            <span>
-              <b>{c.code}</b> {c.name} · {c.section || "No section"}
-            </span>
-            <strong className="course-enrollment-count">
-              {c.enrolled_count ?? 0} enrolled
-            </strong>
-          </button>
+          <div className="course-management-item" key={c.id}>
+            <button
+              aria-expanded={selectedCourseId === c.id}
+              aria-label={`View roster for ${c.code} section ${c.section || "unspecified"}`}
+              className={`course-pill course-pill-button${selectedCourseId === c.id ? " selected" : ""}`}
+              onClick={() => void toggleCourseRoster(c.id)}
+              type="button"
+            >
+              <GraduationCap size={17} />
+              <span>
+                <b>{c.code}</b> {c.name} · {c.section || "No section"}
+              </span>
+              <strong className="course-enrollment-count">
+                {c.enrolled_count ?? 0} enrolled
+              </strong>
+            </button>
+            <CourseEnrollmentQrDialog
+              courseId={c.id}
+              courseCode={c.code}
+              courseName={c.name}
+              section={c.section || "No section"}
+            />
+          </div>
         ))}
       </div>
       {selectedCourseId && (

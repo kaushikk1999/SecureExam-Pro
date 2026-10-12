@@ -2,7 +2,7 @@ import { sql } from "drizzle-orm";
 import { randomBytes, randomUUID } from "node:crypto";
 import { hash } from "bcryptjs";
 import { db, query } from "./db";
-import { isStudentEmailAllowed } from "./auth-role";
+import { isStudentEmailAllowed, STUDENT_LOGIN_EMAIL } from "./auth-role";
 // The OIDC library validates signature, issuer, audience, state and nonce before this callback.
 // Application authorization still requires an explicit issuer + subject mapping.
 export async function resolveUniversityIdentity(
@@ -74,7 +74,9 @@ export async function resolveGoogleIdentity(
   const isApprovedTeacher = teacherEmails.has(email);
   const isApprovedStudent = isStudentEmailAllowed(email);
   const explicitStudentAllowlist = configuredValues(
-    process.env.STUDENT_LOGIN_EMAILS,
+    process.env.VERCEL
+      ? STUDENT_LOGIN_EMAIL
+      : process.env.STUDENT_LOGIN_EMAILS?.trim() || STUDENT_LOGIN_EMAIL,
   );
   return db.transaction(async (tx) => {
     const issuer = "https://accounts.google.com";

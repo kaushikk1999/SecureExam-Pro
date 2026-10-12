@@ -18,6 +18,7 @@ const teacher = randomUUID(),
   question = randomUUID(),
   exam = randomUUID(),
   device = randomUUID();
+process.env.STUDENT_LOGIN_EMAILS = `${student}@test.local,${other}@test.local`;
 let attempt = "";
 function login(id: string | null) {
   auth.session = id ? { user: { id, version: 0 } } : null;

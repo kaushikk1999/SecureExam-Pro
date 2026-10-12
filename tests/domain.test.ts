@@ -14,6 +14,8 @@ import {
   validClassroomCode,
   createExamEnrollmentInvite,
   validExamEnrollmentInvite,
+  createCourseEnrollmentInvite,
+  validCourseEnrollmentInvite,
 } from "../src/lib/domain";
 const room = { latitude: 14, longitude: 100, radius: 100, accuracy: 30 };
 describe("location uncertainty", () => {
@@ -32,6 +34,24 @@ describe("location uncertainty", () => {
       geofence({ latitude: 14.00095, longitude: 100, accuracy: 20 }, room)
         .clearlyOutside,
     ).toBe(false));
+});
+describe("course enrollment invitations", () => {
+  const secret = "course-signing-secret-that-is-long-enough-to-be-safe";
+  const courseId = "c9a15d3a-79c8-45bb-9e62-0987654321ab";
+  it("creates a unique invite for each course and rejects tampering", () => {
+    const token = createCourseEnrollmentInvite(secret, courseId);
+    expect(validCourseEnrollmentInvite(secret, courseId, token)).toBe(true);
+    expect(
+      validCourseEnrollmentInvite(
+        secret,
+        "d6a1c12e-1188-46ea-9a19-4e522ed2da9e",
+        token,
+      ),
+    ).toBe(false);
+    expect(validCourseEnrollmentInvite(secret, courseId, "bad-token")).toBe(
+      false,
+    );
+  });
 });
 describe("exam course enrollment invitations", () => {
   const secret = "a".repeat(64);
@@ -139,7 +159,11 @@ describe("determinism and grades", () => {
       ),
     ).toBe(true);
     expect(
-      validClassroomCode(storedSecret, code, issuedAt + CLASSROOM_CODE_WINDOW_MS),
+      validClassroomCode(
+        storedSecret,
+        code,
+        issuedAt + CLASSROOM_CODE_WINDOW_MS,
+      ),
     ).toBe(false);
     expect(validClassroomCode(storedSecret, code, issuedAt - 1)).toBe(false);
     expect(validClassroomCode(storedSecret, "000000", issuedAt)).toBe(false);

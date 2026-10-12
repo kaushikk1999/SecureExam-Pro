@@ -50,7 +50,7 @@ export default function Login() {
     if (authError)
       setError(
         authError === "AccessDenied"
-          ? "For student Google sign-in, use the account approved for your class. Bangkok University student Workspace accounts usually end in @bumail.net. If you still cannot sign in, contact your instructor or BU IT."
+          ? "Student testing is currently limited to kaushikka99@gmail.com. Choose that Google account or contact your administrator if you need another student approved."
           : "Sign-in could not be completed. Check your account access or contact your administrator.",
       );
   }, [router]);

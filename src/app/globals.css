@@ -1394,6 +1394,40 @@ td .actions select {
   flex-wrap: wrap;
   margin: 20px 0;
 }
+.course-management-item {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  flex-wrap: wrap;
+}
+.course-management-item > .course-pill-button {
+  min-height: 40px;
+}
+.course-enrollment-qr-button {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 40px;
+  border: 1px solid #dce7f2;
+  border-radius: 7px;
+  background: #fff;
+  color: var(--ink);
+  padding: 8px 11px;
+  font-size: 11px;
+  cursor: pointer;
+}
+.course-enrollment-qr-button:hover {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+.course-enrollment-result .spin {
+  animation: course-enrollment-spin 900ms linear infinite;
+}
+@keyframes course-enrollment-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
 .course-pill {
   border: 1px solid #dce7f2;
   border-radius: 7px;

@@ -25,7 +25,7 @@ describe("role-specific sign-in", () => {
   });
 });
 
-it("allows only a local exam deep link as the student sign-in return path", () => {
+it("allows only local exam and course enrollment links as return paths", () => {
   const examId = "d6a1c12e-1188-46ea-9a19-4e522ed2da9e";
   expect(safeStudentReturnPath(`/exam/${examId}`)).toBe(`/exam/${examId}`);
   const invite = "a".repeat(64);
@@ -33,6 +33,13 @@ it("allows only a local exam deep link as the student sign-in return path", () =
     `/exam/${examId}?invite=${invite}`,
   );
   expect(safeStudentReturnPath(`/exam/${examId}?invite=bad`)).toBeNull();
+  const courseId = "c9a15d3a-79c8-45bb-9e62-0987654321ab";
+  expect(
+    safeStudentReturnPath(`/enroll/course/${courseId}?invite=${invite}`),
+  ).toBe(`/enroll/course/${courseId}?invite=${invite}`);
+  expect(
+    safeStudentReturnPath(`/enroll/course/${courseId}?invite=bad`),
+  ).toBeNull();
   expect(
     safeStudentReturnPath(`/exam/${examId}?invite=${invite}&next=/workspace`),
   ).toBeNull();
@@ -41,18 +48,24 @@ it("allows only a local exam deep link as the student sign-in return path", () =
   expect(safeStudentReturnPath(`//example.com/exam/${examId}`)).toBeNull();
 });
 
-it("allows only exact student emails when a temporary allowlist is configured", () => {
+it("enforces the configured exact student email allowlist", () => {
   expect(
-    isStudentEmailAllowed("kaushikds1999@gmail.com", "kaushikds1999@gmail.com"),
+    isStudentEmailAllowed("kaushikka99@gmail.com", "kaushikka99@gmail.com"),
   ).toBe(true);
   expect(
-    isStudentEmailAllowed(
-      " KAUSHIKDS1999@gmail.com ",
-      "kaushikds1999@gmail.com",
-    ),
+    isStudentEmailAllowed(" KAUSHIKKA99@gmail.com ", "kaushikka99@gmail.com"),
   ).toBe(true);
   expect(
-    isStudentEmailAllowed("other@gmail.com", "kaushikds1999@gmail.com"),
+    isStudentEmailAllowed("kaushikds1999@gmail.com", "kaushikka99@gmail.com"),
   ).toBe(false);
-  expect(isStudentEmailAllowed("other@bumail.net", "")).toBe(true);
+  expect(isStudentEmailAllowed("other@bumail.net", "")).toBe(false);
+});
+
+it("keeps Vercel student access pinned to the requested account", async () => {
+  const { vi } = await import("vitest");
+  vi.stubEnv("VERCEL", "1");
+  vi.stubEnv("STUDENT_LOGIN_EMAILS", "kaushikds1999@gmail.com");
+  expect(isStudentEmailAllowed("kaushikka99@gmail.com")).toBe(true);
+  expect(isStudentEmailAllowed("kaushikds1999@gmail.com")).toBe(false);
+  vi.unstubAllEnvs();
 });

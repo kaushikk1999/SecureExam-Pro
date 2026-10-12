@@ -1,21 +1,25 @@
 export type LoginAudience = "student" | "teacher";
+export const STUDENT_LOGIN_EMAIL = "kaushikka99@gmail.com";
 
 /**
- * When configured, restrict every student account to this exact email list.
- * An unset/empty value preserves the deployment's normal student policy.
+ * Restrict student accounts to an exact allowlist. Production on Vercel is
+ * pinned to the current test account; local environments can use an explicit
+ * list (or '*' for isolated browser tests).
  */
-export function isStudentEmailAllowed(
-  email: unknown,
-  configured = process.env.STUDENT_LOGIN_EMAILS,
-) {
+export function isStudentEmailAllowed(email: unknown, configured?: string) {
+  const studentPolicy =
+    configured ??
+    (process.env.VERCEL
+      ? STUDENT_LOGIN_EMAIL
+      : process.env.STUDENT_LOGIN_EMAILS?.trim() || STUDENT_LOGIN_EMAIL);
   const allowed = new Set(
-    (configured ?? "")
+    studentPolicy
       .split(/[\s,]+/)
       .map((item) => item.trim().toLowerCase())
       .filter(Boolean),
   );
   return (
-    allowed.size === 0 ||
+    allowed.has("*") ||
     allowed.has(
       String(email ?? "")
         .trim()
@@ -33,6 +37,11 @@ export function matchesLoginAudience(role: unknown, audience: LoginAudience) {
 /** Only allow app-owned exam URLs as a post-login destination. */
 export function safeStudentReturnPath(next: string | null | undefined) {
   if (!next) return null;
+  const courseMatch = next.match(
+    /^\/enroll\/course\/([0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12})\?invite=([a-f0-9]{64})$/i,
+  );
+  if (courseMatch)
+    return `/enroll/course/${courseMatch[1]}?invite=${courseMatch[2].toLowerCase()}`;
   const match = next.match(
     /^\/exam\/([0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12})(?:\?invite=([a-f0-9]{64}))?$/i,
   );

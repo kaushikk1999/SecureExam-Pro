@@ -8,6 +8,9 @@ process.env.DATABASE_PROVIDER = "pglite";
 process.env.PGLITE_PATH = "./.data/growth-test-" + randomUUID();
 process.env.NEXTAUTH_URL = "http://localhost:3000";
 process.env.NEXT_PUBLIC_APP_URL = "http://localhost:3000";
+process.env.STUDENT_LOGIN_EMAILS =
+  "student@gmail.com,other@gmail.com,first.login@bumail.net";
+process.env.AUTH_SECRET = "test-auth-secret-long-enough-for-course-invite";
 const { db, query } = await import("../src/lib/db");
 const { GET, POST } = await import("../src/app/api/platform/[...path]/route");
 const { resolveGoogleIdentity, resolveUniversityIdentity } =
@@ -39,6 +42,20 @@ async function request(path: string, data?: any) {
   });
   return (data === undefined ? GET : POST)(req, {
     params: Promise.resolve({ path: ["growth", ...path.split("/")] }),
+  });
+}
+async function platformRequest(path: string, data?: any) {
+  const parts = path.split("/");
+  const req = new Request("http://localhost:3000/api/platform/" + path, {
+    method: data === undefined ? "GET" : "POST",
+    headers: {
+      origin: "http://localhost:3000",
+      "content-type": "application/json",
+    },
+    body: data === undefined ? undefined : JSON.stringify(data),
+  });
+  return (data === undefined ? GET : POST)(req, {
+    params: Promise.resolve({ path: parts }),
   });
 }
 async function ok(path: string, data?: any) {
@@ -103,7 +120,10 @@ beforeAll(async () => {
   );
 });
 const ids = { event };
-afterEach(() => vi.unstubAllGlobals());
+afterEach(() => {
+  vi.unstubAllGlobals();
+  vi.unstubAllEnvs();
+});
 afterAll(async () => {
   await (db as any).$client.close();
   await rm(process.env.PGLITE_PATH!, { recursive: true, force: true });
@@ -410,7 +430,7 @@ it("binds existing Google accounts and provisions verified university accounts s
     }),
   ).toBeNull();
 
-  vi.stubEnv("STUDENT_LOGIN_EMAILS", "");
+  vi.stubEnv("STUDENT_LOGIN_EMAILS", "already.student@bu.ac.th");
   const preprovisioned = randomUUID();
   await db.execute(
     sql`INSERT INTO users(id,email,name,password_hash,role) VALUES(${preprovisioned},'already.student@bu.ac.th','Existing Student','unused','STUDENT')`,
@@ -443,6 +463,35 @@ it("requires explicit issuer/subject mappings for custom OIDC", async () => {
     teacher,
   );
   delete process.env.REQUIRE_TEACHER_MFA;
+});
+it("creates a course-specific enrollment QR invite and enrolls its student", async () => {
+  vi.stubEnv("STUDENT_LOGIN_EMAILS", "student@gmail.com,other@gmail.com");
+  login(teacher);
+  const inviteResponse = await platformRequest(
+    `courses/${course}/enrollment-invite`,
+  );
+  const invite = await inviteResponse.json();
+  expect(inviteResponse.status).toBe(200);
+  expect(invite.token).toMatch(/^[a-f0-9]{64}$/);
+
+  login(other);
+  const invalid = await platformRequest(`courses/${course}/self-enroll`, {
+    token: "0".repeat(64),
+  });
+  expect(invalid.status).toBe(403);
+  const joined = await platformRequest(`courses/${course}/self-enroll`, {
+    token: invite.token,
+  });
+  expect(joined.status).toBe(200);
+  expect(await joined.json()).toMatchObject({ ok: true, enrolled: true });
+  const [enrollment] = await query(
+    sql`SELECT eligible FROM enrollments WHERE course_id=${course} AND user_id=${other}`,
+  );
+  expect(enrollment?.eligible).toBe(true);
+  const repeated = await platformRequest(`courses/${course}/self-enroll`, {
+    token: invite.token,
+  });
+  expect(await repeated.json()).toMatchObject({ ok: true, enrolled: false });
 });
 it("provisions the configured teacher's default course sections once", async () => {
   vi.stubEnv("DEFAULT_COURSE_OWNER_EMAIL", "teacher@test.local");

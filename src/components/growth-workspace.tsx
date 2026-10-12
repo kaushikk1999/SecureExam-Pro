@@ -313,9 +313,7 @@ function Actions() {
       <ErrorBox message={error} />
       <Feedback task={task} />
       {!data ? (
-        error ? null : (
-          <Loading />
-        )
+        error ? null : <Loading />
       ) : (
         <>
           <div className={styles.metrics}>
@@ -818,7 +816,9 @@ function Integrations() {
       <ErrorBox message={error} />
       <Feedback task={task} />
       {!data ? (
-        error ? null : <Loading />
+        error ? null : (
+          <Loading />
+        )
       ) : (
         <section className={styles.card}>
           <h2>Google & university login</h2>
@@ -829,12 +829,10 @@ function Integrations() {
             </strong>
           </div>
           <p>
-            Google login can create student accounts for verified Bangkok
-            University student Workspace accounts ending in @bumail.net. Other
-            domains can be allowed through GOOGLE_AUTO_PROVISION_DOMAINS. Only
-            exact addresses listed in GOOGLE_TEACHER_EMAILS receive teacher
-            access. Existing roles are preserved. Configure the Google OAuth
-            credentials on the server.
+            Student sign-in on this Vercel deployment is restricted to
+            kaushikka99@gmail.com. Only exact addresses listed in
+            GOOGLE_TEACHER_EMAILS receive teacher access. Existing roles are
+            preserved. Configure the Google OAuth credentials on the server.
           </p>
           <div className={styles.row}>
             <span>Optional OpenID Connect</span>

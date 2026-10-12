@@ -14,17 +14,20 @@ async function login(page: Page, email: string) {
   await page.getByRole("button", { name: `Sign in as ${audience}` }).click();
   await expect(page).toHaveURL(/workspace/);
 }
-test("explains the correct BU student account after Google access is denied", async ({
+test("explains the approved student account after Google access is denied", async ({
   page,
 }) => {
   await page.goto("/login?error=AccessDenied");
-  await expect(page.locator("p[role='alert']")).toContainText("@bumail.net");
   await expect(page.locator("p[role='alert']")).toContainText(
-    "contact your instructor",
+    "kaushikka99@gmail.com",
+  );
+  await expect(page.locator("p[role='alert']")).toContainText(
+    "contact your administrator",
   );
 });
 test("teacher workspace, authoring, audit and responsive layout", async ({
   page,
+  browser,
 }) => {
   await login(page, "teacher@example.test");
   await expect(
@@ -42,6 +45,28 @@ test("teacher workspace, authoring, audit and responsive layout", async ({
     await page.request.get("/api/platform/courses")
   ).json();
   const course = courses[0];
+  await page
+    .getByRole("button", {
+      name: `Show enrollment QR for ${course.code} section ${course.section || "No section"}`,
+    })
+    .click();
+  await expect(page.getByRole("dialog")).toBeVisible();
+  await expect(
+    page.getByRole("img", {
+      name: `Course enrollment QR for ${course.code} section ${course.section || "No section"}`,
+    }),
+  ).toBeVisible();
+  const enrollmentUrl = await page.locator(".exam-qr-link").textContent();
+  expect(enrollmentUrl).toContain(`/enroll/course/${course.id}?invite=`);
+  await page.getByRole("button", { name: "Close course QR" }).click();
+  const studentContext = await browser.newContext();
+  const studentPage = await studentContext.newPage();
+  await login(studentPage, "student1@example.test");
+  await studentPage.goto(enrollmentUrl!);
+  await expect(
+    studentPage.getByRole("heading", { name: "Course joined" }),
+  ).toBeVisible();
+  await studentContext.close();
   const email = `roster-${Date.now()}@example.test`;
   const createdStudent = await page.request.post("/api/platform/students", {
     headers: { origin: "http://localhost:3000" },
@@ -455,7 +480,7 @@ test("new instructor action center, analytics, appeals and integration controls 
   ).toBeVisible();
   await expect(
     page.getByText(
-      /verified Bangkok University student Workspace accounts ending in @bumail\.net/,
+      /Student sign-in on this Vercel deployment is restricted to/,
     ),
   ).toBeVisible();
   await page.screenshot({

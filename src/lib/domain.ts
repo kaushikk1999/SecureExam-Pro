@@ -175,6 +175,23 @@ export function validExamEnrollmentInvite(
     .digest();
   return timingSafeEqual(expected, Buffer.from(token, "hex"));
 }
+export function createCourseEnrollmentInvite(secret: string, courseId: string) {
+  if (secret.length < 32) throw new Error("Course invitation key is invalid.");
+  return createHmac("sha256", secret)
+    .update(`course-enrollment:v1:${courseId}`)
+    .digest("hex");
+}
+export function validCourseEnrollmentInvite(
+  secret: string,
+  courseId: string,
+  token: string,
+) {
+  if (!/^[a-f0-9]{64}$/i.test(token) || secret.length < 32) return false;
+  const expected = createHmac("sha256", secret)
+    .update(`course-enrollment:v1:${courseId}`)
+    .digest();
+  return timingSafeEqual(expected, Buffer.from(token, "hex"));
+}
 export function remaining(deadline: string | Date, now = Date.now()) {
   return Math.max(0, new Date(deadline).getTime() - now);
 }

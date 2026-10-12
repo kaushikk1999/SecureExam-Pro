@@ -27,6 +27,8 @@ import {
   CLASSROOM_CODE_WINDOW_MS,
   createExamEnrollmentInvite,
   validExamEnrollmentInvite,
+  createCourseEnrollmentInvite,
+  validCourseEnrollmentInvite,
   csv,
 } from "@/lib/domain";
 import {
@@ -223,7 +225,62 @@ async function dispatch(req: Request, parts: string[]) {
     return json({ ok: true });
   }
   if (resource === "courses") {
+    if (id && action === "self-enroll") {
+      if (method !== "POST") throw new HttpError(405, "POST required.");
+      if (u.role !== "STUDENT")
+        throw new HttpError(403, "Only student accounts can self-enroll.");
+      const courseId = uuid.parse(id);
+      const v = z
+        .object({ token: z.string().regex(/^[a-f0-9]{64}$/i) })
+        .parse(await body(req));
+      const secret = process.env.AUTH_SECRET ?? process.env.NEXTAUTH_SECRET;
+      if (!secret)
+        throw new HttpError(503, "Course enrollment is unavailable.");
+      const result = await db.transaction(async (tx) => {
+        const [course] = await query(
+          sql`SELECT id FROM courses WHERE id=${courseId} FOR UPDATE`,
+          tx,
+        );
+        if (!course) throw new HttpError(404, "Course not found.");
+        if (!validCourseEnrollmentInvite(secret, courseId, v.token))
+          throw new HttpError(
+            403,
+            "This course enrollment QR code is invalid.",
+          );
+        const [existing] = await query(
+          sql`SELECT eligible FROM enrollments WHERE course_id=${courseId} AND user_id=${u.id} FOR UPDATE`,
+          tx,
+        );
+        if (existing) {
+          if (!existing.eligible)
+            throw new HttpError(
+              403,
+              "Your enrollment for this course is disabled. Contact your instructor.",
+            );
+          return { enrolled: false };
+        }
+        await tx.execute(
+          sql`INSERT INTO enrollments(course_id,user_id) VALUES(${courseId},${u.id}) ON CONFLICT DO NOTHING`,
+        );
+        await audit(tx, {
+          userId: u.id,
+          type: "STUDENT_SELF_ENROLLED",
+          metadata: { courseId, source: "course_qr" },
+        });
+        return { enrolled: true };
+      });
+      return json({ ok: true, ...result });
+    }
     teacher(u);
+    if (id && action === "enrollment-invite" && method === "GET") {
+      await courseAccess(id, u);
+      const secret = process.env.AUTH_SECRET ?? process.env.NEXTAUTH_SECRET;
+      if (!secret)
+        throw new HttpError(503, "Course enrollment is unavailable.");
+      return json({
+        token: createCourseEnrollmentInvite(secret, uuid.parse(id)),
+      });
+    }
     if (id && action === "students" && method === "GET") {
       await courseAccess(id, u);
       return json(
