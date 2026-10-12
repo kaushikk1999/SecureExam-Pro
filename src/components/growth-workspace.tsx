@@ -680,6 +680,29 @@ function Analytics() {
 function SubmissionView({ id, submission }: { id: string; submission: any }) {
   const { data: attempt, error } = useData("attempts/" + id);
   if (!attempt) return error ? <ErrorBox message={error} /> : <Loading />;
+  const printSubmission = () => {
+    const previousTitle = document.title;
+    const suggestedFilename = [
+      submission.student_name || submission.email || "Student",
+      submission.student_id,
+      attempt.title,
+      "submission",
+    ]
+      .filter(Boolean)
+      .join(" - ")
+      .replace(/[\\/:*?"<>|]+/g, "-")
+      .replace(/\s+/g, " ")
+      .trim();
+    document.title = suggestedFilename;
+    window.addEventListener(
+      "afterprint",
+      () => {
+        document.title = previousTitle;
+      },
+      { once: true },
+    );
+    window.print();
+  };
   const orderedQuestions = [...attempt.questions].sort(
     (a: any, b: any) =>
       attempt.question_order.indexOf(a.id) -
@@ -706,7 +729,7 @@ function SubmissionView({ id, submission }: { id: string; submission: any }) {
       <button
         type="button"
         className={styles.downloadPdf}
-        onClick={() => window.print()}
+        onClick={printSubmission}
       >
         <Download size={16} />
         Download submission as PDF
