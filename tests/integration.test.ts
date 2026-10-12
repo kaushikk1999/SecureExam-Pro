@@ -864,6 +864,22 @@ it("permanently removes an exam and every related result and private file", asyn
     await query(sql`SELECT id FROM questions WHERE id=${question}`),
   ).toHaveLength(1);
 
+  const legacyDeletedExam = randomUUID();
+  const legacyAttempt = randomUUID();
+  await db.execute(
+    sql`INSERT INTO exams(id,course_id,title,status,starts_at,ends_at,duration_minutes,policy,code_secret,deleted_at) VALUES(${legacyDeletedExam},${course},'Legacy deleted exam','CLOSED',now()-interval '2 hours',now()-interval '1 hour',60,${JSON.stringify(policySchema.parse({ camera: false, microphone: false, location: false, fullscreen: false, classroomCode: false }))}::jsonb,'secret',now())`,
+  );
+  await db.execute(
+    sql`INSERT INTO attempts(id,exam_id,user_id,device_session_id,deadline,question_order,status,submitted_at) VALUES(${legacyAttempt},${legacyDeletedExam},${student},${device},now(),${JSON.stringify([question])}::jsonb,'SUBMITTED',now())`,
+  );
+  const visibleSubmissions = await (await request("growth/submissions")).json();
+  expect(
+    visibleSubmissions.some(
+      (submission: { exam_id: string }) =>
+        submission.exam_id === legacyDeletedExam,
+    ),
+  ).toBe(false);
+
   const events = await query<any>(
     sql`SELECT * FROM audit_events ORDER BY sequence`,
   );
