@@ -1166,6 +1166,42 @@ pre {
 .question-preview > div.form-grid {
   margin-top: 15px;
 }
+.ai-question-builder {
+  margin: 18px 0;
+}
+.ai-question-builder > label textarea {
+  min-height: 180px;
+}
+.ai-question-actions,
+.ai-question-results-heading,
+.ai-question-card-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+.ai-question-results {
+  display: grid;
+  gap: 14px;
+  margin-top: 24px;
+}
+.ai-question-results-heading p {
+  margin-bottom: 0;
+}
+.ai-question-card {
+  padding: 18px;
+  background: #fbfdff;
+}
+.ai-question-card-heading {
+  margin-bottom: 16px;
+}
+.ai-question-card-heading button {
+  padding: 6px 10px;
+  font-size: 11px;
+}
+.ai-question-card .form-grid {
+  gap: 0 14px;
+}
 .action-bar {
   gap: 8px;
 }

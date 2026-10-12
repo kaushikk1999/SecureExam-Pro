@@ -19,6 +19,7 @@ import {
   ArrowUpRight,
   Plus,
   Search,
+  Sparkles,
   Bell,
   GraduationCap,
   ChevronRight,
@@ -1212,7 +1213,20 @@ function QuestionBank() {
     [adding, setAdding] = useState(false),
     [type, setType] = useState("MCQ"),
     [search, setSearch] = useState(""),
-    [aiPrompt, setAiPrompt] = useState("");
+    [aiPrompt, setAiPrompt] = useState(""),
+    [bulkOpen, setBulkOpen] = useState(false),
+    [bulkSource, setBulkSource] = useState(""),
+    [bulkQuestions, setBulkQuestions] = useState<any[]>([]),
+    [bulkBusy, setBulkBusy] = useState(false),
+    [bulkSaving, setBulkSaving] = useState(false),
+    [bulkError, setBulkError] = useState("");
+  function updateBulkQuestion(index: number, patch: Record<string, unknown>) {
+    setBulkQuestions((current) =>
+      current.map((question, i) =>
+        i === index ? { ...question, ...patch } : question,
+      ),
+    );
+  }
   return (
     <>
       <Heading
@@ -1223,8 +1237,242 @@ function QuestionBank() {
         <button className="primary" onClick={() => setAdding(!adding)}>
           <Plus size={17} /> New question
         </button>
+        <button
+          onClick={() => {
+            setBulkOpen(!bulkOpen);
+            setBulkError("");
+          }}
+        >
+          <Sparkles size={17} /> Make question with AI
+        </button>
       </Heading>
       <ErrorBox message={error || message} />
+      {bulkOpen && (
+        <section className="panel form-panel ai-question-builder">
+          <h2>Make question with AI</h2>
+          <p className="muted">
+            Paste your full question list. Ollama will split and format it into
+            editable drafts. Review the wording and every answer key before
+            saving them to your question bank.
+          </p>
+          <label>
+            Paste all questions
+            <textarea
+              rows={10}
+              maxLength={30000}
+              value={bulkSource}
+              onChange={(event) => setBulkSource(event.target.value)}
+              placeholder={
+                "Paste numbered questions, choices, marks, and any answer keys here…\n\n1. Which data structure follows FIFO? (5 marks)\nA. Stack\nB. Queue\nC. Tree\nD. Graph"
+              }
+            />
+          </label>
+          <div className="ai-question-actions">
+            <button
+              className="primary"
+              disabled={bulkBusy || bulkSource.trim().length < 10}
+              onClick={async () => {
+                setBulkBusy(true);
+                setBulkError("");
+                setBulkQuestions([]);
+                try {
+                  const result = await api("ai/questions", {
+                    source: bulkSource,
+                  });
+                  setBulkQuestions(result.questions);
+                } catch (err) {
+                  setBulkError((err as Error).message);
+                } finally {
+                  setBulkBusy(false);
+                }
+              }}
+            >
+              <Sparkles size={16} />
+              {bulkBusy ? "Formatting questions…" : "Format with Ollama"}
+            </button>
+            <span className="small muted">
+              Up to 40 questions per batch · AI answer keys may be wrong
+            </span>
+          </div>
+          <ErrorBox message={bulkError} />
+          {bulkQuestions.length > 0 && (
+            <div className="ai-question-results">
+              <div className="ai-question-results-heading">
+                <div>
+                  <h3>Review generated questions</h3>
+                  <p className="small muted">
+                    {bulkQuestions.length} draft
+                    {bulkQuestions.length === 1 ? "" : "s"} · Edit anything
+                    before saving.
+                  </p>
+                </div>
+                <button
+                  className="primary"
+                  disabled={bulkSaving}
+                  onClick={async () => {
+                    setBulkSaving(true);
+                    setBulkError("");
+                    try {
+                      const saved = await api("questions/bulk", {
+                        questions: bulkQuestions,
+                      });
+                      await refresh();
+                      setBulkQuestions([]);
+                      setBulkSource("");
+                      setBulkOpen(false);
+                      setMessage(`${saved.count} questions added to your bank.`);
+                    } catch (err) {
+                      setBulkError((err as Error).message);
+                    } finally {
+                      setBulkSaving(false);
+                    }
+                  }}
+                >
+                  {bulkSaving ? "Saving…" : "Save all to question bank"}
+                </button>
+              </div>
+              {bulkQuestions.map((question, index) => (
+                <section className="panel ai-question-card" key={index}>
+                  <div className="ai-question-card-heading">
+                    <strong>Question {index + 1}</strong>
+                    <button
+                      type="button"
+                      onClick={() =>
+                        setBulkQuestions((current) =>
+                          current.filter((_, i) => i !== index),
+                        )
+                      }
+                    >
+                      Remove
+                    </button>
+                  </div>
+                  <div className="form-grid">
+                    <label>
+                      Question type
+                      <select
+                        value={question.type}
+                        onChange={(event) =>
+                          updateBulkQuestion(index, { type: event.target.value })
+                        }
+                      >
+                        {[
+                          "MCQ",
+                          "MULTI_SELECT",
+                          "TRUE_FALSE",
+                          "FILL_BLANK",
+                          "SHORT_ANSWER",
+                          "ESSAY",
+                          "NUMERIC",
+                          "MATCHING",
+                          "CODING",
+                          "FILE_UPLOAD",
+                          "CASE_STUDY",
+                        ].map((item) => (
+                          <option key={item}>{item}</option>
+                        ))}
+                      </select>
+                    </label>
+                    <label>
+                      Marks
+                      <input
+                        type="number"
+                        min={1}
+                        max={1000}
+                        value={question.marks}
+                        onChange={(event) =>
+                          updateBulkQuestion(index, {
+                            marks: Number(event.target.value),
+                          })
+                        }
+                      />
+                    </label>
+                    <label>
+                      Topic
+                      <input
+                        maxLength={120}
+                        value={question.topic}
+                        onChange={(event) =>
+                          updateBulkQuestion(index, { topic: event.target.value })
+                        }
+                      />
+                    </label>
+                    <label>
+                      Difficulty
+                      <select
+                        value={question.difficulty}
+                        onChange={(event) =>
+                          updateBulkQuestion(index, {
+                            difficulty: event.target.value,
+                          })
+                        }
+                      >
+                        <option>Easy</option>
+                        <option>Medium</option>
+                        <option>Hard</option>
+                      </select>
+                    </label>
+                  </div>
+                  <label>
+                    Question text
+                    <textarea
+                      rows={4}
+                      value={question.prompt}
+                      onChange={(event) =>
+                        updateBulkQuestion(index, { prompt: event.target.value })
+                      }
+                    />
+                  </label>
+                  {["MCQ", "MULTI_SELECT"].includes(question.type) && (
+                    <label>
+                      Choices (one per line)
+                      <textarea
+                        rows={3}
+                        value={question.options.join("\n")}
+                        onChange={(event) =>
+                          updateBulkQuestion(index, {
+                            options: event.target.value
+                              .split("\n")
+                              .filter((option: string) => option.trim()),
+                          })
+                        }
+                      />
+                    </label>
+                  )}
+                  <label>
+                    Answer key (teacher only; verify before saving)
+                    <textarea
+                      rows={2}
+                      value={Array.isArray(question.solution)
+                        ? question.solution.join("\n")
+                        : String(question.solution ?? "")}
+                      onChange={(event) =>
+                        updateBulkQuestion(index, {
+                          solution:
+                            question.type === "MULTI_SELECT"
+                              ? event.target.value
+                                  .split("\n")
+                                  .filter((answer: string) => answer.trim())
+                              : event.target.value || null,
+                        })
+                      }
+                    />
+                  </label>
+                  <label>
+                    Grading rubric
+                    <textarea
+                      rows={2}
+                      value={question.rubric}
+                      onChange={(event) =>
+                        updateBulkQuestion(index, { rubric: event.target.value })
+                      }
+                    />
+                  </label>
+                </section>
+              ))}
+            </div>
+          )}
+        </section>
+      )}
       {adding && (
         <section className="panel form-panel">
           <form
