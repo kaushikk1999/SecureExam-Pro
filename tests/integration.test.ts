@@ -7,6 +7,7 @@ const auth = vi.hoisted(() => ({ session: null as any }));
 const blob = vi.hoisted(() => ({
   put: vi.fn(async () => ({ url: "https://blob.test/private-paper" })),
   get: vi.fn(),
+  del: vi.fn(async () => undefined),
 }));
 vi.mock("next-auth", () => ({ getServerSession: async () => auth.session }));
 vi.mock("@vercel/blob", () => blob);
@@ -15,7 +16,8 @@ process.env.PGLITE_PATH = "./.data/test-" + randomUUID();
 process.env.NEXTAUTH_URL = "http://localhost:3000";
 process.env.NEXT_PUBLIC_APP_URL = "http://localhost:3000";
 const { db, query } = await import("../src/lib/db");
-const { GET, POST } = await import("../src/app/api/platform/[...path]/route");
+const { GET, POST, DELETE } =
+  await import("../src/app/api/platform/[...path]/route");
 const { policySchema } = await import("../src/lib/domain");
 const teacher = randomUUID(),
   student = randomUUID(),
@@ -47,6 +49,22 @@ async function request(
     body: data === undefined ? undefined : JSON.stringify(data),
   });
   return (data === undefined ? GET : POST)(request, {
+    params: Promise.resolve({ path: path.split("/") }),
+  });
+}
+async function deleteRequest(path: string, extra: Record<string, string> = {}) {
+  const request = new Request("http://localhost:3000/api/platform/" + path, {
+    method: "DELETE",
+    headers: {
+      origin: "http://localhost:3000",
+      "content-type": "application/json",
+      "user-agent":
+        "Mozilla/5.0 (X11; Linux x86_64) Chrome/130.0.0.0 Safari/537.36",
+      "x-exam-device": device,
+      ...extra,
+    },
+  });
+  return DELETE(request, {
     params: Promise.resolve({ path: path.split("/") }),
   });
 }
@@ -493,4 +511,54 @@ it("authenticates cron and expires an offline attempt", async () => {
   );
   expect(r.status).toBe(200);
   expect((await r.json()).expired).toBe(1);
+});
+
+it("lets teachers remove old exams, papers, and bank questions safely", async () => {
+  login(teacher);
+  const fileId = randomUUID();
+  await db.execute(
+    sql`INSERT INTO files(id,exam_id,owner_id,name,mime,url,size) VALUES(${fileId},${exam},${teacher},'Old paper.docx','application/vnd.openxmlformats-officedocument.wordprocessingml.document','private-paper',10)`,
+  );
+
+  const activePaperDelete = await deleteRequest(`files/${fileId}`);
+  expect(activePaperDelete.status).toBe(409);
+  expect(blob.del).not.toHaveBeenCalled();
+
+  await db.execute(sql`UPDATE exams SET status='CLOSED' WHERE id=${exam}`);
+  const deletedFile = await deleteRequest(`files/${fileId}`);
+  expect(deletedFile.status).toBe(200);
+  expect(blob.del).toHaveBeenCalledWith("private-paper");
+  expect(
+    await query(sql`SELECT id FROM files WHERE id=${fileId}`),
+  ).toHaveLength(0);
+
+  const deletedQuestion = await deleteRequest(`questions/${question}`);
+  expect(deletedQuestion.status).toBe(200);
+  expect(
+    await query(
+      sql`SELECT id FROM questions WHERE id=${question} AND deleted_at IS NULL`,
+    ),
+  ).toHaveLength(0);
+  const examDetail = await (await request(`exams/${exam}`)).json();
+  expect(examDetail.questions.map((q: { id: string }) => q.id)).toContain(
+    question,
+  );
+
+  const deletedExam = await deleteRequest(`exams/${exam}`);
+  expect(deletedExam.status).toBe(200);
+  expect((await request("exams")).status).toBe(200);
+  expect(
+    (await (await request("exams")).json()).some(
+      (row: { id: string }) => row.id === exam,
+    ),
+  ).toBe(false);
+  expect((await request(`exams/${exam}`)).status).toBe(404);
+  expect(
+    (await query(sql`SELECT id FROM attempts WHERE exam_id=${exam}`)).length,
+  ).toBeGreaterThan(0);
+  expect(
+    await query(
+      sql`SELECT id FROM audit_events WHERE exam_id=${exam} AND event_type='EXAM_DELETED'`,
+    ),
+  ).toHaveLength(1);
 });

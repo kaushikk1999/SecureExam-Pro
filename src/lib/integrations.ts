@@ -106,6 +106,30 @@ export async function readPrivateFile(reference: string) {
   return response.ok ? response.body : null;
 }
 
+export async function deletePrivateFile(reference: string) {
+  if (!reference.startsWith("gdrive:")) {
+    const { del } = await import("@vercel/blob");
+    await del(reference);
+    return;
+  }
+
+  const fileId = reference.slice("gdrive:".length);
+  if (!/^[\w-]+$/.test(fileId)) throw new HttpError(404, "File not found.");
+  const auth = googleAuth(["https://www.googleapis.com/auth/drive.file"]);
+  const { token } = await auth.getAccessToken();
+  if (!token) throw new HttpError(503, "Google Drive authorization failed.");
+  const response = await fetch(
+    `https://www.googleapis.com/drive/v3/files/${encodeURIComponent(fileId)}`,
+    {
+      method: "DELETE",
+      headers: { Authorization: `Bearer ${token}` },
+      signal: AbortSignal.timeout(30000),
+    },
+  );
+  if (!response.ok && response.status !== 404)
+    throw new HttpError(502, "Google Drive could not delete this file.");
+}
+
 export async function syncSheets(rows: unknown[][]) {
   const projectNumber = process.env.GCP_PROJECT_NUMBER;
   const poolId = process.env.GCP_WORKLOAD_IDENTITY_POOL_ID;

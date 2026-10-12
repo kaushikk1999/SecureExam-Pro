@@ -2,7 +2,7 @@
 
 ## Provisioning
 
-1. Use a supported managed PostgreSQL release in an appropriate region. Use the provider's pooled TLS connection URL. Keep migration/owner credentials separate from runtime credentials. Apply `npm run db:migrate` to an empty production database; never run the demo seed there.
+1. Use a supported managed PostgreSQL release in an appropriate region. Use the provider's pooled TLS connection URL. Keep migration/owner credentials separate from runtime credentials. Apply `npm run db:migrate` to an empty production database; never run the demo seed there. Vercel production builds also apply pending migrations before building the app, so the production database credentials used at build time must be allowed to run schema migrations.
 2. Create a runtime role with SELECT/INSERT/UPDATE on operational tables and sequences. For `audit_events`, allow SELECT/INSERT only, never UPDATE/DELETE/TRUNCATE. The trigger is defense in depth, not protection against a database owner. Use the migration role only for schema administration.
 3. Generate `AUTH_SECRET` privately. Set both app URLs to the exact HTTPS production origin. Set `DATABASE_PROVIDER=postgres` (or omit it; PostgreSQL is the default).
 4. Provision the administrator through `npm run admin:create`. Enable and test TOTP before requiring it. The TOTP encryption key is distinct from the cookie signing secret. Backup loss of this key prevents decoding enrolled secrets.

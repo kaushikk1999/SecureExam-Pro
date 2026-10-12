@@ -808,7 +808,7 @@ function ExamDetail({ id }: { id: string }) {
     [editing, setEditing] = useState(false),
     [code, setCode] = useState("");
   const [controlDialog, setControlDialog] = useState<
-    "extend" | "close" | "archive" | null
+    "extend" | "close" | "archive" | "delete" | null
   >(null);
   const [minutes, setMinutes] = useState("15");
   const [busy, setBusy] = useState(false);
@@ -816,6 +816,11 @@ function ExamDetail({ id }: { id: string }) {
     setBusy(true);
     setMessage("");
     try {
+      if (a === "delete") {
+        await api(`exams/${id}`, {}, "DELETE");
+        router.replace("/workspace/exams");
+        return;
+      }
       await api(`exams/${id}/control`, {
         action: a,
         ...(a === "extend" ? { minutes: extraMinutes } : {}),
@@ -917,6 +922,15 @@ function ExamDetail({ id }: { id: string }) {
           Archive
         </button>
         <button
+          disabled={busy}
+          onClick={() => {
+            setMessage("");
+            setControlDialog("delete");
+          }}
+        >
+          Delete exam
+        </button>
+        <button
           onClick={async () => {
             setBusy(true);
             setMessage("");
@@ -956,7 +970,9 @@ function ExamDetail({ id }: { id: string }) {
                   ? "Add time to this exam"
                   : controlDialog === "close"
                     ? "Close this exam?"
-                    : "Archive this exam?"}
+                    : controlDialog === "archive"
+                      ? "Archive this exam?"
+                      : "Delete this exam?"}
               </h2>
               <button
                 aria-label="Cancel exam action"
@@ -988,6 +1004,13 @@ function ExamDetail({ id }: { id: string }) {
                   closing time into the future.
                 </small>
               </label>
+            ) : controlDialog === "delete" ? (
+              <p>
+                This removes the exam from teacher and student lists. Student
+                attempts and the immutable audit history are retained. Questions
+                stay in your question bank, and uploaded papers can be removed
+                separately after the exam ends.
+              </p>
             ) : (
               <p>
                 This will submit any active student attempts and then{" "}
@@ -1029,7 +1052,9 @@ function ExamDetail({ id }: { id: string }) {
                     ? "Add time"
                     : controlDialog === "close"
                       ? "Close exam"
-                      : "Archive exam"}
+                      : controlDialog === "archive"
+                        ? "Archive exam"
+                        : "Delete exam"}
               </button>
             </div>
           </section>
@@ -1154,7 +1179,7 @@ function ExamDetail({ id }: { id: string }) {
                 <Upload examId={id} done={() => void refresh()} />
               )}
               {e.files.map((f: any) => (
-                <p key={f.id}>
+                <div className="supporting-material" key={f.id}>
                   <Link
                     href={"/api/platform/files/" + f.id}
                     target="_blank"
@@ -1170,7 +1195,27 @@ function ExamDetail({ id }: { id: string }) {
                       <pre>{f.extracted_text}</pre>
                     </details>
                   )}
-                </p>
+                  <details>
+                    <summary>Delete uploaded paper</summary>
+                    <p>
+                      This permanently removes the file from private storage and
+                      this exam. Student attempt records are kept.
+                    </p>
+                    <button
+                      onClick={async () => {
+                        try {
+                          await api(`files/${f.id}`, {}, "DELETE");
+                          await refresh();
+                          setMessage("Uploaded paper deleted.");
+                        } catch (err) {
+                          setMessage((err as Error).message);
+                        }
+                      }}
+                    >
+                      Confirm delete paper
+                    </button>
+                  </details>
+                </div>
               ))}
             </section>
           </aside>
@@ -1394,7 +1439,9 @@ function QuestionBank() {
                       setBulkQuestions([]);
                       setBulkSource("");
                       setBulkOpen(false);
-                      setMessage(`${saved.count} questions added to your bank.`);
+                      setMessage(
+                        `${saved.count} questions added to your bank.`,
+                      );
                     } catch (err) {
                       setBulkError((err as Error).message);
                     } finally {
@@ -1426,7 +1473,9 @@ function QuestionBank() {
                       <select
                         value={question.type}
                         onChange={(event) =>
-                          updateBulkQuestion(index, { type: event.target.value })
+                          updateBulkQuestion(index, {
+                            type: event.target.value,
+                          })
                         }
                       >
                         {[
@@ -1466,7 +1515,9 @@ function QuestionBank() {
                         maxLength={120}
                         value={question.topic}
                         onChange={(event) =>
-                          updateBulkQuestion(index, { topic: event.target.value })
+                          updateBulkQuestion(index, {
+                            topic: event.target.value,
+                          })
                         }
                       />
                     </label>
@@ -1492,7 +1543,9 @@ function QuestionBank() {
                       rows={4}
                       value={question.prompt}
                       onChange={(event) =>
-                        updateBulkQuestion(index, { prompt: event.target.value })
+                        updateBulkQuestion(index, {
+                          prompt: event.target.value,
+                        })
                       }
                     />
                   </label>
@@ -1516,9 +1569,11 @@ function QuestionBank() {
                     Answer key (teacher only; verify before saving)
                     <textarea
                       rows={2}
-                      value={Array.isArray(question.solution)
-                        ? question.solution.join("\n")
-                        : String(question.solution ?? "")}
+                      value={
+                        Array.isArray(question.solution)
+                          ? question.solution.join("\n")
+                          : String(question.solution ?? "")
+                      }
                       onChange={(event) =>
                         updateBulkQuestion(index, {
                           solution:
@@ -1537,7 +1592,9 @@ function QuestionBank() {
                       rows={2}
                       value={question.rubric}
                       onChange={(event) =>
-                        updateBulkQuestion(index, { rubric: event.target.value })
+                        updateBulkQuestion(index, {
+                          rubric: event.target.value,
+                        })
                       }
                     />
                   </label>
@@ -1693,6 +1750,23 @@ function QuestionBank() {
               <summary>Answer key & rubric</summary>
               <p>{JSON.stringify(q.solution)}</p>
               <Markdown text={q.rubric} />
+            </details>
+            <details>
+              <summary>Delete from question bank</summary>
+              <p>Existing exam papers and student results will be kept.</p>
+              <button
+                onClick={async () => {
+                  try {
+                    await api(`questions/${q.id}`, {}, "DELETE");
+                    await refresh();
+                    setMessage("Question removed from your question bank.");
+                  } catch (err) {
+                    setMessage((err as Error).message);
+                  }
+                }}
+              >
+                Confirm delete question
+              </button>
             </details>
           </section>
         ))}

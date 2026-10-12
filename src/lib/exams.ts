@@ -15,7 +15,7 @@ import {
 } from "./domain";
 export async function ownedExam(id: string, u: Actor, tx?: Tx) {
   const [e] = await query(
-    sql`SELECT e.*,c.teacher_id,c.code AS course_code,c.name AS course_name,c.section AS course_section FROM exams e JOIN courses c ON c.id=e.course_id WHERE e.id=${id}`,
+    sql`SELECT e.*,c.teacher_id,c.code AS course_code,c.name AS course_name,c.section AS course_section FROM exams e JOIN courses c ON c.id=e.course_id WHERE e.id=${id} AND e.deleted_at IS NULL`,
     tx,
   );
   if (!e) throw new HttpError(404, "Exam not found.");
@@ -25,7 +25,7 @@ export async function ownedExam(id: string, u: Actor, tx?: Tx) {
 }
 export async function enrolledExam(id: string, u: Actor, tx?: Tx) {
   const [e] = await query(
-    sql`SELECT e.*,c.code AS course_code,c.name AS course_name FROM exams e JOIN courses c ON c.id=e.course_id JOIN enrollments n ON n.course_id=e.course_id WHERE e.id=${id} AND n.user_id=${u.id} AND n.eligible=true`,
+    sql`SELECT e.*,c.code AS course_code,c.name AS course_name FROM exams e JOIN courses c ON c.id=e.course_id JOIN enrollments n ON n.course_id=e.course_id WHERE e.id=${id} AND e.deleted_at IS NULL AND n.user_id=${u.id} AND n.eligible=true`,
     tx,
   );
   if (!e) throw new HttpError(403, "You are not eligible for this exam.");

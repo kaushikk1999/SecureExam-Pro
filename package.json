@@ -4,7 +4,8 @@
   "private": true,
   "scripts": {
     "dev": "npm run prepare:assets && next dev",
-    "build": "npm run prepare:assets && next build",
+    "build": "node scripts/vercel-build.mjs",
+    "build:next": "npm run prepare:assets && next build",
     "start": "next start",
     "typecheck": "tsc --noEmit",
     "lint": "eslint .",
