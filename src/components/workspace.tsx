@@ -1070,10 +1070,10 @@ function ExamDetail({ id }: { id: string }) {
             <section className="panel form-panel">
               <h2>Supporting materials</h2>
               <p className="muted">
-                PDF, DOCX, images or text · maximum 4 MB. For students to edit
-                and return a Word paper, enable “allowDownload” in the exam
-                policy and add a File Upload question to collect each student’s
-                completed copy.
+                Upload a DOCX as the question paper. Students can download their
+                own copy, complete it in Word, and upload a personal submission
+                named with their student ID. DOCX, PDF, images and text up to 4
+                MB are supported.
               </p>
               {e.status === "DRAFT" && (
                 <Upload examId={id} done={() => void refresh()} />
@@ -1148,23 +1148,31 @@ function Upload({
   examId,
   attemptId,
   device,
+  documentSubmission = false,
   done,
 }: {
   examId: string;
   attemptId?: string;
   device?: string;
-  done: (id?: string) => void;
+  documentSubmission?: boolean;
+  done: (id?: string, name?: string) => void;
 }) {
   const [error, setError] = useState(""),
     [busy, setBusy] = useState(false);
   return (
     <>
       <label className="upload">
-        {busy ? "Uploading…" : "Choose a file"}
+        {busy
+          ? "Uploading…"
+          : documentSubmission
+            ? "Upload completed Word paper"
+            : "Choose a file"}
         <input
           type="file"
           disabled={busy}
-          accept=".pdf,.docx,.txt,.png,.jpg,.jpeg"
+          accept={
+            documentSubmission ? ".docx" : ".pdf,.docx,.txt,.png,.jpg,.jpeg"
+          }
           onChange={async (e) => {
             const file = e.target.files?.[0];
             if (!file) return;
@@ -1174,6 +1182,7 @@ function Upload({
               form.set("file", file);
               form.set("examId", examId);
               if (attemptId) form.set("attemptId", attemptId);
+              if (documentSubmission) form.set("documentSubmission", "true");
               const r = await fetch("/api/platform/files", {
                 method: "POST",
                 body: form,
@@ -1182,7 +1191,7 @@ function Upload({
               const d = await r.json();
               if (!r.ok) throw new Error(d.error);
               setError("");
-              done(d.id);
+              done(d.id, d.name);
             } catch (err) {
               setError((err as Error).message);
             } finally {
@@ -2355,6 +2364,18 @@ function AttemptReview({ id, close }: { id: string; close: () => void }) {
           Save grades
         </button>
       </form>
+      {a.documentSubmission && (
+        <section className="panel form-panel">
+          <h3>Completed Word question paper</h3>
+          <p>{a.documentSubmission.name}</p>
+          <a
+            className="button primary"
+            href={`/api/platform/files/${a.documentSubmission.id}?download=1`}
+          >
+            Download student submission
+          </a>
+        </section>
+      )}
       <h3>Incident evidence</h3>
       {a.events?.map((e: any) => (
         <details key={e.id}>

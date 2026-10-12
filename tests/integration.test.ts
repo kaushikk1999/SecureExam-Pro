@@ -2,8 +2,14 @@ import { beforeAll, afterAll, describe, it, expect, vi } from "vitest";
 import { readFile, readdir, rm } from "node:fs/promises";
 import { randomUUID } from "node:crypto";
 import { sql } from "drizzle-orm";
+import { strToU8, zipSync } from "fflate";
 const auth = vi.hoisted(() => ({ session: null as any }));
+const blob = vi.hoisted(() => ({
+  put: vi.fn(async () => ({ url: "https://blob.test/private-paper" })),
+  get: vi.fn(),
+}));
 vi.mock("next-auth", () => ({ getServerSession: async () => auth.session }));
+vi.mock("@vercel/blob", () => blob);
 process.env.DATABASE_PROVIDER = "pglite";
 process.env.PGLITE_PATH = "./.data/test-" + randomUUID();
 process.env.NEXTAUTH_URL = "http://localhost:3000";
@@ -33,7 +39,8 @@ async function request(
     headers: {
       origin: "http://localhost:3000",
       "content-type": "application/json",
-      "user-agent": "Mozilla/5.0 (X11; Linux x86_64) Chrome/130.0.0.0 Safari/537.36",
+      "user-agent":
+        "Mozilla/5.0 (X11; Linux x86_64) Chrome/130.0.0.0 Safari/537.36",
       "x-exam-device": device,
       ...extra,
     },
@@ -42,6 +49,22 @@ async function request(
   return (data === undefined ? GET : POST)(request, {
     params: Promise.resolve({ path: path.split("/") }),
   });
+}
+async function uploadRequest(
+  path: string,
+  form: FormData,
+  extra: Record<string, string> = {},
+) {
+  const request = new Request("http://localhost:3000/api/platform/" + path, {
+    method: "POST",
+    headers: {
+      origin: "http://localhost:3000",
+      "x-exam-device": device,
+      ...extra,
+    },
+    body: form,
+  });
+  return POST(request, { params: Promise.resolve({ path: path.split("/") }) });
 }
 const start = {
   deviceSessionId: device,
@@ -213,6 +236,75 @@ describe("server authorization and exam lifecycle", () => {
       ).status,
     ).toBe(409);
   });
+  it("publishes and starts an exam that uses an uploaded Word paper instead of typed questions", async () => {
+    const paperExam = randomUUID();
+    process.env.BLOB_READ_WRITE_TOKEN = "test-private-storage-token";
+    await db.execute(
+      sql`UPDATE users SET name='Test',student_id='BU123' WHERE id=${other}`,
+    );
+    await db.execute(
+      sql`INSERT INTO exams(id,course_id,title,status,starts_at,ends_at,duration_minutes,policy,code_secret) VALUES(${paperExam},${course},'Document-only paper','DRAFT',now()-interval '1 hour',now()+interval '2 hours',60,${JSON.stringify(policySchema.parse({ camera: false, microphone: false, location: false, fullscreen: false, classroomCode: false }))}::jsonb,'secret')`,
+    );
+    await db.execute(
+      sql`INSERT INTO files(id,exam_id,owner_id,name,mime,url,size) VALUES(${randomUUID()},${paperExam},${teacher},'Question paper.docx','application/vnd.openxmlformats-officedocument.wordprocessingml.document','private-paper',10)`,
+    );
+    login(teacher);
+    const published = await request(`exams/${paperExam}/control`, {
+      action: "publish",
+    });
+    expect(published.status).toBe(200);
+
+    const otherDevice = randomUUID();
+    await db.execute(
+      sql`INSERT INTO exam_devices(id,user_id,session_version) VALUES(${otherDevice},${other},0)`,
+    );
+    login(other);
+    const started = await request(`exams/${paperExam}/start`, {
+      ...start,
+      deviceSessionId: otherDevice,
+    });
+    expect(started.status).toBe(200);
+    const { id } = await started.json();
+    const detail = await (
+      await request(`attempts/${id}`, undefined, {
+        "x-exam-device": otherDevice,
+      })
+    ).json();
+    expect(detail.question_order).toEqual([]);
+    expect(detail.files).toHaveLength(1);
+    const docx = zipSync({
+      "word/document.xml": strToU8(
+        "<w:document><w:body><w:p><w:r><w:t>My completed answers</w:t></w:r></w:p></w:body></w:document>",
+      ),
+    });
+    const form = new FormData();
+    form.set(
+      "file",
+      new File([docx], "completed-paper.docx", {
+        type: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+      }),
+    );
+    form.set("examId", paperExam);
+    form.set("attemptId", id);
+    form.set("documentSubmission", "true");
+    const uploaded = await uploadRequest("files", form, {
+      "x-exam-device": otherDevice,
+    });
+    expect(uploaded.status).toBe(200);
+    const uploadedResult = await uploaded.json();
+    expect(uploadedResult.name).toMatch(
+      /Test_BU123_Document-only-paper\.docx$/,
+    );
+    const refreshed = await (
+      await request(`attempts/${id}`, undefined, {
+        "x-exam-device": otherDevice,
+      })
+    ).json();
+    expect(refreshed.documentSubmission.name).toBe(uploadedResult.name);
+    await db.execute(
+      sql`UPDATE attempts SET status='SUBMITTED',submitted_at=now() WHERE id=${id}`,
+    );
+  });
   it("denies another student’s attempt and grading", async () => {
     login(other);
     expect((await request("attempts/" + attempt)).status).toBe(403);
@@ -253,24 +345,54 @@ describe("server authorization and exam lifecycle", () => {
     const r = await (await request("attempts/" + attempt)).json();
     expect(r.answers[0].value).toBe("SECRET_KEY");
   });
-  it('records uncertain location without issuing a warning and confirms consecutive outside readings',async()=>{
-    await db.execute(sql`UPDATE exams SET policy=jsonb_set(policy,'{location}','true') WHERE id=${exam}`);
-    const path='attempts/'+attempt+'/sync';
-    await request(path,{events:[{id:randomUUID(),type:'LOCATION_CHECK',metadata:{latitude:15,longitude:100,accuracy:2000}}]});
-    expect((await query(sql`SELECT warnings FROM attempts WHERE id=${attempt}`))[0].warnings).toBe(0);
-    for(let index=1;index<=2;index++){
-      await db.execute(sql`UPDATE attempts SET last_location_at=now()-interval '16 seconds' WHERE id=${attempt}`);
-      await request(path,{events:[{id:randomUUID(),type:'LOCATION_CHECK',metadata:{latitude:15,longitude:100,accuracy:5}}]});
-      expect((await query(sql`SELECT warnings FROM attempts WHERE id=${attempt}`))[0].warnings).toBe(index===1?0:1);
+  it("records uncertain location without issuing a warning and confirms consecutive outside readings", async () => {
+    await db.execute(
+      sql`UPDATE exams SET policy=jsonb_set(policy,'{location}','true') WHERE id=${exam}`,
+    );
+    const path = "attempts/" + attempt + "/sync";
+    await request(path, {
+      events: [
+        {
+          id: randomUUID(),
+          type: "LOCATION_CHECK",
+          metadata: { latitude: 15, longitude: 100, accuracy: 2000 },
+        },
+      ],
+    });
+    expect(
+      (await query(sql`SELECT warnings FROM attempts WHERE id=${attempt}`))[0]
+        .warnings,
+    ).toBe(0);
+    for (let index = 1; index <= 2; index++) {
+      await db.execute(
+        sql`UPDATE attempts SET last_location_at=now()-interval '16 seconds' WHERE id=${attempt}`,
+      );
+      await request(path, {
+        events: [
+          {
+            id: randomUUID(),
+            type: "LOCATION_CHECK",
+            metadata: { latitude: 15, longitude: 100, accuracy: 5 },
+          },
+        ],
+      });
+      expect(
+        (await query(sql`SELECT warnings FROM attempts WHERE id=${attempt}`))[0]
+          .warnings,
+      ).toBe(index === 1 ? 0 : 1);
     }
-    await db.execute(sql`UPDATE exams SET policy=jsonb_set(policy,'{location}','false') WHERE id=${exam}`);
-    await db.execute(sql`UPDATE attempts SET warnings=0,last_warning_at=NULL WHERE id=${attempt}`);
+    await db.execute(
+      sql`UPDATE exams SET policy=jsonb_set(policy,'{location}','false') WHERE id=${exam}`,
+    );
+    await db.execute(
+      sql`UPDATE attempts SET warnings=0,last_warning_at=NULL WHERE id=${attempt}`,
+    );
   });
   it("deduplicates repeated and overlapping browser events", async () => {
     const id = randomUUID(),
       path = "attempts/" + attempt + "/sync";
     const payload = { events: [{ id, type: "TAB_HIDDEN" }] };
-    await Promise.all([request(path,payload),request(path,payload)]);
+    await Promise.all([request(path, payload), request(path, payload)]);
     await request(path, {
       events: [{ id: randomUUID(), type: "FULLSCREEN_EXIT" }],
     });
@@ -355,11 +477,20 @@ describe("server authorization and exam lifecycle", () => {
   });
 });
 
-it('authenticates cron and expires an offline attempt',async()=>{
-  const {GET:cron}=await import('../src/app/api/cron/route');
-  process.env.CRON_SECRET=randomUUID();
-  expect((await cron(new Request('http://localhost:3000/api/cron'))).status).toBe(401);
-  await db.execute(sql`UPDATE attempts SET status='ACTIVE',deadline=now()-interval '1 second' WHERE id=${attempt}`);
-  const r=await cron(new Request('http://localhost:3000/api/cron',{headers:{authorization:'Bearer '+process.env.CRON_SECRET}}));
-  expect(r.status).toBe(200);expect((await r.json()).expired).toBe(1);
+it("authenticates cron and expires an offline attempt", async () => {
+  const { GET: cron } = await import("../src/app/api/cron/route");
+  process.env.CRON_SECRET = randomUUID();
+  expect(
+    (await cron(new Request("http://localhost:3000/api/cron"))).status,
+  ).toBe(401);
+  await db.execute(
+    sql`UPDATE attempts SET status='ACTIVE',deadline=now()-interval '1 second' WHERE id=${attempt}`,
+  );
+  const r = await cron(
+    new Request("http://localhost:3000/api/cron", {
+      headers: { authorization: "Bearer " + process.env.CRON_SECRET },
+    }),
+  );
+  expect(r.status).toBe(200);
+  expect((await r.json()).expired).toBe(1);
 });

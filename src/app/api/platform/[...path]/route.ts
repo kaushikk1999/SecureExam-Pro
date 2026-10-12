@@ -180,10 +180,10 @@ async function dispatch(req: Request, parts: string[]) {
           storage: !!process.env.BLOB_READ_WRITE_TOKEN,
           sheets: Boolean(
             process.env.GOOGLE_SHEET_ID &&
-              process.env.GCP_PROJECT_NUMBER &&
-              process.env.GCP_WORKLOAD_IDENTITY_POOL_ID &&
-              process.env.GCP_WORKLOAD_IDENTITY_POOL_PROVIDER_ID &&
-              process.env.GCP_SERVICE_ACCOUNT_EMAIL,
+            process.env.GCP_PROJECT_NUMBER &&
+            process.env.GCP_WORKLOAD_IDENTITY_POOL_ID &&
+            process.env.GCP_WORKLOAD_IDENTITY_POOL_PROVIDER_ID &&
+            process.env.GCP_SERVICE_ACCOUNT_EMAIL,
           ),
         },
       });
@@ -807,15 +807,23 @@ async function dispatch(req: Request, parts: string[]) {
         if (v.action === "publish" || v.action === "schedule") {
           if (current.status !== "DRAFT")
             throw new HttpError(409, "Only drafts can be published.");
+          const [paper] = await query(
+            sql`SELECT id FROM files WHERE exam_id=${id} AND attempt_id IS NULL AND mime='application/vnd.openxmlformats-officedocument.wordprocessingml.document' LIMIT 1`,
+            tx,
+          );
           if (
             !(
               await query(
                 sql`SELECT question_id FROM exam_questions WHERE exam_id=${id}`,
                 tx,
               )
-            ).length
+            ).length &&
+            !paper
           )
-            throw new HttpError(400, "Add questions before publishing.");
+            throw new HttpError(
+              400,
+              "Add at least one question or upload a Word question paper.",
+            );
           if (current.policy.location && !current.classroom)
             throw new HttpError(400, "Configure a classroom first.");
           await tx.execute(
@@ -972,6 +980,16 @@ async function dispatch(req: Request, parts: string[]) {
               sql`SELECT id,name,mime,extracted_text FROM files WHERE exam_id=${a.exam_id} AND attempt_id IS NULL`,
               tx,
             ),
+            documentSubmission:
+              (
+                await query(
+                  sql`SELECT id,name,created_at FROM files WHERE attempt_id=${id} AND owner_id=${a.user_id} AND name LIKE 'SUBMISSION::%' ORDER BY created_at DESC LIMIT 1`,
+                  tx,
+                )
+              ).map((file) => ({
+                ...file,
+                name: file.name.replace(/^SUBMISSION::/, ""),
+              }))[0] ?? null,
             notifications: await query(
               sql`SELECT id,message,created_at FROM notifications WHERE attempt_id=${id} ORDER BY created_at DESC LIMIT 5`,
               tx,
@@ -1284,10 +1302,7 @@ async function dispatch(req: Request, parts: string[]) {
     if (method === "POST") {
       if (!(await rateLimit("upload:" + u.id, 10, 600)))
         throw new HttpError(429, "Upload limit reached. Please wait.");
-      if (
-        !process.env.BLOB_READ_WRITE_TOKEN &&
-        !process.env.GDRIVE_FOLDER_ID
-      )
+      if (!process.env.BLOB_READ_WRITE_TOKEN && !process.env.GDRIVE_FOLDER_ID)
         throw new HttpError(
           503,
           "Private storage is not configured. Set GDRIVE_FOLDER_ID and share the folder with the configured service account, or set BLOB_READ_WRITE_TOKEN.",
@@ -1300,6 +1315,7 @@ async function dispatch(req: Request, parts: string[]) {
       const attemptId = form.get("attemptId")
         ? uuid.parse(form.get("attemptId"))
         : null;
+      const documentSubmission = form.get("documentSubmission") === "true";
       if (!(file instanceof File) || file.size > 4000000)
         throw new HttpError(400, "A file up to 4 MB is required.");
       if (u.role === "STUDENT") {
@@ -1348,6 +1364,36 @@ async function dispatch(req: Request, parts: string[]) {
           "File content does not match the claimed type.",
         );
       let extractedText = "";
+      let storedName = file.name.slice(0, 180);
+      if (documentSubmission) {
+        if (u.role !== "STUDENT" || !attemptId || ext !== "docx")
+          throw new HttpError(
+            403,
+            "Only students can submit a Word exam paper.",
+          );
+        const [paper] = await query(
+          sql`SELECT id FROM files WHERE exam_id=${examId} AND attempt_id IS NULL AND mime='application/vnd.openxmlformats-officedocument.wordprocessingml.document' LIMIT 1`,
+        );
+        if (!paper)
+          throw new HttpError(
+            409,
+            "This examination has no Word question paper.",
+          );
+        const [student] = await query(
+          sql`SELECT name,student_id,email FROM users WHERE id=${u.id} AND role='STUDENT'`,
+        );
+        if (!student) throw new HttpError(403, "Student account not found.");
+        const safePart = (value: string) =>
+          value
+            .normalize("NFKD")
+            .replace(/[^\p{L}\p{N}]+/gu, "-")
+            .replace(/^-|-$/g, "")
+            .slice(0, 80) || "student";
+        const [exam] = await query(
+          sql`SELECT title FROM exams WHERE id=${examId}`,
+        );
+        storedName = `SUBMISSION::${safePart(student.name)}_${safePart(student.student_id ?? student.email)}_${safePart(exam.title)}.docx`;
+      }
       if (ext === "txt")
         extractedText = bytes.toString("utf8").slice(0, 200000);
       if (ext === "docx") {
@@ -1377,7 +1423,7 @@ async function dispatch(req: Request, parts: string[]) {
         file.type,
       );
       await query(
-        sql`INSERT INTO files(id,exam_id,attempt_id,owner_id,name,mime,url,size,extracted_text) VALUES(${fid},${examId},${attemptId},${u.id},${file.name.slice(0, 180)},${file.type},${storageReference},${file.size},${extractedText})`,
+        sql`INSERT INTO files(id,exam_id,attempt_id,owner_id,name,mime,url,size,extracted_text) VALUES(${fid},${examId},${attemptId},${u.id},${storedName},${file.type},${storageReference},${file.size},${extractedText})`,
       );
       await record({
         userId: u.id,
@@ -1386,7 +1432,7 @@ async function dispatch(req: Request, parts: string[]) {
         type: "FILE_UPLOADED",
         metadata: { fileId: fid },
       });
-      return json({ id: fid, name: file.name });
+      return json({ id: fid, name: storedName.replace(/^SUBMISSION::/, "") });
     }
     uuid.parse(id);
     const [f] = await query(sql`SELECT * FROM files WHERE id=${id}`);
@@ -1399,18 +1445,24 @@ async function dispatch(req: Request, parts: string[]) {
       ["image/png", "image/jpeg"].includes(f.mime);
     if (u.role === "STUDENT" && !isLogo) {
       const [a] = await query(
-        sql`SELECT a.id FROM attempts a WHERE a.exam_id=${f.exam_id} AND a.user_id=${u.id}`,
+        sql`SELECT a.id,e.policy FROM attempts a JOIN exams e ON e.id=a.exam_id WHERE a.exam_id=${f.exam_id} AND a.user_id=${u.id}`,
       );
       if (!a || (f.attempt_id && f.owner_id !== u.id))
         throw new HttpError(403, "File access denied.");
+      if (
+        url.searchParams.get("download") === "1" &&
+        f.mime !==
+          "application/vnd.openxmlformats-officedocument.wordprocessingml.document" &&
+        !a.policy.allowDownload
+      )
+        throw new HttpError(403, "Downloads are disabled for this exam.");
     } else if (!isLogo) await ownedExam(f.exam_id, u);
     const fileBody = await readPrivateFile(f.url);
-    if (!fileBody)
-      throw new HttpError(404, "File unavailable.");
+    if (!fileBody) throw new HttpError(404, "File unavailable.");
     return new Response(fileBody, {
       headers: {
         "Content-Type": f.mime,
-        "Content-Disposition": `inline; filename="${f.name.replace(/[^a-zA-Z0-9._-]/g, "_")}"`,
+        "Content-Disposition": `${url.searchParams.get("download") === "1" ? "attachment" : "inline"}; filename="${f.name.replace(/^SUBMISSION::/, "").replace(/[^a-zA-Z0-9._-]/g, "_")}"`,
         "Cache-Control": "private, no-store",
         "X-Content-Type-Options": "nosniff",
         "Content-Security-Policy": "sandbox; default-src 'none'",

@@ -190,10 +190,7 @@ export async function startAttempt(
           "You are currently outside the authorized examination location. Please enter the assigned classroom and retry.",
         );
     }
-    if (
-      p.classroomCode &&
-      !validClassroomCode(e.code_secret, input.code)
-    )
+    if (p.classroomCode && !validClassroomCode(e.code_secret, input.code))
       throw new HttpError(400, "Classroom code is incorrect or expired.");
     if (p.teacherApproval) {
       const [check] = await query(
@@ -213,7 +210,17 @@ export async function startAttempt(
       sql`SELECT q.id,q.options FROM exam_questions eq JOIN questions q ON q.id=eq.question_id WHERE eq.exam_id=${examId} ORDER BY position`,
       tx,
     );
-    if (!qs.length) throw new HttpError(400, "Exam has no questions.");
+    if (!qs.length) {
+      const [paper] = await query(
+        sql`SELECT id FROM files WHERE exam_id=${examId} AND attempt_id IS NULL AND mime='application/vnd.openxmlformats-officedocument.wordprocessingml.document' LIMIT 1`,
+        tx,
+      );
+      if (!paper)
+        throw new HttpError(
+          400,
+          "Exam has no questions or Word question paper.",
+        );
+    }
     const id = randomUUID();
     let order =
       p.randomize || p.poolSize

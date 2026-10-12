@@ -799,6 +799,11 @@ export default function ExamRoom({
   const questions = attempt.question_order
     .map((id: string) => attempt.questions.find((q: any) => q.id === id))
     .filter(Boolean);
+  const wordPaper = attempt.files?.find(
+    (file: any) =>
+      file.mime ===
+      "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+  );
   const q = questions[index];
   const answered = Object.values(values).filter(
     (v) => v !== null && v !== "" && (!Array.isArray(v) || v.length),
@@ -829,9 +834,15 @@ export default function ExamRoom({
         <button
           className="primary"
           onClick={async () => {
+            if (wordPaper && !attempt.documentSubmission) {
+              setError(
+                "Upload your completed Word question paper before submitting the exam.",
+              );
+              return;
+            }
             if (
               confirm(
-                `Answered: ${answered}\nUnanswered: ${questions.length - answered}\nFlagged for review: ${flagged.length}\n\nSubmit your examination? This locks editing.`,
+                `Answered: ${answered}\nUnanswered: ${questions.length - answered}\n${wordPaper ? `Word paper: ${attempt.documentSubmission ? "uploaded" : "not uploaded"}\n` : ""}Flagged for review: ${flagged.length}\n\nSubmit your examination? This locks editing.`,
               )
             ) {
               await synchronize(true);
@@ -868,13 +879,21 @@ export default function ExamRoom({
         <aside className="question-nav">
           <div className="eyebrow">YOUR PROGRESS</div>
           <h3>
-            {answered} of {questions.length} answered
+            {questions.length
+              ? `${answered} of ${questions.length} answered`
+              : wordPaper
+                ? attempt.documentSubmission
+                  ? "Word paper uploaded"
+                  : "Word paper to complete"
+                : "No questions assigned"}
           </h3>
-          <div className="progress">
-            <span
-              style={{ width: (answered / questions.length) * 100 + "%" }}
-            />
-          </div>
+          {questions.length > 0 && (
+            <div className="progress">
+              <span
+                style={{ width: (answered / questions.length) * 100 + "%" }}
+              />
+            </div>
+          )}
           <div className="question-numbers">
             {questions.map((q: any, i: number) => (
               <button
@@ -946,6 +965,15 @@ export default function ExamRoom({
                 </button>
               )}
             </div>
+          ) : questions.length === 0 ? (
+            <section className="panel form-panel">
+              <h2>Complete the question paper in Word</h2>
+              <p>
+                Download the instructor’s DOCX, fill in your answers, then
+                upload your completed copy below. Your submission is private to
+                this attempt and named with your student name and ID.
+              </p>
+            </section>
           ) : (
             q && (
               <>
@@ -1084,6 +1112,52 @@ export default function ExamRoom({
               </>
             )
           )}
+          {wordPaper && (
+            <section className="panel form-panel document-paper">
+              <h2>Word question paper</h2>
+              <p>{wordPaper.name}</p>
+              <a
+                className="button primary"
+                href={"/api/platform/files/" + wordPaper.id + "?download=1"}
+              >
+                Download editable Word paper
+              </a>
+              <h3>Your completed paper</h3>
+              {attempt.documentSubmission ? (
+                <p>
+                  <a
+                    href={
+                      "/api/platform/files/" +
+                      attempt.documentSubmission.id +
+                      "?download=1"
+                    }
+                  >
+                    {attempt.documentSubmission.name}
+                  </a>
+                  <span className="small muted">
+                    {" "}
+                    · You can upload a revised copy before submitting.
+                  </span>
+                </p>
+              ) : (
+                <p className="muted">No completed paper uploaded yet.</p>
+              )}
+              {attempt.status === "ACTIVE" && (
+                <Upload
+                  examId={examId}
+                  attemptId={attempt.id}
+                  device={device.current}
+                  documentSubmission
+                  done={(id, name) =>
+                    setAttempt((current: any) => ({
+                      ...current,
+                      documentSubmission: { id, name },
+                    }))
+                  }
+                />
+              )}
+            </section>
+          )}
           <div className="watermark">
             {user.student_id} · {user.name} ·{" "}
             {new Date(attempt.serverTime).toISOString()}
@@ -1108,8 +1182,8 @@ export default function ExamRoom({
                       {f.extracted_text || "This document has no text preview."}
                     </pre>
                   )}
-                  {attempt.policy.allowDownload && (
-                    <a href={"/api/platform/files/" + f.id} download>
+                  {(attempt.policy.allowDownload || f.id === wordPaper?.id) && (
+                    <a href={"/api/platform/files/" + f.id + "?download=1"}>
                       {f.mime ===
                       "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
                         ? "Download editable Word copy"
@@ -1117,6 +1191,7 @@ export default function ExamRoom({
                     </a>
                   )}
                   {!attempt.policy.allowDownload &&
+                    f.id !== wordPaper?.id &&
                     f.mime ===
                       "application/vnd.openxmlformats-officedocument.wordprocessingml.document" && (
                       <p className="small muted">
