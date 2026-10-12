@@ -615,7 +615,7 @@ export default function ExamRoom({
           speechWindows = 0;
           lastSpeechSignal = Date.now();
           alert(
-            "Sustained voice activity was detected. Please remain quiet unless speaking is allowed. This signal is not a conclusion; your instructor can review it.",
+            "Sustained microphone sound was detected. This sound-level signal cannot identify speech or conversation. Remain quiet if required; your instructor can review the signal.",
           );
           emit("SPEECH_ACTIVITY", {
             sustainedSeconds: 4,
@@ -667,9 +667,9 @@ export default function ExamRoom({
               const changePercent = Math.round(
                 (changed / (pixels.length / 4)) * 100,
               );
-              changingWindows = changePercent > 35 ? changingWindows + 1 : 0;
+              changingWindows = changePercent > 25 ? changingWindows + 1 : 0;
               if (
-                changingWindows >= 4 &&
+                changingWindows >= 3 &&
                 Date.now() - lastMotionSignal > 60000
               ) {
                 changingWindows = 0;
@@ -687,7 +687,7 @@ export default function ExamRoom({
           } catch {
             /* Camera frame analysis stays local and may be unavailable. */
           }
-        }, 2000);
+        }, 1000);
       }
     }
     let watch: number | undefined;
@@ -943,10 +943,11 @@ export default function ExamRoom({
               {p.retentionDays}-day retention policy. Raw camera and microphone
               recordings are not uploaded. Browser observations can be
               incomplete or inaccurate; your instructor reviews the evidence.
-              Speech activity and coarse camera movement are checked in this
-              browser. No audio, transcript or camera images are sent to AI. A
-              browser cannot prevent switching apps; if you leave this tab, the
-              exam screen is held until you acknowledge the signal.
+              Sustained microphone sound levels and coarse frame movement are
+              checked in this browser. Sound levels cannot identify speech or
+              conversation. No audio, transcript or camera images are sent to
+              AI. A browser cannot prevent switching apps; if you leave this
+              tab, the exam screen is held until you acknowledge the signal.
             </p>
           </div>
         </div>

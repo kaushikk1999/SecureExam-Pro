@@ -19,10 +19,10 @@ test("explains the approved student account after Google access is denied", asyn
 }) => {
   await page.goto("/login?error=AccessDenied");
   await expect(page.locator("p[role='alert']")).toContainText(
-    "kaushikka99@gmail.com",
+    "verified Bangkok University student Google account ending in @bumail.net",
   );
   await expect(page.locator("p[role='alert']")).toContainText(
-    "contact your administrator",
+    "contact your instructor",
   );
 });
 test("teacher workspace, authoring, audit and responsive layout", async ({
@@ -105,7 +105,14 @@ test("teacher workspace, authoring, audit and responsive layout", async ({
   const title = "Browser-verified assessment " + Date.now();
   await page.getByLabel("Exam title").fill(title);
   await page.getByLabel("Course / section").selectOption({ index: 1 });
+  await page.getByText("Customize monitoring & examination policy").click();
+  await expect(
+    page.getByRole("checkbox", { name: "microphone", exact: true }),
+  ).toBeChecked();
   await page.getByLabel("Security preset").selectOption("practice");
+  await expect(
+    page.getByRole("checkbox", { name: "microphone", exact: true }),
+  ).not.toBeChecked();
   await page.getByRole("button", { name: "Save draft", exact: true }).click();
   await expect(
     page.getByRole("heading", { name: title, exact: true }),
@@ -194,6 +201,11 @@ test("student preflight, autosave, refresh recovery, submission and API authoriz
   await page
     .getByRole("button", { name: "Check camera, microphone & location" })
     .click();
+  await page
+    .getByRole("checkbox", {
+      name: "I confirm my name, student ID and email are correct.",
+    })
+    .check();
   await page.getByRole("checkbox", { name: /I have read/ }).check();
   await page.getByRole("button", { name: "Begin secure exam" }).click();
   await expect(page.getByText("QUESTION 1 OF 5")).toBeVisible();
@@ -212,6 +224,11 @@ test("student preflight, autosave, refresh recovery, submission and API authoriz
   await page
     .getByRole("button", { name: "Check camera, microphone & location" })
     .click();
+  await page
+    .getByRole("checkbox", {
+      name: "I confirm my name, student ID and email are correct.",
+    })
+    .check();
   await page.getByRole("checkbox", { name: /I have read/ }).check();
   await page.getByRole("button", { name: "Begin secure exam" }).click();
   await expect(
@@ -287,6 +304,31 @@ test("strict preflight with simulated devices, location checkpoint and fifth-war
   });
   expect(studentCreation.status()).toBe(200);
   await page.clock.install();
+  await page.addInitScript(() => {
+    const state = window as Window & {
+      __simulateExamSound?: boolean;
+      __simulateExamMotion?: boolean;
+    };
+    const audioPrototype = AudioContext.prototype as any;
+    const createAnalyser = audioPrototype.createAnalyser;
+    audioPrototype.createAnalyser = function (...args: unknown[]) {
+      const analyser = createAnalyser.apply(this, args);
+      const sample = analyser.getByteTimeDomainData.bind(analyser);
+      analyser.getByteTimeDomainData = (values: Uint8Array) => {
+        if (state.__simulateExamSound) values.fill(160);
+        else sample(values);
+      };
+      return analyser;
+    };
+    const canvasPrototype = CanvasRenderingContext2D.prototype as any;
+    const getImageData = canvasPrototype.getImageData;
+    let frame = 0;
+    canvasPrototype.getImageData = function (...args: unknown[]) {
+      const image = getImageData.apply(this, args);
+      if (state.__simulateExamMotion) image.data.fill(frame++ % 2 ? 0 : 255);
+      return image;
+    };
+  });
   await page
     .context()
     .grantPermissions(["camera", "microphone", "geolocation"]);
@@ -305,10 +347,77 @@ test("strict preflight with simulated devices, location checkpoint and fifth-war
     await teacher.request.get(`/api/platform/exams/${created.id}/room-code`)
   ).json();
   await page.getByLabel("Rotating classroom code").fill(room.code);
+  await page
+    .getByRole("checkbox", {
+      name: "I confirm my name, student ID and email are correct.",
+    })
+    .check();
   await page.getByRole("checkbox", { name: /I have read/ }).check();
   await page.getByRole("button", { name: "Begin secure exam" }).click();
   await expect(page.getByText("QUESTION 1 OF 1")).toBeVisible();
   await page.getByRole("radio", { name: "O(log n)", exact: true }).check();
+  await page.evaluate(() => {
+    (window as any).__simulateExamSound = true;
+  });
+  await page.clock.fastForward(4500);
+  await expect(page.locator(".warning-banner")).toContainText(
+    "Sustained microphone sound was detected",
+  );
+  await page.evaluate(() => {
+    (window as any).__simulateExamSound = false;
+    (window as any).__simulateExamMotion = true;
+  });
+  await page.clock.fastForward(4500);
+  await expect(page.locator(".warning-banner")).toContainText(
+    "Repeated camera-frame movement detected",
+  );
+  await page.evaluate(() => {
+    (window as any).__simulateExamMotion = false;
+  });
+  await expect
+    .poll(async () => {
+      const monitor = await (
+        await teacher.request.get(`/api/platform/exams/${created.id}/monitor`)
+      ).json();
+      const eventTypes = monitor.events.map((event: any) => event.event_type);
+      return (
+        eventTypes.includes("SPEECH_ACTIVITY") &&
+        eventTypes.includes("CAMERA_MOTION")
+      );
+    })
+    .toBeTruthy();
+  await page.evaluate(() => {
+    Object.defineProperty(document, "hidden", {
+      configurable: true,
+      value: true,
+    });
+    document.dispatchEvent(new Event("visibilitychange"));
+  });
+  await expect(page.locator(".warning-banner")).toContainText(
+    "Exam tab changed",
+  );
+  await expect(page.getByText("Warnings 1 / 5", { exact: true })).toBeVisible();
+  await page.evaluate(() => {
+    Object.defineProperty(document, "hidden", {
+      configurable: true,
+      value: false,
+    });
+    document.dispatchEvent(new Event("visibilitychange"));
+  });
+  await page.getByRole("button", { name: "Acknowledge" }).click();
+  await expect
+    .poll(async () => {
+      const monitor = await (
+        await teacher.request.get(`/api/platform/exams/${created.id}/monitor`)
+      ).json();
+      return monitor.events.some(
+        (event: any) => event.event_type === "TAB_HIDDEN",
+      );
+    })
+    .toBeTruthy();
+  // Hard-warning events are deliberately debounced by ten seconds server-side.
+  await new Promise((resolve) => setTimeout(resolve, 10500));
+  await page.clock.fastForward(10500);
   // Advance only browser scheduling to prove that the ten-minute checkpoint fires.
   await page.clock.fastForward(600001);
   await page.clock.fastForward(15001);
@@ -325,7 +434,7 @@ test("strict preflight with simulated devices, location checkpoint and fifth-war
       { timeout: 15000 },
     )
     .toBeTruthy();
-  for (let count = 1; count <= 5; count++) {
+  for (let count = 2; count <= 5; count++) {
     await page.evaluate(() => window.dispatchEvent(new Event("blur")));
     if (count < 5) {
       await page.clock.fastForward(15001);
@@ -456,7 +565,7 @@ test("new instructor action center, analytics, appeals and integration controls 
   await login(page, "teacher@example.test");
   for (const [link, heading] of [
     ["Action center", "Instructor action center"],
-    ["Question analytics", "Question analytics"],
+    ["Exam submissions", "Exam submissions"],
     ["Incident appeals", "Incident appeals"],
     ["University integrations", "Google & university login"],
   ]) {
@@ -465,6 +574,18 @@ test("new instructor action center, analytics, appeals and integration controls 
       page.getByRole("heading", { name: heading, exact: true }),
     ).toBeVisible();
     await expect(page.locator("main").getByRole("alert")).toHaveCount(0);
+    if (link === "Exam submissions") {
+      await expect(
+        page.getByRole("button", { name: "View submission" }).first(),
+      ).toBeVisible();
+      await page
+        .getByRole("button", { name: "View submission" })
+        .first()
+        .click();
+      await expect(
+        page.getByRole("heading", { name: "Submitted paper and answers" }),
+      ).toBeVisible();
+    }
     if (link === "Action center") {
       await expect(
         page.getByRole("heading", { name: "Pending entry approvals" }),
@@ -480,7 +601,7 @@ test("new instructor action center, analytics, appeals and integration controls 
   ).toBeVisible();
   await expect(
     page.getByText(
-      /Student sign-in on this Vercel deployment is restricted to/,
+      /Verified Bangkok University student accounts ending in @bumail.net/,
     ),
   ).toBeVisible();
   await page.screenshot({

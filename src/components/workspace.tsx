@@ -541,7 +541,7 @@ function Overview({ user }: { user: Actor }) {
 }
 const standard = {
   camera: true,
-  microphone: false,
+  microphone: true,
   location: true,
   screen: false,
   fullscreen: true,
@@ -853,6 +853,7 @@ function ExamForm({ done, initial }: { done: () => void; initial?: any }) {
                       ? {
                           ...standard,
                           camera: false,
+                          microphone: false,
                           location: false,
                           fullscreen: false,
                           classroomCode: false,
@@ -895,6 +896,13 @@ function ExamForm({ done, initial }: { done: () => void; initial?: any }) {
                 </label>
               ))}
           </div>
+          {policy.microphone && (
+            <p className="small muted">
+              Microphone monitoring checks sustained sound levels on the
+              student&apos;s device. It does not recognize speech or record or
+              upload audio.
+            </p>
+          )}
           <div className="form-grid">
             {[
               ["maxWarnings", "Warning limit"],
