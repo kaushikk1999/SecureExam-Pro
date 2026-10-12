@@ -1934,7 +1934,10 @@ function Monitor({ id, policy }: { id: string; policy?: any }) {
   const [selected, setSelected] = useState(""),
     [message] = useState(""),
     [sound, setSound] = useState(false),
-    [last, setLast] = useState(0);
+    [last, setLast] = useState(0),
+    [aiReview, setAiReview] = useState(""),
+    [aiError, setAiError] = useState(""),
+    [aiBusy, setAiBusy] = useState(false);
   useEffect(() => {
     if (!data) return;
     const newest = data.events.find((e: any) => e.severity === "HIGH");
@@ -1961,6 +1964,67 @@ function Monitor({ id, policy }: { id: string; policy?: any }) {
       </>
     );
   const students = data.students;
+  async function reviewSupervision() {
+    setAiBusy(true);
+    setAiError("");
+    setAiReview("");
+    const statusCounts: Record<string, number> = {};
+    const deviceCounts = {
+      cameraMissing: 0,
+      microphoneMissing: 0,
+      outOfFullscreen: 0,
+      disconnected: 0,
+    };
+    for (const student of students) {
+      const status =
+        student.status ??
+        (student.checkin_at ? "WAITING_APPROVAL" : "NOT_LOGGED_IN");
+      statusCounts[status] = (statusCounts[status] ?? 0) + 1;
+      const heartbeatAge = student.last_heartbeat_at
+        ? (new Date(data.serverTime).getTime() -
+            new Date(student.last_heartbeat_at).getTime()) /
+          1000
+        : 0;
+      if (student.status === "ACTIVE" && heartbeatAge > 30)
+        deviceCounts.disconnected++;
+      if (student.status === "ACTIVE" && !student.device_state?.camera)
+        deviceCounts.cameraMissing++;
+      if (student.status === "ACTIVE" && !student.device_state?.microphone)
+        deviceCounts.microphoneMissing++;
+      if (student.status === "ACTIVE" && !student.device_state?.fullscreen)
+        deviceCounts.outOfFullscreen++;
+    }
+    const eventCounts: Record<string, number> = {};
+    for (const event of data.events.slice(0, 100)) {
+      const key = `${event.event_type}:${event.severity}`;
+      eventCounts[key] = (eventCounts[key] ?? 0) + 1;
+    }
+    const aggregateSnapshot = {
+      assignedCount: students.length,
+      statusCounts,
+      deviceCounts,
+      totalWarnings: Number(
+        data.stats?.warnings ??
+          students.reduce(
+            (sum: number, s: any) => sum + Number(s.warnings ?? 0),
+            0,
+          ),
+      ),
+      recentEventTypeAndSeverityCounts: eventCounts,
+    };
+    try {
+      const result = await api("ai", {
+        prompt:
+          "Review this aggregate, anonymized live exam supervision snapshot. Summarize notable cohort-level patterns, distinguish normal operational issues from signals that may need a human check, and suggest up to three neutral next steps for the instructor. Do not infer cheating or recommend discipline.\n\n" +
+          JSON.stringify(aggregateSnapshot),
+      });
+      setAiReview(result.text);
+    } catch (e) {
+      setAiError((e as Error).message);
+    } finally {
+      setAiBusy(false);
+    }
+  }
   return (
     <>
       <div className="monitor-strip">
@@ -1978,6 +2042,18 @@ function Monitor({ id, policy }: { id: string; policy?: any }) {
         <small>{time(data.serverTime)}</small>
       </div>
       <ErrorBox message={error || message} />
+      <section className="panel form-panel">
+        <h2>AI supervision summary</h2>
+        <p className="muted">
+          Gemma reviews aggregate monitoring counts only. It does not assess
+          individual students or decide whether misconduct occurred.
+        </p>
+        <button onClick={() => void reviewSupervision()} disabled={aiBusy}>
+          {aiBusy ? "Reviewing live signals…" : "Summarize live signals"}
+        </button>
+        <ErrorBox message={aiError} />
+        {aiReview && <Markdown text={aiReview} />}
+      </section>
       <div className="stat-grid compact">
         {[
           ["Assigned", students.length],
