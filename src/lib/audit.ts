@@ -11,6 +11,7 @@ export async function audit(
     type,
     severity = "INFO",
     metadata = {},
+    chainKey,
   }: {
     userId?: string;
     examId?: string;
@@ -18,9 +19,12 @@ export async function audit(
     type: string;
     severity?: string;
     metadata?: unknown;
+    /** Override the default attempt/exam/user chain when a shared resource
+     * is touched by many independent users in parallel. */
+    chainKey?: string;
   },
 ) {
-  const chain = attemptId ?? examId ?? userId ?? "authentication";
+  const chain = chainKey ?? attemptId ?? examId ?? userId ?? "authentication";
   await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtext(${chain}))`);
   const [last] = await query(
     sql`SELECT event_hash FROM audit_events WHERE chain_key=${chain} ORDER BY sequence DESC LIMIT 1`,

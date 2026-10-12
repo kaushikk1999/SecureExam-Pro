@@ -23,7 +23,9 @@ Set `OLLAMA_ENABLED=true`, `OLLAMA_BASE_URL`, `OLLAMA_MODEL` (default `gemma3:4b
 
 ## Capacity and recovery
 
-Each application instance pools up to five PostgreSQL connections. Use the provider pooler, indexes in the migrations, and a realistic load test before a large cohort. For example, 200 active students polling every five seconds generate approximately 40 read requests per second, before heartbeat/autosave traffic. Autosave is debounced and location samples are throttled. Paginate/archive long-lived operational data as cohort size grows.
+The Vercel Node.js function uses Fluid compute in Singapore (`sin1`) and each application instance pools up to five PostgreSQL connections. Production Neon uses a pooled connection in Singapore (`ap-southeast-1`), keeping database round trips close to the function and Bangkok students. Vercel scales function capacity with demand, but the database connection and compute limits remain the practical ceiling.
+
+The integration suite simulates 100 verified BU Google identities at once, saves student IDs, enrolls them through the course QR flow, starts the same exam, loads each attempt and saves answers concurrently. This verifies application concurrency and data isolation against an isolated PostgreSQL-compatible test database; it does not benchmark the production Neon plan, Google OAuth's external rate limits, or real classroom devices. Before a high-stakes cohort, run a staged load test against a Neon branch with the same compute and pooling configuration as production. For example, 100 active students polling every ten seconds generate approximately 10 read requests per second, before heartbeat/autosave traffic. Autosave is debounced and location samples are throttled. Paginate/archive long-lived operational data as cohort size grows.
 
 Take encrypted backups, test restoration, and export signed/hash-verified audit checkpoints outside the primary database. `npm run audit:verify` checks internal chains. A database administrator can rewrite a whole chain; external checkpoints and operational access controls are necessary for independent evidence.
 

@@ -1,15 +1,22 @@
 import { beforeAll, afterAll, describe, it, expect, vi } from "vitest";
+import { AsyncLocalStorage } from "node:async_hooks";
 import { readFile, readdir, rm } from "node:fs/promises";
 import { randomUUID } from "node:crypto";
 import { sql } from "drizzle-orm";
 import { strToU8, zipSync } from "fflate";
 const auth = vi.hoisted(() => ({ session: null as any }));
+const requestSession = new AsyncLocalStorage<string>();
 const blob = vi.hoisted(() => ({
   put: vi.fn(async () => ({ url: "https://blob.test/private-paper" })),
   get: vi.fn(),
   del: vi.fn(async () => undefined),
 }));
-vi.mock("next-auth", () => ({ getServerSession: async () => auth.session }));
+vi.mock("next-auth", () => ({
+  getServerSession: async () => {
+    const id = requestSession.getStore();
+    return id ? { user: { id, version: 0 } } : auth.session;
+  },
+}));
 vi.mock("@vercel/blob", () => blob);
 process.env.DATABASE_PROVIDER = "pglite";
 process.env.PGLITE_PATH = "./.data/test-" + randomUUID();
@@ -18,7 +25,10 @@ process.env.NEXT_PUBLIC_APP_URL = "http://localhost:3000";
 const { db, query } = await import("../src/lib/db");
 const { GET, POST, PATCH, DELETE } =
   await import("../src/app/api/platform/[...path]/route");
-const { policySchema } = await import("../src/lib/domain");
+const { resolveGoogleIdentity } = await import("../src/lib/sso");
+const { authOptions } = await import("../src/lib/auth");
+const { policySchema, createCourseEnrollmentInvite } =
+  await import("../src/lib/domain");
 const teacher = randomUUID(),
   student = randomUUID(),
   other = randomUUID(),
@@ -53,6 +63,15 @@ async function request(
   return handler(request, {
     params: Promise.resolve({ path: path.split("/") }),
   });
+}
+function requestAs(
+  userId: string,
+  path: string,
+  data?: any,
+  extra: Record<string, string> = {},
+  method?: string,
+) {
+  return requestSession.run(userId, () => request(path, data, extra, method));
 }
 async function deleteRequest(path: string, extra: Record<string, string> = {}) {
   const request = new Request("http://localhost:3000/api/platform/" + path, {
@@ -137,6 +156,153 @@ afterAll(async () => {
   await rm(process.env.PGLITE_PATH!, { recursive: true, force: true });
 });
 describe("server authorization and exam lifecycle", () => {
+  it("handles 100 simultaneous QR enrollments and exam starts", async () => {
+    const previousAllowlist = process.env.STUDENT_LOGIN_EMAILS;
+    const previousSecret = process.env.AUTH_SECRET;
+    const subjects = Array.from({ length: 100 }, () => randomUUID());
+    const emails = subjects.map((id) => `${id}@bumail.net`);
+    let users: string[] = [];
+    const loadCourse = randomUUID();
+    const loadExam = randomUUID();
+    process.env.STUDENT_LOGIN_EMAILS = [previousAllowlist, ...emails]
+      .filter(Boolean)
+      .join(",");
+    process.env.AUTH_SECRET = "integration-test-course-invite-secret";
+
+    try {
+      const accounts = await Promise.all(
+        subjects.map((subject, index) =>
+          resolveGoogleIdentity({
+            iss: "https://accounts.google.com",
+            sub: subject,
+            email: emails[index],
+            email_verified: true,
+            hd: "bumail.net",
+            name: `Load test student ${index + 1}`,
+          }),
+        ),
+      );
+      expect(accounts.every(Boolean)).toBe(true);
+      users = accounts.map((account) => account!.id);
+      const credentialsProvider = authOptions.providers.find(
+        (provider: any) => provider.id === "credentials",
+      ) as any;
+      const passwordLogin = await credentialsProvider.authorize(
+        { email: emails[0], password: "not-a-google-password" },
+        { headers: { "user-agent": "capacity-test" } },
+      );
+      expect(passwordLogin).toBeNull();
+      const profiles = await Promise.all(
+        users.map((id, index) =>
+          requestAs(
+            id,
+            "me/profile",
+            { studentId: `LOAD-${index}` },
+            {},
+            "PATCH",
+          ),
+        ),
+      );
+      expect(profiles.map((response) => response.status)).toEqual(
+        Array(100).fill(200),
+      );
+      const [sourceExam] = await query(
+        sql`SELECT policy FROM exams WHERE id=${exam}`,
+      );
+      await db.execute(
+        sql`INSERT INTO courses(id,teacher_id,code,name) VALUES(${loadCourse},${teacher},'LOAD','Capacity test')`,
+      );
+      await db.execute(
+        sql`INSERT INTO exams(id,course_id,title,status,starts_at,ends_at,duration_minutes,policy,code_secret) VALUES(${loadExam},${loadCourse},'100-student capacity test','PUBLISHED',now()-interval '1 hour',now()+interval '2 hours',60,${JSON.stringify(sourceExam.policy)}::jsonb,'load-test-secret')`,
+      );
+      await db.execute(
+        sql`INSERT INTO exam_questions(exam_id,question_id,position) VALUES(${loadExam},${question},0)`,
+      );
+      const token = createCourseEnrollmentInvite(
+        process.env.AUTH_SECRET,
+        loadCourse,
+      );
+      const enrollments = await Promise.all(
+        users.map((id) =>
+          requestAs(id, `courses/${loadCourse}/self-enroll`, { token }),
+        ),
+      );
+      expect(enrollments.map((response) => response.status)).toEqual(
+        Array(100).fill(200),
+      );
+      const enrollmentCount = await query(
+        sql`SELECT count(*)::int AS count FROM enrollments WHERE course_id=${loadCourse}`,
+      );
+      expect(enrollmentCount[0].count).toBe(100);
+
+      const devices = users.map(() => randomUUID());
+      for (let i = 0; i < users.length; i++) {
+        await db.execute(
+          sql`INSERT INTO exam_devices(id,user_id,session_version) VALUES(${devices[i]},${users[i]},0)`,
+        );
+      }
+      const starts = await Promise.all(
+        users.map((id, index) =>
+          requestAs(id, `exams/${loadExam}/start`, {
+            ...start,
+            deviceSessionId: devices[index],
+          }),
+        ),
+      );
+      expect(starts.map((response) => response.status)).toEqual(
+        Array(100).fill(200),
+      );
+      const activeAttempts = await query(
+        sql`SELECT count(*)::int AS count FROM attempts WHERE exam_id=${loadExam} AND status='ACTIVE'`,
+      );
+      expect(activeAttempts[0].count).toBe(100);
+      const attemptIds = await Promise.all(
+        starts.map(async (response) => (await response.json()).id),
+      );
+
+      const reads = await Promise.all(
+        users.map((id, index) =>
+          requestAs(id, `attempts/${attemptIds[index]}`, undefined, {
+            "x-exam-device": devices[index],
+          }),
+        ),
+      );
+      expect(reads.map((response) => response.status)).toEqual(
+        Array(100).fill(200),
+      );
+      const saves = await Promise.all(
+        users.map((id, index) =>
+          requestAs(
+            id,
+            `attempts/${attemptIds[index]}/sync`,
+            {
+              answers: [
+                {
+                  questionId: question,
+                  value: `Answer ${index + 1}`,
+                  version: 1,
+                },
+              ],
+            },
+            { "x-exam-device": devices[index] },
+          ),
+        ),
+      );
+      expect(saves.map((response) => response.status)).toEqual(
+        Array(100).fill(200),
+      );
+      const savedAnswers = await query(
+        sql`SELECT count(*)::int AS count FROM answers an JOIN attempts a ON a.id=an.attempt_id WHERE a.exam_id=${loadExam}`,
+      );
+      expect(savedAnswers[0].count).toBe(100);
+    } finally {
+      if (previousAllowlist === undefined)
+        delete process.env.STUDENT_LOGIN_EMAILS;
+      else process.env.STUDENT_LOGIN_EMAILS = previousAllowlist;
+      if (previousSecret === undefined) delete process.env.AUTH_SECRET;
+      else process.env.AUTH_SECRET = previousSecret;
+    }
+  }, 30000);
   it("rejects unauthenticated requests", async () => {
     login(null);
     expect((await request("exams")).status).toBe(401);
@@ -170,9 +336,8 @@ describe("server authorization and exam lifecycle", () => {
       studentId: "BU123456",
     });
     expect(
-      (
-        await query(sql`SELECT student_id FROM users WHERE id=${student}`)
-      )[0].student_id,
+      (await query(sql`SELECT student_id FROM users WHERE id=${student}`))[0]
+        .student_id,
     ).toBe("BU123456");
   });
   it("rejects a duplicate student ID", async () => {

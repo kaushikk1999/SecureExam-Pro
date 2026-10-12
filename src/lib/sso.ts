@@ -1,8 +1,8 @@
 import { sql } from "drizzle-orm";
-import { randomBytes, randomUUID } from "node:crypto";
-import { hash } from "bcryptjs";
+import { randomUUID } from "node:crypto";
 import { db, query } from "./db";
 import { isStudentEmailAllowed, STUDENT_LOGIN_EMAIL } from "./auth-role";
+import { OAUTH_ONLY_PASSWORD_HASH } from "./password";
 // The OIDC library validates signature, issuer, audience, state and nonce before this callback.
 // Application authorization still requires an explicit issuer + subject mapping.
 export async function resolveUniversityIdentity(
@@ -108,13 +108,9 @@ export async function resolveGoogleIdentity(
           typeof profile.name === "string" && profile.name.trim()
             ? profile.name.trim().slice(0, 120)
             : email.split("@")[0].slice(0, 120);
-        const passwordHash = await hash(
-          randomBytes(32).toString("base64url"),
-          12,
-        );
         const role = isApprovedTeacher ? "TEACHER" : "STUDENT";
         const [created] = await query(
-          sql`INSERT INTO users(id,email,name,password_hash,role) VALUES(${id},${email},${displayName},${passwordHash},${role}) ON CONFLICT (email) DO NOTHING RETURNING *`,
+          sql`INSERT INTO users(id,email,name,password_hash,role) VALUES(${id},${email},${displayName},${OAUTH_ONLY_PASSWORD_HASH},${role}) ON CONFLICT (email) DO NOTHING RETURNING *`,
           tx,
         );
         u = created;

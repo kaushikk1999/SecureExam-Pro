@@ -1,5 +1,7 @@
 {
   "framework": "nextjs",
+  "fluid": true,
+  "regions": ["sin1"],
   "functions": {
     "src/app/api/platform/[...path]/route.ts": { "maxDuration": 60 },
     "src/app/api/cron/route.ts": { "maxDuration": 60 }

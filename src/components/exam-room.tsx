@@ -538,7 +538,7 @@ export default function ExamRoom({
       } catch {
         /* Sync reports connection errors and retains local drafts. */
       }
-    }, 5000);
+    }, 10000);
     const visibility = () => {
       if (document.hidden) {
         if (active.current?.policy.tabMonitoring) {

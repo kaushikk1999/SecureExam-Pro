@@ -11,6 +11,7 @@ import { query } from "./db";
 import { rateLimit, record } from "./audit";
 import { ensureDefaultCoursesForUser } from "./course-provisioning";
 import { isStudentEmailAllowed } from "./auth-role";
+import { OAUTH_ONLY_PASSWORD_HASH } from "./password";
 export function decryptSecret(value: string) {
   const [iv, tag, data] = value.split(".");
   const key = createHash("sha256")
@@ -86,13 +87,14 @@ export const authOptions: NextAuthOptions = {
         const allowed = await rateLimit("login:" + email, 8, 300);
         const [u] = await query(sql`SELECT * FROM users WHERE email=${email}`);
         // Compare a valid dummy hash as well, reducing account-enumeration timing differences.
+        const passwordHash =
+          u?.password_hash && u.password_hash !== OAUTH_ONLY_PASSWORD_HASH
+            ? u.password_hash
+            : "$2b$12$C6UzMDM.H6dfI/f/IKcEe.9yTTt7vwAibdBo3wfDOPQdlTCpHF9Ya";
         let ok = Boolean(
           allowed &&
-          (await compare(
-            credentials?.password ?? "",
-            u?.password_hash ??
-              "$2b$12$C6UzMDM.H6dfI/f/IKcEe.9yTTt7vwAibdBo3wfDOPQdlTCpHF9Ya",
-          )) &&
+          (await compare(credentials?.password ?? "", passwordHash)) &&
+          u?.password_hash !== OAUTH_ONLY_PASSWORD_HASH &&
           u?.active &&
           (u.role !== "STUDENT" || isStudentEmailAllowed(u.email)),
         );

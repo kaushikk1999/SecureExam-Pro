@@ -317,7 +317,7 @@ async function dispatch(req: Request, parts: string[]) {
         throw new HttpError(503, "Course enrollment is unavailable.");
       const result = await db.transaction(async (tx) => {
         const [course] = await query(
-          sql`SELECT id FROM courses WHERE id=${courseId} FOR UPDATE`,
+          sql`SELECT id FROM courses WHERE id=${courseId} FOR SHARE`,
           tx,
         );
         if (!course) throw new HttpError(404, "Course not found.");
@@ -343,6 +343,7 @@ async function dispatch(req: Request, parts: string[]) {
         );
         await audit(tx, {
           userId: u.id,
+          chainKey: u.id,
           type: "STUDENT_SELF_ENROLLED",
           metadata: { courseId, source: "course_qr" },
         });
@@ -696,7 +697,7 @@ async function dispatch(req: Request, parts: string[]) {
         .parse(await body(req));
       const result = await db.transaction(async (tx) => {
         const [exam] = await query(
-          sql`SELECT id,course_id,status,ends_at,code_secret,deleted_at FROM exams WHERE id=${id} FOR UPDATE`,
+          sql`SELECT id,course_id,status,ends_at,code_secret,deleted_at FROM exams WHERE id=${id} FOR SHARE`,
           tx,
         );
         if (!exam || exam.deleted_at)
@@ -739,6 +740,7 @@ async function dispatch(req: Request, parts: string[]) {
         await audit(tx, {
           userId: u.id,
           examId: id,
+          chainKey: u.id,
           type: "STUDENT_SELF_ENROLLED",
           metadata: { courseId: exam.course_id },
         });
