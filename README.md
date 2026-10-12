@@ -7,7 +7,7 @@ A Next.js examination workspace for Bangkok University, with PostgreSQL as the a
 - Next.js 16.4 / React 19 / strict TypeScript application, with a working local PostgreSQL database.
 - Development server and optimized production build verified locally.
 - Automated verification and its limits are documented in [docs/VERIFICATION.md](docs/VERIFICATION.md).
-- Vercel configuration is included. No cloud deployment has been performed.
+- Vercel production deploys from the connected GitHub `main` branch.
 - Private file storage, Google Sheets and Ollama are disabled gracefully until configured.
 - Expansion: isolated practice/readiness, instructor action center, student learning, question analytics and incident appeals are available in role-specific workspace navigation.
 - Google login and optional custom university OpenID Connect are implemented but require provider credentials. See [system design](docs/EXPANSION-DESIGN.md) and [integration setup](docs/UNIVERSITY-INTEGRATIONS.md).
@@ -21,7 +21,7 @@ A Next.js examination workspace for Bangkok University, with PostgreSQL as the a
 | Database | PostgreSQL + Drizzle parameterized SQL and numbered transactional migrations |
 | Authentication | NextAuth encrypted session cookies, bcrypt, database role/active/session-version validation; encrypted TOTP secrets and replay protection |
 | Live updates | Authenticated HTTPS polling: teacher 3 seconds, student 5 seconds, heartbeat 15 seconds; PostgreSQL remains authoritative |
-| Storage | Private Vercel Blob, authenticated streaming, bounded file sizes and content checks |
+| Storage | Private Vercel Blob or a service-account-shared Google Drive folder, authenticated streaming, bounded file sizes and content checks |
 | Proctoring | Browser focus/fullscreen/device events, 30-second location samples, fresh 10-minute checkpoints, accuracy checks, consecutive outside readings |
 | AI | Optional server-side Ollama draft endpoint; no autonomous misconduct decisions |
 | Sheets | Optional service-account batch export; never used for transactional data |
@@ -63,7 +63,7 @@ Copy [.env.example](.env.example). Never commit `.env`, database files, exports 
 
 Required production settings: `DATABASE_PROVIDER=postgres`, `DATABASE_URL`, `AUTH_SECRET`, `NEXTAUTH_URL`, `NEXT_PUBLIC_APP_URL`, `CRON_SECRET`. Use a strong random secret, and HTTPS public URLs with exactly the same origin.
 
-Optional: `BLOB_READ_WRITE_TOKEN`; Google Sheets export uses Vercel OIDC and Google Workload Identity Federation, configured with `GCP_PROJECT_NUMBER`, `GCP_WORKLOAD_IDENTITY_POOL_ID`, `GCP_WORKLOAD_IDENTITY_POOL_PROVIDER_ID`, `GCP_SERVICE_ACCOUNT_EMAIL`, and `GOOGLE_SHEET_ID` (the spreadsheet needs a `SecureExam` tab shared with the service account as Editor); `OLLAMA_ENABLED`, `OLLAMA_BASE_URL`, `OLLAMA_API_KEY`, `OLLAMA_MODEL`; `MFA_ENCRYPTION_KEY`, `REQUIRE_TEACHER_MFA`.
+Optional file storage: configure `BLOB_READ_WRITE_TOKEN`, or enable Google Drive API, create a private Drive folder shared as Editor with `GCP_SERVICE_ACCOUNT_EMAIL`, and set its ID as `GDRIVE_FOLDER_ID`. Drive uses the existing Vercel OIDC federation variables. Google Sheets export also uses that federation, plus `GOOGLE_SHEET_ID` (the spreadsheet needs a `SecureExam` tab shared with the service account as Editor). Ollama uses `OLLAMA_ENABLED`, `OLLAMA_BASE_URL`, `OLLAMA_API_KEY`, and `OLLAMA_MODEL`; teacher MFA uses `MFA_ENCRYPTION_KEY` and `REQUIRE_TEACHER_MFA`.
 
 `SEED_PASSWORD` is local-only. Bootstrap variables are one-time administrator provisioning inputs and must be removed afterward.
 

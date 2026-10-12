@@ -1069,7 +1069,12 @@ function ExamDetail({ id }: { id: string }) {
             </section>
             <section className="panel form-panel">
               <h2>Supporting materials</h2>
-              <p className="muted">PDF, DOCX, images or text · maximum 4 MB.</p>
+              <p className="muted">
+                PDF, DOCX, images or text · maximum 4 MB. For students to edit
+                and return a Word paper, enable “allowDownload” in the exam
+                policy and add a File Upload question to collect each student’s
+                completed copy.
+              </p>
               {e.status === "DRAFT" && (
                 <Upload examId={id} done={() => void refresh()} />
               )}
@@ -2294,11 +2299,24 @@ function AttemptReview({ id, close }: { id: string; close: () => void }) {
               <Markdown text={q.prompt} />
               <div className="answer-value">
                 <b>Student response</b>
-                <pre>
-                  {typeof answer?.value === "string"
-                    ? answer.value
-                    : JSON.stringify(answer?.value, null, 2)}
-                </pre>
+                {q.type === "FILE_UPLOAD" &&
+                typeof answer?.value === "string" &&
+                /^[0-9a-f-]{36}$/.test(answer.value) ? (
+                  <a
+                    className="button"
+                    href={`/api/platform/files/${answer.value}`}
+                    target="_blank"
+                    rel="noreferrer"
+                  >
+                    Open submitted file
+                  </a>
+                ) : (
+                  <pre>
+                    {typeof answer?.value === "string"
+                      ? answer.value
+                      : JSON.stringify(answer?.value, null, 2)}
+                  </pre>
+                )}
               </div>
               <details>
                 <summary>Answer key & rubric</summary>

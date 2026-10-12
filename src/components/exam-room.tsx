@@ -1029,7 +1029,17 @@ export default function ExamRoom({
                         device={device.current}
                         done={(id) => change(q.id, id)}
                       />
-                      {values[q.id] && <p>Attached file: {values[q.id]}</p>}
+                      {values[q.id] && (
+                        <p>
+                          <a
+                            href={`/api/platform/files/${values[q.id]}`}
+                            target="_blank"
+                            rel="noreferrer"
+                          >
+                            Open your uploaded answer
+                          </a>
+                        </p>
+                      )}
                     </>
                   ) : ["NUMERIC", "FILL_BLANK", "SHORT_ANSWER"].includes(
                       q.type,
@@ -1100,9 +1110,21 @@ export default function ExamRoom({
                   )}
                   {attempt.policy.allowDownload && (
                     <a href={"/api/platform/files/" + f.id} download>
-                      Download material
+                      {f.mime ===
+                      "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+                        ? "Download editable Word copy"
+                        : "Download material"}
                     </a>
                   )}
+                  {!attempt.policy.allowDownload &&
+                    f.mime ===
+                      "application/vnd.openxmlformats-officedocument.wordprocessingml.document" && (
+                      <p className="small muted">
+                        Downloads are disabled by the instructor. Ask them to
+                        enable “allowDownload” in the exam policy if you need to
+                        edit and submit a Word copy.
+                      </p>
+                    )}
                 </details>
               ))}
             </section>

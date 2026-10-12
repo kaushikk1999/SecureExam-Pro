@@ -5,7 +5,6 @@ import { sql } from "drizzle-orm";
 import { z } from "zod";
 import { parse } from "csv-parse/sync";
 import ExcelJS from "exceljs";
-import { put, get } from "@vercel/blob";
 import { unzipSync, strFromU8 } from "fflate";
 import { actor, sameOrigin, HttpError, type Actor } from "@/lib/auth";
 import { db, query } from "@/lib/db";
@@ -40,7 +39,12 @@ import {
   uuid,
 } from "@/lib/validation";
 import { growthRequest } from "@/lib/growth";
-import { ai, syncSheets } from "@/lib/integrations";
+import {
+  ai,
+  syncSheets,
+  storePrivateFile,
+  readPrivateFile,
+} from "@/lib/integrations";
 import { examRequestDeviceAllowed } from "@/lib/exam-device";
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -1280,10 +1284,13 @@ async function dispatch(req: Request, parts: string[]) {
     if (method === "POST") {
       if (!(await rateLimit("upload:" + u.id, 10, 600)))
         throw new HttpError(429, "Upload limit reached. Please wait.");
-      if (!process.env.BLOB_READ_WRITE_TOKEN)
+      if (
+        !process.env.BLOB_READ_WRITE_TOKEN &&
+        !process.env.GDRIVE_FOLDER_ID
+      )
         throw new HttpError(
           503,
-          "Private storage is not configured. Set BLOB_READ_WRITE_TOKEN.",
+          "Private storage is not configured. Set GDRIVE_FOLDER_ID and share the folder with the configured service account, or set BLOB_READ_WRITE_TOKEN.",
         );
       if (Number(req.headers.get("content-length") ?? 0) > 4500000)
         throw new HttpError(413, "Upload limit is 4 MB.");
@@ -1364,13 +1371,13 @@ async function dispatch(req: Request, parts: string[]) {
           .slice(0, 200000);
       }
       const fid = randomUUID();
-      const blob = await put(`exams/${examId}/${fid}.${ext}`, bytes, {
-        access: "private",
-        contentType: file.type,
-        addRandomSuffix: true,
-      });
+      const storageReference = await storePrivateFile(
+        `exams/${examId}/${fid}.${ext}`,
+        bytes,
+        file.type,
+      );
       await query(
-        sql`INSERT INTO files(id,exam_id,attempt_id,owner_id,name,mime,url,size,extracted_text) VALUES(${fid},${examId},${attemptId},${u.id},${file.name.slice(0, 180)},${file.type},${blob.url},${file.size},${extractedText})`,
+        sql`INSERT INTO files(id,exam_id,attempt_id,owner_id,name,mime,url,size,extracted_text) VALUES(${fid},${examId},${attemptId},${u.id},${file.name.slice(0, 180)},${file.type},${storageReference},${file.size},${extractedText})`,
       );
       await record({
         userId: u.id,
@@ -1397,10 +1404,10 @@ async function dispatch(req: Request, parts: string[]) {
       if (!a || (f.attempt_id && f.owner_id !== u.id))
         throw new HttpError(403, "File access denied.");
     } else if (!isLogo) await ownedExam(f.exam_id, u);
-    const blob = await get(f.url, { access: "private" });
-    if (!blob || blob.statusCode !== 200)
+    const fileBody = await readPrivateFile(f.url);
+    if (!fileBody)
       throw new HttpError(404, "File unavailable.");
-    return new Response(blob.stream, {
+    return new Response(fileBody, {
       headers: {
         "Content-Type": f.mime,
         "Content-Disposition": `inline; filename="${f.name.replace(/[^a-zA-Z0-9._-]/g, "_")}"`,
