@@ -562,3 +562,41 @@ it("lets teachers remove old exams, papers, and bank questions safely", async ()
     ),
   ).toHaveLength(1);
 });
+
+it("adds a generated paper to only its draft exam and keeps it out of the bank", async () => {
+  login(teacher);
+  const paperExam = randomUUID();
+  await db.execute(
+    sql`INSERT INTO exams(id,course_id,title,status,starts_at,ends_at,duration_minutes,policy,code_secret) VALUES(${paperExam},${course},'AI paper draft','DRAFT',now()+interval '1 hour',now()+interval '2 hours',60,${JSON.stringify(policySchema.parse({ camera: false, microphone: false, location: false, fullscreen: false, classroomCode: false }))}::jsonb,'secret')`,
+  );
+  const response = await request(`exams/${paperExam}/paper`, {
+    questions: [
+      {
+        type: "MCQ",
+        prompt: "Which structure follows FIFO?",
+        marks: 2,
+        options: ["Stack", "Queue", "Tree", "Set"],
+        solution: "Queue",
+        rubric: "One mark for queue and one for FIFO explanation.",
+        topic: "Data structures",
+        difficulty: "Easy",
+      },
+    ],
+  });
+  expect(response.status).toBe(200);
+  expect((await response.json()).count).toBe(1);
+  const detail = await (await request(`exams/${paperExam}`)).json();
+  expect(detail.questions).toHaveLength(1);
+  expect(detail.questions[0].prompt).toBe("Which structure follows FIFO?");
+  expect(
+    detail.availableQuestions.some(
+      (q: { prompt: string }) => q.prompt === detail.questions[0].prompt,
+    ),
+  ).toBe(false);
+  const bank = await (await request("questions")).json();
+  expect(
+    bank.some(
+      (q: { prompt: string }) => q.prompt === detail.questions[0].prompt,
+    ),
+  ).toBe(false);
+});

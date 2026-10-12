@@ -248,9 +248,9 @@ function Heading({
   );
 }
 function Overview({ user }: { user: Actor }) {
-  const { data: exams, error } = useData("exams", 10000);
-  const { data: students } = useData("students");
-  const { data: events } = useData("audit", 15000);
+  const { data: overview, error } = useData("overview", 10000);
+  const exams = overview?.exams;
+  const events = overview?.events;
   return (
     <>
       <Heading
@@ -292,13 +292,13 @@ function Overview({ user }: { user: Actor }) {
         {[
           [
             FileText,
-            exams?.length ?? "—",
+            overview?.examCount ?? "—",
             "Examinations",
             "Across your courses",
           ],
           [
             Users,
-            students?.length ?? "—",
+            overview?.students ?? "—",
             "Enrolled students",
             "Your teaching community",
           ],
@@ -315,8 +315,7 @@ function Overview({ user }: { user: Actor }) {
           ],
           [
             ShieldCheck,
-            events?.filter((e: any) => e.event_type === "WARNING_ISSUED")
-              .length ?? "—",
+            overview?.warnings ?? "—",
             "Warnings recorded",
             "Recent audit window",
           ],
@@ -802,7 +801,7 @@ function ExamForm({ done, initial }: { done: () => void; initial?: any }) {
 function ExamDetail({ id }: { id: string }) {
   const router = useRouter();
   const { data: e, error, refresh } = useData("exams/" + id);
-  const { data: bank } = useData("questions");
+  const bank = e?.availableQuestions;
   const [tab, setTab] = useState("questions"),
     [message, setMessage] = useState(""),
     [editing, setEditing] = useState(false),
@@ -812,6 +811,12 @@ function ExamDetail({ id }: { id: string }) {
   >(null);
   const [minutes, setMinutes] = useState("15");
   const [busy, setBusy] = useState(false);
+  const [paperOpen, setPaperOpen] = useState(false);
+  const [paperSource, setPaperSource] = useState("");
+  const [paperDrafts, setPaperDrafts] = useState<any[]>([]);
+  const [paperBusy, setPaperBusy] = useState(false);
+  const [paperSaving, setPaperSaving] = useState(false);
+  const [paperError, setPaperError] = useState("");
   async function action(a: string, extraMinutes?: number) {
     setBusy(true);
     setMessage("");
@@ -1094,132 +1099,428 @@ function ExamDetail({ id }: { id: string }) {
         ))}
       </div>
       {tab === "questions" ? (
-        <div className="two-column">
-          <section className="panel form-panel">
-            <h2>
-              Question paper{" "}
-              <span className="muted">{e.questions.length} questions</span>
-            </h2>
-            <Markdown text={e.instructions} />
-            {e.questions.map((q: any, i: number) => (
-              <div key={q.id} className="question-preview">
-                <div className="eyebrow">
-                  QUESTION {i + 1} · {q.type.replaceAll("_", " ")} · {q.marks}{" "}
-                  MARKS
+        <>
+          {e.status === "DRAFT" && (
+            <section className="panel form-panel ai-question-builder">
+              <div className="panel-heading">
+                <div>
+                  <h2>Make question paper with AI</h2>
+                  <p className="muted">
+                    Paste question material or load text extracted from an
+                    uploaded DOCX. Review every question and suggested answer
+                    before adding it to this exam.
+                  </p>
                 </div>
-                <Markdown text={q.prompt} />
-                {e.status === "DRAFT" && (
-                  <button
-                    onClick={async () => {
-                      await api(`exams/${id}/questions`, {
-                        questionId: q.id,
-                        remove: true,
-                      });
-                      await refresh();
-                    }}
-                  >
-                    Remove from paper
-                  </button>
-                )}
-              </div>
-            ))}
-            {!e.questions.length && (
-              <Empty
-                title="Your paper is a blank canvas"
-                description="Add questions from your bank to get started."
-              />
-            )}
-          </section>
-          <aside>
-            <section className="panel form-panel">
-              <h2>Add from question bank</h2>
-              <p className="muted">
-                Published papers are immutable. Duplicate an exam to revise it.
-              </p>
-              {e.status === "DRAFT" && (
-                <select
-                  aria-label="Attach question"
-                  value=""
-                  onChange={async (ev) => {
-                    try {
-                      await api(`exams/${id}/questions`, {
-                        questionId: ev.target.value,
-                      });
-                      await refresh();
-                    } catch (err) {
-                      setMessage((err as Error).message);
-                    }
+                <button
+                  onClick={() => {
+                    setPaperOpen(!paperOpen);
+                    setPaperError("");
                   }}
                 >
-                  <option value="">Select a question…</option>
-                  {bank
-                    ?.filter(
-                      (q: any) => !e.questions.some((x: any) => x.id === q.id),
-                    )
-                    .map((q: any) => (
-                      <option key={q.id} value={q.id}>
-                        {q.prompt.slice(0, 100)}
-                      </option>
-                    ))}
-                </select>
-              )}
-              <Link className="button" href="/workspace/questions">
-                Open question bank →
-              </Link>
-            </section>
-            <section className="panel form-panel">
-              <h2>Supporting materials</h2>
-              <p className="muted">
-                Upload a DOCX as the question paper. Students can download their
-                own copy, complete it in Word, and upload a personal submission
-                named with their student ID. DOCX, PDF, images and text up to 4
-                MB are supported.
-              </p>
-              {e.status === "DRAFT" && (
-                <Upload examId={id} done={() => void refresh()} />
-              )}
-              {e.files.map((f: any) => (
-                <div className="supporting-material" key={f.id}>
-                  <Link
-                    href={"/api/platform/files/" + f.id}
-                    target="_blank"
-                    rel="noreferrer"
-                  >
-                    {f.name}
-                  </Link>
-                  {f.extracted_text && (
-                    <details>
-                      <summary>
-                        Extracted text · review before importing
-                      </summary>
-                      <pre>{f.extracted_text}</pre>
-                    </details>
-                  )}
-                  <details>
-                    <summary>Delete uploaded paper</summary>
-                    <p>
-                      This permanently removes the file from private storage and
-                      this exam. Student attempt records are kept.
-                    </p>
-                    <button
-                      onClick={async () => {
-                        try {
-                          await api(`files/${f.id}`, {}, "DELETE");
-                          await refresh();
-                          setMessage("Uploaded paper deleted.");
-                        } catch (err) {
-                          setMessage((err as Error).message);
-                        }
+                  <Sparkles size={17} />{" "}
+                  {paperOpen ? "Close builder" : "Make question paper with AI"}
+                </button>
+              </div>
+              {paperOpen && (
+                <>
+                  <label>
+                    Load text from an uploaded question paper
+                    <select
+                      value=""
+                      onChange={(event) => {
+                        const file = e.files.find(
+                          (f: any) => f.id === event.target.value,
+                        );
+                        if (file?.extracted_text)
+                          setPaperSource(file.extracted_text.slice(0, 30000));
+                        event.target.value = "";
                       }}
                     >
-                      Confirm delete paper
+                      <option value="">Choose an uploaded DOCX…</option>
+                      {e.files
+                        .filter((f: any) => f.extracted_text)
+                        .map((f: any) => (
+                          <option key={f.id} value={f.id}>
+                            {f.name}
+                          </option>
+                        ))}
+                    </select>
+                  </label>
+                  <label>
+                    Paste or edit the source questions
+                    <textarea
+                      maxLength={30000}
+                      rows={12}
+                      value={paperSource}
+                      onChange={(event) => setPaperSource(event.target.value)}
+                      placeholder="Paste the questions, sections, marks, and any answer guidance here…"
+                    />
+                  </label>
+                  <p className="small muted">
+                    Generated questions are added only to this draft exam and
+                    stay hidden from the question bank. AI answer keys and
+                    rubrics are suggestions; check them before saving.
+                  </p>
+                  <button
+                    className="primary"
+                    disabled={paperBusy || paperSource.trim().length < 10}
+                    onClick={async () => {
+                      setPaperBusy(true);
+                      setPaperError("");
+                      setPaperDrafts([]);
+                      try {
+                        const result = await api(`exams/${id}/ai-paper-draft`, {
+                          source: paperSource,
+                        });
+                        setPaperDrafts(result.questions);
+                      } catch (err) {
+                        setPaperError((err as Error).message);
+                      } finally {
+                        setPaperBusy(false);
+                      }
+                    }}
+                  >
+                    <Sparkles size={16} />{" "}
+                    {paperBusy
+                      ? "Formatting paper…"
+                      : "Format questions with AI"}
+                  </button>
+                  <ErrorBox message={paperError} />
+                  {paperDrafts.length > 0 && (
+                    <div className="ai-question-results">
+                      <div className="ai-question-results-heading">
+                        <div>
+                          <h3>Review question paper</h3>
+                          <p className="small muted">
+                            {paperDrafts.length} questions · edits are saved
+                            only to this exam
+                          </p>
+                        </div>
+                        <button
+                          className="primary"
+                          disabled={paperSaving}
+                          onClick={async () => {
+                            setPaperSaving(true);
+                            setPaperError("");
+                            try {
+                              const result = await api(`exams/${id}/paper`, {
+                                questions: paperDrafts,
+                              });
+                              await refresh();
+                              setPaperDrafts([]);
+                              setPaperSource("");
+                              setPaperOpen(false);
+                              setMessage(
+                                `${result.count} questions added to this exam.`,
+                              );
+                            } catch (err) {
+                              setPaperError((err as Error).message);
+                            } finally {
+                              setPaperSaving(false);
+                            }
+                          }}
+                        >
+                          {paperSaving
+                            ? "Adding questions…"
+                            : "Add questions to this exam"}
+                        </button>
+                      </div>
+                      {paperDrafts.map((question, index) => (
+                        <section className="panel ai-question-card" key={index}>
+                          <div className="ai-question-card-heading">
+                            <strong>Question {index + 1}</strong>
+                            <button
+                              type="button"
+                              onClick={() =>
+                                setPaperDrafts((current) =>
+                                  current.filter((_, i) => i !== index),
+                                )
+                              }
+                            >
+                              Remove
+                            </button>
+                          </div>
+                          <div className="form-grid">
+                            <label>
+                              Type
+                              <select
+                                value={question.type}
+                                onChange={(event) =>
+                                  setPaperDrafts((current) =>
+                                    current.map((item, i) =>
+                                      i === index
+                                        ? { ...item, type: event.target.value }
+                                        : item,
+                                    ),
+                                  )
+                                }
+                              >
+                                {[
+                                  "MCQ",
+                                  "MULTI_SELECT",
+                                  "TRUE_FALSE",
+                                  "SHORT_ANSWER",
+                                  "ESSAY",
+                                  "CASE_STUDY",
+                                  "NUMERIC",
+                                  "FILL_BLANK",
+                                  "CODING",
+                                  "MATCHING",
+                                  "FILE_UPLOAD",
+                                ].map((type) => (
+                                  <option key={type}>{type}</option>
+                                ))}
+                              </select>
+                            </label>
+                            <label>
+                              Marks
+                              <input
+                                type="number"
+                                min="0.5"
+                                max="1000"
+                                step="0.5"
+                                value={question.marks}
+                                onChange={(event) =>
+                                  setPaperDrafts((current) =>
+                                    current.map((item, i) =>
+                                      i === index
+                                        ? {
+                                            ...item,
+                                            marks: Number(event.target.value),
+                                          }
+                                        : item,
+                                    ),
+                                  )
+                                }
+                              />
+                            </label>
+                          </div>
+                          <label>
+                            Question
+                            <textarea
+                              rows={4}
+                              value={question.prompt}
+                              onChange={(event) =>
+                                setPaperDrafts((current) =>
+                                  current.map((item, i) =>
+                                    i === index
+                                      ? { ...item, prompt: event.target.value }
+                                      : item,
+                                  ),
+                                )
+                              }
+                            />
+                          </label>
+                          {["MCQ", "MULTI_SELECT", "TRUE_FALSE"].includes(
+                            question.type,
+                          ) && (
+                            <label>
+                              Options (one per line)
+                              <textarea
+                                rows={4}
+                                value={question.options.join("\n")}
+                                onChange={(event) =>
+                                  setPaperDrafts((current) =>
+                                    current.map((item, i) =>
+                                      i === index
+                                        ? {
+                                            ...item,
+                                            options: event.target.value
+                                              .split("\n")
+                                              .filter((option: string) =>
+                                                option.trim(),
+                                              ),
+                                          }
+                                        : item,
+                                    ),
+                                  )
+                                }
+                              />
+                            </label>
+                          )}
+                          <label>
+                            Suggested answer
+                            <textarea
+                              rows={3}
+                              value={
+                                Array.isArray(question.solution)
+                                  ? question.solution.join("\n")
+                                  : (question.solution ?? "")
+                              }
+                              onChange={(event) =>
+                                setPaperDrafts((current) =>
+                                  current.map((item, i) =>
+                                    i === index
+                                      ? {
+                                          ...item,
+                                          solution:
+                                            item.type === "MULTI_SELECT"
+                                              ? event.target.value
+                                                  .split("\n")
+                                                  .filter((answer: string) =>
+                                                    answer.trim(),
+                                                  )
+                                              : event.target.value,
+                                        }
+                                      : item,
+                                  ),
+                                )
+                              }
+                            />
+                          </label>
+                          <label>
+                            Marking rubric
+                            <textarea
+                              rows={3}
+                              value={question.rubric}
+                              onChange={(event) =>
+                                setPaperDrafts((current) =>
+                                  current.map((item, i) =>
+                                    i === index
+                                      ? { ...item, rubric: event.target.value }
+                                      : item,
+                                  ),
+                                )
+                              }
+                            />
+                          </label>
+                        </section>
+                      ))}
+                    </div>
+                  )}
+                </>
+              )}
+            </section>
+          )}
+          <div className="two-column">
+            <section className="panel form-panel">
+              <h2>
+                Question paper{" "}
+                <span className="muted">{e.questions.length} questions</span>
+              </h2>
+              <Markdown text={e.instructions} />
+              {e.questions.map((q: any, i: number) => (
+                <div key={q.id} className="question-preview">
+                  <div className="eyebrow">
+                    QUESTION {i + 1} · {q.type.replaceAll("_", " ")} · {q.marks}{" "}
+                    MARKS
+                  </div>
+                  <Markdown text={q.prompt} />
+                  {e.status === "DRAFT" && (
+                    <button
+                      onClick={async () => {
+                        await api(`exams/${id}/questions`, {
+                          questionId: q.id,
+                          remove: true,
+                        });
+                        await refresh();
+                      }}
+                    >
+                      Remove from paper
                     </button>
-                  </details>
+                  )}
                 </div>
               ))}
+              {!e.questions.length && (
+                <Empty
+                  title="Your paper is a blank canvas"
+                  description="Add questions from your bank to get started."
+                />
+              )}
             </section>
-          </aside>
-        </div>
+            <aside>
+              <section className="panel form-panel">
+                <h2>Add from question bank</h2>
+                <p className="muted">
+                  Published papers are immutable. Duplicate an exam to revise
+                  it.
+                </p>
+                {e.status === "DRAFT" && (
+                  <select
+                    aria-label="Attach question"
+                    value=""
+                    onChange={async (ev) => {
+                      try {
+                        await api(`exams/${id}/questions`, {
+                          questionId: ev.target.value,
+                        });
+                        await refresh();
+                      } catch (err) {
+                        setMessage((err as Error).message);
+                      }
+                    }}
+                  >
+                    <option value="">Select a question…</option>
+                    {bank
+                      ?.filter(
+                        (q: any) =>
+                          !e.questions.some((x: any) => x.id === q.id),
+                      )
+                      .map((q: any) => (
+                        <option key={q.id} value={q.id}>
+                          {q.prompt.slice(0, 100)}
+                        </option>
+                      ))}
+                  </select>
+                )}
+                <Link className="button" href="/workspace/questions">
+                  Open question bank →
+                </Link>
+              </section>
+              <section className="panel form-panel">
+                <h2>Supporting materials</h2>
+                <p className="muted">
+                  Upload a DOCX as the question paper. Students can download
+                  their own copy, complete it in Word, and upload a personal
+                  submission named with their student ID. DOCX, PDF, images and
+                  text up to 4 MB are supported.
+                </p>
+                {e.status === "DRAFT" && (
+                  <Upload examId={id} done={() => void refresh()} />
+                )}
+                {e.files.map((f: any) => (
+                  <div className="supporting-material" key={f.id}>
+                    <Link
+                      href={"/api/platform/files/" + f.id}
+                      target="_blank"
+                      rel="noreferrer"
+                    >
+                      {f.name}
+                    </Link>
+                    {f.extracted_text && (
+                      <details>
+                        <summary>
+                          Extracted text · review before importing
+                        </summary>
+                        <pre>{f.extracted_text}</pre>
+                      </details>
+                    )}
+                    <details>
+                      <summary>Delete uploaded paper</summary>
+                      <p>
+                        This permanently removes the file from private storage
+                        and this exam. Student attempt records are kept.
+                      </p>
+                      <button
+                        onClick={async () => {
+                          try {
+                            await api(`files/${f.id}`, {}, "DELETE");
+                            await refresh();
+                            setMessage("Uploaded paper deleted.");
+                          } catch (err) {
+                            setMessage((err as Error).message);
+                          }
+                        }}
+                      >
+                        Confirm delete paper
+                      </button>
+                    </details>
+                  </div>
+                ))}
+              </section>
+            </aside>
+          </div>
+        </>
       ) : tab === "monitor" ? (
         <Monitor id={id} policy={e.policy} />
       ) : tab === "reports" ? (
