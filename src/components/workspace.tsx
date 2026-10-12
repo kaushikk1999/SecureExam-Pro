@@ -1,6 +1,6 @@
 "use client";
 import GrowthWorkspace, { growthPages } from "./growth-workspace";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import Image from "next/image";
 import { useRouter } from "next/navigation";
@@ -2951,7 +2951,7 @@ function MonitorPage() {
         </select>
       </label>
       {id ? (
-        <Monitor id={id} />
+        <Monitor id={id} key={id} />
       ) : (
         <Empty
           title="Ready when your class is"
@@ -2963,16 +2963,25 @@ function MonitorPage() {
 }
 function Monitor({ id, policy }: { id: string; policy?: any }) {
   const { data, error, refresh } = useData(`exams/${id}/monitor`, 3000);
+  const { data: settings } = useData("settings");
   const [selected, setSelected] = useState(""),
     [message] = useState(""),
     [sound, setSound] = useState(false),
     [last, setLast] = useState(0),
+    [liveSignal, setLiveSignal] = useState(""),
     [aiReview, setAiReview] = useState(""),
     [aiError, setAiError] = useState(""),
     [aiBusy, setAiBusy] = useState(false);
+  const lastAiSignal = useRef(0),
+    lastAiReviewAt = useRef(0),
+    aiSignalsInitialized = useRef(false),
+    lastVisibleSignal = useRef(0);
   useEffect(() => {
     if (!data) return;
-    const newest = data.events.find((e: any) => e.severity === "HIGH");
+    const alertTypes = ["SPEECH_ACTIVITY", "CAMERA_MOTION"];
+    const newest = data.events.find(
+      (e: any) => e.severity === "HIGH" || alertTypes.includes(e.event_type),
+    );
     if (newest && Number(newest.sequence) > last) {
       if (last && sound) {
         const ctx = new AudioContext();
@@ -2988,6 +2997,71 @@ function Monitor({ id, policy }: { id: string; policy?: any }) {
       setLast(Number(newest.sequence));
     }
   }, [data, last, sound]);
+  useEffect(() => {
+    if (!data) return;
+    const recentSignals = data.events.filter((event: any) =>
+      ["SPEECH_ACTIVITY", "CAMERA_MOTION"].includes(event.event_type),
+    );
+    const newest = recentSignals[0];
+    if (!aiSignalsInitialized.current) {
+      aiSignalsInitialized.current = true;
+      const initialSequence = Number(newest?.sequence ?? 0);
+      lastAiSignal.current = initialSequence;
+      lastVisibleSignal.current = initialSequence;
+      return;
+    }
+    if (!newest) return;
+    const sequence = Number(newest.sequence);
+    if (sequence > lastVisibleSignal.current) {
+      lastVisibleSignal.current = sequence;
+      const label =
+        newest.event_type === "SPEECH_ACTIVITY"
+          ? "sustained voice activity"
+          : "repeated camera-frame movement";
+      setLiveSignal(
+        `${newest.name ?? "A student"}: ${label} signal. Review the event timeline; this signal alone does not establish misconduct.`,
+      );
+    }
+    if (
+      sequence <= lastAiSignal.current ||
+      !settings?.integrations?.ai ||
+      aiBusy ||
+      Date.now() - lastAiReviewAt.current < 60000
+    )
+      return;
+    lastAiSignal.current = sequence;
+    lastAiReviewAt.current = Date.now();
+    const eventCounts: Record<string, number> = {};
+    for (const event of recentSignals.slice(0, 100)) {
+      eventCounts[event.event_type] = (eventCounts[event.event_type] ?? 0) + 1;
+    }
+    const activeStudents = data.students.filter(
+      (student: any) => student.status === "ACTIVE",
+    );
+    const snapshot = {
+      activeStudents: activeStudents.length,
+      eventTypeCounts: eventCounts,
+      cameraUnavailable: activeStudents.filter(
+        (student: any) => !student.device_state?.camera,
+      ).length,
+      microphoneUnavailable: activeStudents.filter(
+        (student: any) => !student.device_state?.microphone,
+      ).length,
+      fullscreenUnavailable: activeStudents.filter(
+        (student: any) => !student.device_state?.fullscreen,
+      ).length,
+    };
+    setAiBusy(true);
+    setAiError("");
+    void api("ai", {
+      prompt:
+        "Review this anonymized aggregate exam-monitoring snapshot. Explain operational issues separately from signals that may need a human check. Give up to three neutral suggestions. Do not infer cheating, identify any student, or recommend discipline. These coarse audio/frame signals have innocent causes and are not proof of misconduct.\n\n" +
+        JSON.stringify(snapshot),
+    })
+      .then((result) => setAiReview(result.text))
+      .catch((cause) => setAiError((cause as Error).message))
+      .finally(() => setAiBusy(false));
+  }, [data, settings, aiBusy]);
   if (!data)
     return (
       <>
@@ -3074,11 +3148,23 @@ function Monitor({ id, policy }: { id: string; policy?: any }) {
         <small>{time(data.serverTime)}</small>
       </div>
       <ErrorBox message={error || message} />
+      {liveSignal && (
+        <div className="warning-banner" role="status">
+          <Activity />
+          <div>
+            <strong>New monitoring signal</strong>
+            <p>{liveSignal}</p>
+          </div>
+          <button onClick={() => setLiveSignal("")}>Dismiss</button>
+        </div>
+      )}
       <section className="panel form-panel">
         <h2>AI supervision summary</h2>
         <p className="muted">
-          Gemma reviews aggregate monitoring counts only. It does not assess
-          individual students or decide whether misconduct occurred.
+          Ollama reviews anonymized signal counts when new voice or camera
+          movement signals arrive, at most once per minute. It does not receive
+          audio, images, names or student IDs, and it does not decide whether
+          misconduct occurred.
         </p>
         <button onClick={() => void reviewSupervision()} disabled={aiBusy}>
           {aiBusy ? "Reviewing live signals…" : "Summarize live signals"}

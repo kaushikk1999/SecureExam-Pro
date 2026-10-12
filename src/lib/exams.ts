@@ -165,6 +165,11 @@ export async function startAttempt(
       u.id,
       tx,
     );
+    if (!u.name.trim() || !u.email.trim() || !u.student_id?.trim())
+      throw new HttpError(
+        400,
+        "Complete your full name, student ID and email details before starting the exam.",
+      );
     if (!input.accepted)
       throw new HttpError(400, "Accept the monitoring notice.");
     for (const k of ["camera", "microphone", "screen", "fullscreen"] as const)

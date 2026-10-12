@@ -28,6 +28,11 @@ const Editor = dynamic(() => import("@monaco-editor/react"), { ssr: false });
 loader.config({ paths: { vs: "/monaco/vs" } });
 type QueuedAnswer = { questionId: string; value: any; version: number };
 type QueuedEvent = { id: string; type: string; metadata: Record<string, any> };
+function captureTrackIsActive(track?: MediaStreamTrack) {
+  return (
+    !!track && track.readyState === "live" && track.enabled && !track.muted
+  );
+}
 function readBestLocation(maxAccuracy: number) {
   return new Promise<{ latitude: number; longitude: number; accuracy: number }>(
     (resolve, reject) => {
@@ -96,6 +101,10 @@ export default function ExamRoom({
     }),
     [deviceClass, setDeviceClass] = useState<ExamDeviceClass>("unsupported"),
     [accepted, setAccepted] = useState(false),
+    [studentId, setStudentId] = useState(user.student_id ?? ""),
+    [identitySaved, setIdentitySaved] = useState(!!user.student_id),
+    [identityConfirmed, setIdentityConfirmed] = useState(false),
+    [identitySaving, setIdentitySaving] = useState(false),
     [code, setCode] = useState(""),
     [point, setPoint] = useState<any>(null),
     [permissionReady, setPermissionReady] = useState(false),
@@ -105,18 +114,23 @@ export default function ExamRoom({
     [saveStatus, setSaveStatus] = useState("All answers saved"),
     [online, setOnline] = useState(true),
     [warning, setWarning] = useState(""),
+    [tabHold, setTabHold] = useState(false),
     [seconds, setSeconds] = useState(0),
     [clockNow, setClockNow] = useState(0),
     [fullscreen, setFullscreen] = useState(true);
   const device = useRef(""),
     stream = useRef<MediaStream | null>(null),
+    microphoneAudio = useRef<{
+      context: AudioContext;
+      analyser: AnalyserNode;
+    } | null>(null),
     screenStream = useRef<MediaStream | null>(null),
     video = useRef<HTMLVideoElement | null>(null),
     active = useRef<any>(null),
     answers = useRef<Record<string, QueuedAnswer>>({}),
     events = useRef<QueuedEvent[]>([]),
     versions = useRef<Record<string, number>>({}),
-    lastEvent = useRef(-Infinity),
+    lastEvent = useRef<Record<string, number>>({}),
     syncing = useRef(false),
     location = useRef<any>(null),
     anchor = useRef({ remaining: 0, at: 0 }),
@@ -218,6 +232,8 @@ export default function ExamRoom({
           if (!Object.keys(answers.current).length) await del(key);
           stream.current?.getTracks().forEach((t) => t.stop());
           screenStream.current?.getTracks().forEach((t) => t.stop());
+          void microphoneAudio.current?.context.close();
+          microphoneAudio.current = null;
           if (document.fullscreenElement) void document.exitFullscreen();
         }
       } catch (e) {
@@ -240,8 +256,8 @@ export default function ExamRoom({
         return;
       const now = performance.now();
       if (["TAB_HIDDEN", "WINDOW_BLUR", "FULLSCREEN_EXIT"].includes(type)) {
-        if (now - lastEvent.current < 10000) return;
-        lastEvent.current = now;
+        if (now - (lastEvent.current[type] ?? -Infinity) < 1000) return;
+        lastEvent.current[type] = now;
       }
       events.current.push({ id: crypto.randomUUID(), type, metadata });
       void persist();
@@ -289,6 +305,8 @@ export default function ExamRoom({
     return () => {
       stream.current?.getTracks().forEach((t) => t.stop());
       screenStream.current?.getTracks().forEach((t) => t.stop());
+      void microphoneAudio.current?.context.close();
+      microphoneAudio.current = null;
     };
   }, [examId, enrollmentToken]);
   useEffect(() => {
@@ -345,28 +363,64 @@ export default function ExamRoom({
     try {
       const p = exam.policy;
       stream.current?.getTracks().forEach((t) => t.stop());
+      void microphoneAudio.current?.context.close();
+      microphoneAudio.current = null;
       if (p.camera || p.microphone) {
         stream.current = await navigator.mediaDevices.getUserMedia({
           video: p.camera,
           audio: p.microphone,
         });
         for (const track of stream.current.getTracks()) {
-          track.onended = () =>
-            emit(
+          const eventType =
+            track.kind === "video" ? "CAMERA_DISABLED" : "MICROPHONE_DISABLED";
+          const updateTrackStatus = () =>
+            setChecks((current) => ({
+              ...current,
+              camera:
+                stream.current?.getVideoTracks().some(captureTrackIsActive) ??
+                false,
+              microphone:
+                stream.current?.getAudioTracks().some(captureTrackIsActive) ??
+                false,
+            }));
+          track.onended = () => {
+            updateTrackStatus();
+            emit(eventType);
+            alert(
               track.kind === "video"
-                ? "CAMERA_DISABLED"
-                : "MICROPHONE_DISABLED",
+                ? "Camera turned off. Restore camera access to continue the exam."
+                : "Microphone turned off. Restore microphone access to continue the exam.",
             );
-          track.onmute = () => {
-            setTimeout(() => {
-              if (track.muted)
-                emit(
-                  track.kind === "video"
-                    ? "CAMERA_DISABLED"
-                    : "MICROPHONE_DISABLED",
-                );
-            }, 10000);
           };
+          track.onmute = () => {
+            updateTrackStatus();
+            setTimeout(() => {
+              if (track.muted) {
+                emit(eventType);
+                alert(
+                  track.kind === "video"
+                    ? "Camera signal is unavailable. Check that your camera remains on and unobstructed."
+                    : "Microphone signal is unavailable. Check that your microphone remains on and unobstructed.",
+                );
+              }
+            }, 3000);
+          };
+          track.onunmute = updateTrackStatus;
+        }
+        if (p.microphone) {
+          const audioTrack = stream.current
+            .getAudioTracks()
+            .find(captureTrackIsActive);
+          if (!audioTrack)
+            throw new Error(
+              "Microphone is not active. Allow microphone access, check that it is not muted, then run the device checks again.",
+            );
+          const context = new AudioContext();
+          await context.resume();
+          const analyser = context.createAnalyser();
+          analyser.fftSize = 512;
+          context.createMediaStreamSource(stream.current).connect(analyser);
+          microphoneAudio.current = { context, analyser };
         }
       }
       if (p.screen) {
@@ -389,12 +443,27 @@ export default function ExamRoom({
       }
       setChecks((c) => ({
         ...c,
-        camera: !!stream.current?.getVideoTracks().length,
-        microphone: !!stream.current?.getAudioTracks().length,
-        screen: !!screenStream.current?.getVideoTracks().length,
+        camera:
+          stream.current?.getVideoTracks().some(captureTrackIsActive) ?? false,
+        microphone:
+          stream.current?.getAudioTracks().some(captureTrackIsActive) ?? false,
+        screen:
+          screenStream.current?.getVideoTracks().some(captureTrackIsActive) ??
+          false,
       }));
       setPermissionReady(true);
     } catch (e) {
+      stream.current?.getTracks().forEach((track) => track.stop());
+      screenStream.current?.getTracks().forEach((track) => track.stop());
+      void microphoneAudio.current?.context.close();
+      microphoneAudio.current = null;
+      setChecks((current) => ({
+        ...current,
+        camera: false,
+        microphone: false,
+        screen: false,
+      }));
+      setPermissionReady(false);
       setError(
         (e as Error).message || "A required device permission was unavailable.",
       );
@@ -463,13 +532,25 @@ export default function ExamRoom({
           if (!Object.keys(answers.current).length) await del(key);
           stream.current?.getTracks().forEach((t) => t.stop());
           screenStream.current?.getTracks().forEach((t) => t.stop());
+          void microphoneAudio.current?.context.close();
+          microphoneAudio.current = null;
         }
       } catch {
         /* Sync reports connection errors and retains local drafts. */
       }
     }, 5000);
     const visibility = () => {
-      if (document.hidden) emit("TAB_HIDDEN");
+      if (document.hidden) {
+        if (active.current?.policy.tabMonitoring) {
+          setTabHold(true);
+          alert(
+            "Exam tab changed. Return to the examination and acknowledge this signal to continue.",
+          );
+        }
+        emit("TAB_HIDDEN");
+      } else if (events.current.length) {
+        void synchronize();
+      }
     };
     const blur = () => {
       if (document.activeElement?.tagName !== "IFRAME") emit("WINDOW_BLUR");
@@ -487,6 +568,9 @@ export default function ExamRoom({
       emit("NETWORK_RECONNECTED");
       void synchronize();
     };
+    const focus = () => {
+      if (events.current.length) void synchronize();
+    };
     const leave = (e: BeforeUnloadEvent) => {
       e.preventDefault();
       e.returnValue = "";
@@ -502,6 +586,7 @@ export default function ExamRoom({
     };
     document.addEventListener("visibilitychange", visibility);
     window.addEventListener("blur", blur);
+    window.addEventListener("focus", focus);
     document.addEventListener("fullscreenchange", full);
     window.addEventListener("offline", off);
     window.addEventListener("online", on);
@@ -509,6 +594,102 @@ export default function ExamRoom({
     document.addEventListener("paste", paste);
     document.addEventListener("copy", copy);
     document.addEventListener("cut", copy);
+    let speechTimer: ReturnType<typeof setInterval> | undefined;
+    let motionTimer: ReturnType<typeof setInterval> | undefined;
+    const analyser = microphoneAudio.current?.analyser;
+    if (attempt.policy.microphone && analyser) {
+      const audioSamples = new Uint8Array(analyser.fftSize);
+      let speechWindows = 0;
+      let lastSpeechSignal = 0;
+      speechTimer = setInterval(() => {
+        if (active.current?.status !== "ACTIVE") return;
+        analyser.getByteTimeDomainData(audioSamples);
+        let energy = 0;
+        for (const sample of audioSamples) {
+          const normalized = (sample - 128) / 128;
+          energy += normalized * normalized;
+        }
+        const rms = Math.sqrt(energy / audioSamples.length);
+        speechWindows = rms > 0.045 ? speechWindows + 1 : 0;
+        if (speechWindows >= 8 && Date.now() - lastSpeechSignal > 60000) {
+          speechWindows = 0;
+          lastSpeechSignal = Date.now();
+          alert(
+            "Sustained voice activity was detected. Please remain quiet unless speaking is allowed. This signal is not a conclusion; your instructor can review it.",
+          );
+          emit("SPEECH_ACTIVITY", {
+            sustainedSeconds: 4,
+            measurement: "on-device audio level only",
+          });
+        }
+      }, 500);
+    }
+    if (attempt.policy.camera && video.current) {
+      const canvas = document.createElement("canvas");
+      canvas.width = 32;
+      canvas.height = 24;
+      const context = canvas.getContext("2d", { willReadFrequently: true });
+      let previous: Uint8ClampedArray | null = null;
+      let changingWindows = 0;
+      let lastMotionSignal = 0;
+      if (context) {
+        motionTimer = setInterval(() => {
+          const camera = video.current;
+          if (
+            !camera ||
+            camera.readyState < HTMLMediaElement.HAVE_CURRENT_DATA ||
+            active.current?.status !== "ACTIVE"
+          )
+            return;
+          try {
+            context.drawImage(camera, 0, 0, canvas.width, canvas.height);
+            const pixels = context.getImageData(
+              0,
+              0,
+              canvas.width,
+              canvas.height,
+            ).data;
+            if (previous) {
+              let changed = 0;
+              for (let offset = 0; offset < pixels.length; offset += 4) {
+                const currentLuma =
+                  (pixels[offset] * 3 +
+                    pixels[offset + 1] * 6 +
+                    pixels[offset + 2]) /
+                  10;
+                const priorLuma =
+                  (previous[offset] * 3 +
+                    previous[offset + 1] * 6 +
+                    previous[offset + 2]) /
+                  10;
+                if (Math.abs(currentLuma - priorLuma) > 35) changed++;
+              }
+              const changePercent = Math.round(
+                (changed / (pixels.length / 4)) * 100,
+              );
+              changingWindows = changePercent > 35 ? changingWindows + 1 : 0;
+              if (
+                changingWindows >= 4 &&
+                Date.now() - lastMotionSignal > 60000
+              ) {
+                changingWindows = 0;
+                lastMotionSignal = Date.now();
+                alert(
+                  "Repeated camera-frame movement detected. Keep your face and workspace in view if possible. Normal movement can trigger this signal; your instructor will review it.",
+                );
+                emit("CAMERA_MOTION", {
+                  changePercent,
+                  measurement: "coarse on-device frame difference",
+                });
+              }
+            }
+            previous = new Uint8ClampedArray(pixels);
+          } catch {
+            /* Camera frame analysis stays local and may be unavailable. */
+          }
+        }, 2000);
+      }
+    }
     let watch: number | undefined;
     let locationTimer: ReturnType<typeof setInterval> | undefined,
       checkpoint: ReturnType<typeof setInterval> | undefined;
@@ -547,11 +728,14 @@ export default function ExamRoom({
       clearInterval(tick);
       clearInterval(heartbeat);
       clearInterval(updates);
+      if (speechTimer) clearInterval(speechTimer);
+      if (motionTimer) clearInterval(motionTimer);
       if (locationTimer) clearInterval(locationTimer);
       if (checkpoint) clearInterval(checkpoint);
       if (watch !== undefined) navigator.geolocation.clearWatch(watch);
       document.removeEventListener("visibilitychange", visibility);
       window.removeEventListener("blur", blur);
+      window.removeEventListener("focus", focus);
       document.removeEventListener("fullscreenchange", full);
       window.removeEventListener("offline", off);
       window.removeEventListener("online", on);
@@ -563,7 +747,9 @@ export default function ExamRoom({
   }, [
     attempt?.id,
     attempt?.status,
+    attempt?.policy.camera,
     attempt?.policy.location,
+    attempt?.policy.microphone,
     alert,
     emit,
     key,
@@ -645,6 +831,8 @@ export default function ExamRoom({
       new Date(exam.ends_at).getTime() > clockNow;
     const allowed =
       examOpen &&
+      identitySaved &&
+      identityConfirmed &&
       accepted &&
       online &&
       permissionReady &&
@@ -664,6 +852,73 @@ export default function ExamRoom({
         <h1>Exam security check</h1>
         <h2>{exam.title}</h2>
         <Markdown text={exam.instructions} />
+        <section className="panel form-panel student-identity">
+          <h2>Confirm your student details</h2>
+          <p className="muted">
+            These details are linked to your account and will appear with your
+            exam attempt. Save your student ID if it is missing or incorrect.
+          </p>
+          <div className="form-grid">
+            <label>
+              Full name
+              <input value={user.name} readOnly />
+            </label>
+            <label>
+              Student ID
+              <input
+                value={studentId}
+                onChange={(event) => {
+                  const next = event.target.value;
+                  setStudentId(next);
+                  setIdentitySaved(next.trim() === (user.student_id ?? ""));
+                  setIdentityConfirmed(false);
+                }}
+                autoComplete="off"
+                maxLength={50}
+                placeholder="Enter your university student ID"
+              />
+            </label>
+            <label>
+              Email
+              <input value={user.email} readOnly />
+            </label>
+          </div>
+          {!identitySaved && (
+            <button
+              type="button"
+              disabled={identitySaving || !studentId.trim()}
+              onClick={async () => {
+                setIdentitySaving(true);
+                setError("");
+                try {
+                  const result = await api(
+                    "me/profile",
+                    { studentId: studentId.trim() },
+                    "PATCH",
+                  );
+                  setStudentId(result.studentId);
+                  setIdentitySaved(true);
+                  setIdentityConfirmed(false);
+                } catch (cause) {
+                  setError((cause as Error).message);
+                } finally {
+                  setIdentitySaving(false);
+                }
+              }}
+            >
+              {identitySaving ? "Saving student ID…" : "Save student ID"}
+            </button>
+          )}
+          <label className="check consent">
+            <input
+              type="checkbox"
+              checked={identityConfirmed}
+              disabled={!identitySaved}
+              onChange={(event) => setIdentityConfirmed(event.target.checked)}
+            />{" "}
+            I confirm my name, student ID and email are correct.
+          </label>
+        </section>
         <div className="notice">
           <ShieldCheck size={22} />
           <div>
@@ -688,6 +943,10 @@ export default function ExamRoom({
               {p.retentionDays}-day retention policy. Raw camera and microphone
               recordings are not uploaded. Browser observations can be
               incomplete or inaccurate; your instructor reviews the evidence.
+              Speech activity and coarse camera movement are checked in this
+              browser. No audio, transcript or camera images are sent to AI. A
+              browser cannot prevent switching apps; if you leave this tab, the
+              exam screen is held until you acknowledge the signal.
             </p>
           </div>
         </div>
@@ -858,7 +1117,8 @@ export default function ExamRoom({
   ).length;
   const blocked =
     attempt.examStatus === "PAUSED" ||
-    (attempt.policy.fullscreen && !fullscreen);
+    (attempt.policy.fullscreen && !fullscreen) ||
+    tabHold;
   return (
     <div className="exam-shell">
       <header className="exam-top">
@@ -912,9 +1172,19 @@ export default function ExamRoom({
           <AlertTriangle />
           <div>
             <strong>{warning}</strong>
-            <p>Check fullscreen, device permissions, and classroom location.</p>
+            <p>
+              Monitoring signals can have innocent causes. Review this notice
+              and restore the required examination conditions.
+            </p>
           </div>
-          <button onClick={() => setWarning("")}>Acknowledge</button>
+          <button
+            onClick={() => {
+              setWarning("");
+              setTabHold(false);
+            }}
+          >
+            Acknowledge
+          </button>
         </div>
       )}
       <ErrorBox message={error} />
@@ -979,17 +1249,13 @@ export default function ExamRoom({
           <div className="device-labels">
             <span>
               Camera{" "}
-              {stream.current
-                ?.getVideoTracks()
-                .some((t) => t.readyState === "live")
+              {stream.current?.getVideoTracks().some(captureTrackIsActive)
                 ? "active"
                 : "off"}
             </span>
             <span>
               Microphone{" "}
-              {stream.current
-                ?.getAudioTracks()
-                .some((t) => t.readyState === "live")
+              {stream.current?.getAudioTracks().some(captureTrackIsActive)
                 ? "active"
                 : "off"}
             </span>
@@ -1002,9 +1268,11 @@ export default function ExamRoom({
               <h2>
                 {attempt.examStatus === "PAUSED"
                   ? "Your instructor has paused this examination."
-                  : "Return to fullscreen to continue."}
+                  : tabHold
+                    ? "You left the examination tab. Acknowledge the monitoring signal above to continue."
+                    : "Return to fullscreen to continue."}
               </h2>
-              {attempt.examStatus !== "PAUSED" && (
+              {attempt.examStatus !== "PAUSED" && !tabHold && (
                 <button
                   className="primary"
                   onClick={() => document.documentElement.requestFullscreen()}

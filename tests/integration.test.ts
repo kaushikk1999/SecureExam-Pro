@@ -110,7 +110,7 @@ beforeAll(async () => {
     [other, "STUDENT"],
   ])
     await db.execute(
-      sql`INSERT INTO users(id,email,name,password_hash,role) VALUES(${id},${id + "@test.local"},'Test','unused',${role})`,
+      sql`INSERT INTO users(id,email,name,password_hash,role,student_id) VALUES(${id},${id + "@test.local"},'Test','unused',${role},${role === "STUDENT" ? id + "-ID" : null})`,
     );
   await db.execute(
     sql`INSERT INTO exam_devices(id,user_id,session_version) VALUES(${device},${student},0)`,
@@ -155,6 +155,35 @@ describe("server authorization and exam lifecycle", () => {
   it("allows an authorized teacher", async () => {
     login(teacher);
     expect((await request("exams/" + exam)).status).toBe(200);
+  });
+  it("lets a student save a unique ID for exam identity confirmation", async () => {
+    login(student);
+    const response = await request(
+      "me/profile",
+      { studentId: "BU123456" },
+      {},
+      "PATCH",
+    );
+    expect(response.status).toBe(200);
+    expect(await response.json()).toMatchObject({
+      ok: true,
+      studentId: "BU123456",
+    });
+    expect(
+      (
+        await query(sql`SELECT student_id FROM users WHERE id=${student}`)
+      )[0].student_id,
+    ).toBe("BU123456");
+  });
+  it("rejects a duplicate student ID", async () => {
+    login(other);
+    const response = await request(
+      "me/profile",
+      { studentId: "BU123456" },
+      {},
+      "PATCH",
+    );
+    expect(response.status).toBe(409);
   });
   it("lets a teacher edit and delete an owned classroom", async () => {
     login(teacher);
@@ -399,6 +428,43 @@ describe("server authorization and exam lifecycle", () => {
     });
     const r = await (await request("attempts/" + attempt)).json();
     expect(r.answers[0].value).toBe("SECRET_KEY");
+  });
+  it("logs local audio and camera activity for instructor review without auto-penalizing", async () => {
+    const path = "attempts/" + attempt + "/sync";
+    const response = await request(path, {
+      events: [
+        {
+          id: randomUUID(),
+          type: "SPEECH_ACTIVITY",
+          metadata: {
+            sustainedSeconds: 4,
+            measurement: "on-device audio level only",
+          },
+        },
+        {
+          id: randomUUID(),
+          type: "CAMERA_MOTION",
+          metadata: {
+            changePercent: 42,
+            measurement: "coarse on-device frame difference",
+          },
+        },
+      ],
+    });
+    expect(response.status).toBe(200);
+    const recorded = await query(
+      sql`SELECT event_type,severity FROM audit_events WHERE attempt_id=${attempt} AND event_type IN('SPEECH_ACTIVITY','CAMERA_MOTION') ORDER BY event_type`,
+    );
+    expect(recorded.map((event) => [event.event_type, event.severity])).toEqual(
+      [
+        ["CAMERA_MOTION", "INFO"],
+        ["SPEECH_ACTIVITY", "INFO"],
+      ],
+    );
+    expect(
+      (await query(sql`SELECT warnings FROM attempts WHERE id=${attempt}`))[0]
+        .warnings,
+    ).toBe(0);
   });
   it("records uncertain location without issuing a warning and confirms consecutive outside readings", async () => {
     await db.execute(

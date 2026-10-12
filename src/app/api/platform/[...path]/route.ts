@@ -153,6 +153,28 @@ async function dispatch(req: Request, parts: string[]) {
   if (resource === "growth")
     return json(await growthRequest(req, parts.slice(1), u, () => body(req)));
   if (resource === "me") {
+    if (id === "profile") {
+      if (method !== "PATCH") throw new HttpError(405, "PATCH required.");
+      if (u.role !== "STUDENT")
+        throw new HttpError(403, "Student access required.");
+      const v = z
+        .object({ studentId: z.string().trim().min(1).max(50) })
+        .parse(await body(req));
+      const [duplicate] = await query(
+        sql`SELECT id FROM users WHERE student_id=${v.studentId} AND id<>${u.id}`,
+      );
+      if (duplicate)
+        throw new HttpError(409, "That student ID is already in use.");
+      await query(
+        sql`UPDATE users SET student_id=${v.studentId} WHERE id=${u.id} AND role='STUDENT'`,
+      );
+      await record({
+        userId: u.id,
+        type: "STUDENT_PROFILE_CONFIRMED",
+        metadata: { studentIdProvided: true },
+      });
+      return json({ ok: true, studentId: v.studentId });
+    }
     if (id === "device") {
       if (method !== "POST") throw new HttpError(405, "POST required.");
       const deviceId = randomUUID();
@@ -1442,6 +1464,8 @@ async function dispatch(req: Request, parts: string[]) {
                 "FULLSCREEN_EXIT",
                 "CAMERA_DISABLED",
                 "MICROPHONE_DISABLED",
+                "SPEECH_ACTIVITY",
+                "CAMERA_MOTION",
                 "SCREEN_SHARE_STOPPED",
                 "LOCATION_CHECK",
                 "LOCATION_UNAVAILABLE",
