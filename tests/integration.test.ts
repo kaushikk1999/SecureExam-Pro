@@ -32,6 +32,7 @@ async function request(
     headers: {
       origin: "http://localhost:3000",
       "content-type": "application/json",
+      "user-agent": "Mozilla/5.0 (X11; Linux x86_64) Chrome/130.0.0.0 Safari/537.36",
       "x-exam-device": device,
       ...extra,
     },
@@ -43,13 +44,13 @@ async function request(
 }
 const start = {
   deviceSessionId: device,
+  deviceClass: "laptop",
   accepted: true,
   checks: {
     camera: false,
     microphone: false,
     screen: false,
     fullscreen: false,
-    desktop: true,
   },
   code: "",
 };
@@ -163,6 +164,34 @@ describe("server authorization and exam lifecycle", () => {
       ).status,
     ).toBe(400);
     p.location = false;
+    await db.execute(
+      sql`UPDATE exams SET policy=${JSON.stringify(p)}::jsonb WHERE id=${exam}`,
+    );
+  });
+  it("rejects phone browsers even when an exam policy allows mobile", async () => {
+    login(student);
+    const p = policySchema.parse({
+      camera: false,
+      microphone: false,
+      location: false,
+      fullscreen: false,
+      classroomCode: false,
+      allowMobile: true,
+    });
+    await db.execute(
+      sql`UPDATE exams SET policy=${JSON.stringify(p)}::jsonb WHERE id=${exam}`,
+    );
+    const response = await request(
+      "exams/" + exam + "/start",
+      { ...start, deviceClass: "phone" },
+      {
+        "user-agent":
+          "Mozilla/5.0 (Linux; Android 14; Pixel 9) Chrome/130 Mobile Safari/537.36",
+        "sec-ch-ua-mobile": "?1",
+      },
+    );
+    expect(response.status).toBe(403);
+    p.allowMobile = false;
     await db.execute(
       sql`UPDATE exams SET policy=${JSON.stringify(p)}::jsonb WHERE id=${exam}`,
     );

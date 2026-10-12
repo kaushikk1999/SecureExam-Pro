@@ -671,7 +671,10 @@ function ExamForm({ done, initial }: { done: () => void; initial?: any }) {
           <summary>Customize monitoring & examination policy</summary>
           <div className="check-grid">
             {Object.entries(policy)
-              .filter(([, v]) => typeof v === "boolean")
+              .filter(
+                ([key, value]) =>
+                  typeof value === "boolean" && key !== "allowMobile",
+              )
               .map(([key, value]) => (
                 <label key={key} className="check">
                   <input

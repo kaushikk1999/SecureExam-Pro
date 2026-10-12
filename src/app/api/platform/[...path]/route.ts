@@ -39,6 +39,7 @@ import {
 } from "@/lib/validation";
 import { growthRequest } from "@/lib/growth";
 import { ai, syncSheets } from "@/lib/integrations";
+import { examRequestDeviceAllowed } from "@/lib/exam-device";
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 const json = (data: unknown) =>
@@ -436,6 +437,17 @@ async function dispatch(req: Request, parts: string[]) {
         throw new HttpError(403, "Only students may start an exam.");
       const input = startSchema.parse(await body(req));
       try {
+        if (
+          !examRequestDeviceAllowed(
+            req.headers.get("user-agent") ?? "",
+            req.headers.get("sec-ch-ua-mobile"),
+            input.deviceClass,
+          )
+        )
+          throw new HttpError(
+            403,
+            "This exam can only be taken on a laptop or tablet. Phones are not allowed.",
+          );
         return json(await startAttempt(id, u, input));
       } catch (e) {
         await record({

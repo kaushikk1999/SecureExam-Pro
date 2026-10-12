@@ -170,10 +170,10 @@ export async function startAttempt(
     for (const k of ["camera", "microphone", "screen", "fullscreen"] as const)
       if (p[k] && !input.checks[k])
         throw new HttpError(400, `Required ${k} check has not passed.`);
-    if (!p.allowMobile && !input.checks.desktop)
+    if (!["laptop", "tablet"].includes(input.deviceClass))
       throw new HttpError(
-        400,
-        "This exam requires a desktop or laptop browser.",
+        403,
+        "This exam can only be taken on a laptop or tablet. Phones are not allowed.",
       );
     if (p.location) {
       if (!input.location || !e.classroom)
@@ -240,6 +240,7 @@ export async function startAttempt(
       metadata: {
         noticeAccepted: true,
         policy: p,
+        deviceClass: input.deviceClass,
         location: input.location ?? null,
         checks: input.checks,
       },

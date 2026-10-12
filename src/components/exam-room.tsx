@@ -21,6 +21,7 @@ import {
   Send,
 } from "lucide-react";
 import type { Actor } from "@/lib/auth";
+import { classifyExamDevice, type ExamDeviceClass } from "@/lib/exam-device";
 import { api, Markdown, ErrorBox, Loading, time } from "./ui";
 import { Upload } from "./workspace";
 const Editor = dynamic(() => import("@monaco-editor/react"), { ssr: false });
@@ -46,8 +47,8 @@ export default function ExamRoom({
       microphone: false,
       screen: false,
       fullscreen: false,
-      desktop: false,
     }),
+    [deviceClass, setDeviceClass] = useState<ExamDeviceClass>("unsupported"),
     [accepted, setAccepted] = useState(false),
     [code, setCode] = useState(""),
     [point, setPoint] = useState<any>(null),
@@ -212,11 +213,20 @@ export default function ExamRoom({
         })
         .catch((e) => setError(e.message));
     setOnline(navigator.onLine);
+    const browserNavigator = navigator as Navigator & {
+      userAgentData?: { mobile?: boolean };
+    };
+    setDeviceClass(
+      classifyExamDevice({
+        userAgent: navigator.userAgent,
+        platform: navigator.platform,
+        maxTouchPoints: navigator.maxTouchPoints,
+        minScreenDimension: Math.min(screen.width, screen.height),
+        mobileHint: browserNavigator.userAgentData?.mobile,
+      }),
+    );
     setChecks((c) => ({
       ...c,
-      desktop:
-        !/Android|iPhone|iPad|Mobile/i.test(navigator.userAgent) &&
-        window.innerWidth >= 768,
       fullscreen: document.fullscreenEnabled,
     }));
     async function loadExam() {
@@ -361,6 +371,7 @@ export default function ExamRoom({
         await document.documentElement.requestFullscreen();
       const result = await api(`exams/${examId}/start`, {
         deviceSessionId: device.current,
+        deviceClass,
         accepted,
         checks: { ...checks, fullscreen: !!document.fullscreenElement },
         code,
@@ -596,7 +607,7 @@ export default function ExamRoom({
       (!p.screen || checks.screen) &&
       (!p.location || !!point) &&
       (!p.fullscreen || checks.fullscreen) &&
-      (p.allowMobile || checks.desktop) &&
+      (deviceClass === "laptop" || deviceClass === "tablet") &&
       (!p.classroomCode || code.length === 6);
     return (
       <main className="preflight">
@@ -660,8 +671,10 @@ export default function ExamRoom({
               ],
               [
                 ShieldCheck,
-                "Compatible desktop",
-                p.allowMobile || checks.desktop,
+                deviceClass === "phone"
+                  ? "Phone not allowed"
+                  : "Laptop or tablet",
+                deviceClass === "laptop" || deviceClass === "tablet",
               ],
             ].map(([Icon, label, ok]: any) => (
               <div key={label}>
@@ -673,13 +686,25 @@ export default function ExamRoom({
               </div>
             ))}
           </div>
+          {deviceClass !== "laptop" && deviceClass !== "tablet" && (
+            <p className="error" role="alert">
+              {deviceClass === "phone"
+                ? "Phones are not allowed for this exam. Please use a laptop, iPad, or Android tablet."
+                : "We could not verify this device. Please use a laptop, iPad, or Android tablet."}
+            </p>
+          )}
           {point && (
             <p className="small muted">
               Location accuracy: ±{Math.round(point.accuracy)} m. Classroom
               eligibility is verified by the server at entry.
             </p>
           )}
-          <button onClick={permissions} disabled={busy}>
+          <button
+            onClick={permissions}
+            disabled={
+              busy || (deviceClass !== "laptop" && deviceClass !== "tablet")
+            }
+          >
             {busy
               ? "Checking permissions…"
               : "Check camera, microphone & location"}

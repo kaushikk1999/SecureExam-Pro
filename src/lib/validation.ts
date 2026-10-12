@@ -66,6 +66,7 @@ export const answersSchema = z
   .max(200);
 export const startSchema = z.object({
   deviceSessionId: uuid,
+  deviceClass: z.enum(["laptop", "tablet", "phone", "unsupported"]),
   accepted: z.boolean(),
   code: z.string().max(6).default(""),
   checks: z.object({
@@ -73,7 +74,6 @@ export const startSchema = z.object({
     microphone: z.boolean(),
     screen: z.boolean(),
     fullscreen: z.boolean(),
-    desktop: z.boolean(),
   }),
   location: locationSchema.nullable().optional(),
 });

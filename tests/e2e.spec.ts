@@ -469,7 +469,12 @@ test("student appeal submission and instructor decision complete through the UI"
   page,
 }) => {
   await login(page, "teacher@example.test");
-  const headers = { origin: "http://localhost:3000" };
+  const headers = {
+    origin: "http://localhost:3000",
+    "user-agent":
+      "Mozilla/5.0 (X11; Linux x86_64) Chrome/130.0.0.0 Safari/537.36",
+    "sec-ch-ua-mobile": "?0",
+  };
   const courses = await (
     await page.request.get("/api/platform/courses")
   ).json();
@@ -538,13 +543,13 @@ test("student appeal submission and instructor decision complete through the UI"
       headers,
       data: {
         deviceSessionId: device.id,
+        deviceClass: "laptop",
         accepted: true,
         checks: {
           camera: false,
           microphone: false,
           screen: false,
           fullscreen: false,
-          desktop: true,
         },
         code: "",
       },
