@@ -9,6 +9,7 @@ import {
   FlaskConical,
   MessageSquare,
   FileText,
+  Download,
 } from "lucide-react";
 import type { Actor } from "@/lib/auth";
 import { api, useData, ErrorBox, Loading, Markdown, time } from "./ui";
@@ -659,7 +660,10 @@ function Analytics() {
                             : "View submission"}
                         </button>
                         {selected === submission.attempt_id && (
-                          <SubmissionView id={submission.attempt_id} />
+                          <SubmissionView
+                            id={submission.attempt_id}
+                            submission={submission}
+                          />
                         )}
                       </article>
                     ))}
@@ -673,7 +677,7 @@ function Analytics() {
     </>
   );
 }
-function SubmissionView({ id }: { id: string }) {
+function SubmissionView({ id, submission }: { id: string; submission: any }) {
   const { data: attempt, error } = useData("attempts/" + id);
   if (!attempt) return error ? <ErrorBox message={error} /> : <Loading />;
   const orderedQuestions = [...attempt.questions].sort(
@@ -699,11 +703,137 @@ function SubmissionView({ id }: { id: string }) {
           </a>
         )}
       </div>
+      <button
+        type="button"
+        className={styles.downloadPdf}
+        onClick={() => window.print()}
+      >
+        <Download size={16} />
+        Download submission as PDF
+      </button>
+      <p className={styles.printHint}>
+        In the print window, choose “Save as PDF” to download a copy.
+      </p>
       {attempt.documentSubmission && (
         <p className={styles.note}>
           Uploaded document: {attempt.documentSubmission.name}
         </p>
       )}
+      <div className={styles.printArea}>
+        <header className={styles.printHeader}>
+          <span>SECUREEXAM PRO · EXAM SUBMISSION</span>
+          <h1>{attempt.title}</h1>
+          <p>
+            {submission.course_code} · {submission.course_name} · Section{" "}
+            {submission.section || "—"}
+          </p>
+        </header>
+        <section className={styles.printDetails}>
+          <h2>Student details</h2>
+          <dl>
+            <div>
+              <dt>Full name</dt>
+              <dd>{submission.student_name || "—"}</dd>
+            </div>
+            <div>
+              <dt>Student ID</dt>
+              <dd>{submission.student_id || "Not provided"}</dd>
+            </div>
+            <div>
+              <dt>Email</dt>
+              <dd>{submission.email || "—"}</dd>
+            </div>
+            <div>
+              <dt>Exam</dt>
+              <dd>{attempt.title}</dd>
+            </div>
+            <div>
+              <dt>Submitted</dt>
+              <dd>{time(submission.submitted_at)}</dd>
+            </div>
+            <div>
+              <dt>Started</dt>
+              <dd>{time(attempt.started_at)}</dd>
+            </div>
+            <div>
+              <dt>Status</dt>
+              <dd>{attempt.status.replaceAll("_", " ")}</dd>
+            </div>
+            <div>
+              <dt>Answers recorded</dt>
+              <dd>
+                {submission.answered}/{submission.question_count}
+              </dd>
+            </div>
+            <div>
+              <dt>Security warnings</dt>
+              <dd>{attempt.warnings ?? 0}</dd>
+            </div>
+            {attempt.documentSubmission && (
+              <div>
+                <dt>Uploaded completed paper</dt>
+                <dd>{attempt.documentSubmission.name}</dd>
+              </div>
+            )}
+            {attempt.score !== null && attempt.score !== undefined && (
+              <div>
+                <dt>Score</dt>
+                <dd>{attempt.score}</dd>
+              </div>
+            )}
+          </dl>
+        </section>
+        <section className={styles.printQuestions}>
+          <h2>Questions and student answers</h2>
+          {orderedQuestions.map((question: any, index: number) => {
+            const answer = attempt.answers.find(
+              (entry: any) => entry.question_id === question.id,
+            );
+            const value = answer?.value;
+            return (
+              <article className={styles.printQuestion} key={question.id}>
+                <div className={styles.printQuestionHeading}>
+                  <h3>Question {index + 1}</h3>
+                  <span>
+                    {question.type?.replaceAll("_", " ") || "Question"} ·{" "}
+                    {question.marks} marks
+                  </span>
+                </div>
+                <Markdown text={question.prompt} />
+                {Array.isArray(question.options) &&
+                  question.options.length > 0 && (
+                    <div className={styles.printOptions}>
+                      <strong>Options</strong>
+                      <ol type="A">
+                        {question.options.map(
+                          (option: string, optionIndex: number) => (
+                            <li key={`${question.id}-${optionIndex}`}>
+                              {option}
+                            </li>
+                          ),
+                        )}
+                      </ol>
+                    </div>
+                  )}
+                <strong>Student answer</strong>
+                <pre>
+                  {typeof value === "string"
+                    ? value
+                    : value == null
+                      ? "No answer"
+                      : JSON.stringify(value, null, 2)}
+                </pre>
+                {answer?.mark !== null && answer?.mark !== undefined && (
+                  <p className={styles.printMark}>
+                    Mark: {answer.mark} / {question.marks}
+                  </p>
+                )}
+                {answer?.feedback && <p>Feedback: {answer.feedback}</p>}
+              </article>
+            );
+          })}
+        </section>
+      </div>
       {orderedQuestions.map((question: any, index: number) => {
         const answer = attempt.answers.find(
           (entry: any) => entry.question_id === question.id,
