@@ -94,6 +94,83 @@ function OptionsEditor({
   );
 }
 
+type ClassroomCoordinates = {
+  latitude: number;
+  longitude: number;
+  accuracy: number;
+};
+
+type ClassroomCoordinateFields = {
+  latitude: string;
+  longitude: string;
+  accuracy: string;
+};
+
+function detectClassroomLocation(): Promise<ClassroomCoordinates> {
+  if (!navigator.geolocation)
+    return Promise.reject(
+      new Error("This browser does not support location detection."),
+    );
+
+  const read = (options: PositionOptions) =>
+    new Promise<ClassroomCoordinates>((resolve, reject) => {
+      navigator.geolocation.getCurrentPosition(
+        ({ coords }) =>
+          resolve({
+            latitude: coords.latitude,
+            longitude: coords.longitude,
+            accuracy: coords.accuracy,
+          }),
+        reject,
+        options,
+      );
+    });
+
+  return read({
+    enableHighAccuracy: true,
+    timeout: 10000,
+    maximumAge: 30000,
+  }).catch((error: GeolocationPositionError) => {
+    if (error.code === error.PERMISSION_DENIED)
+      throw new Error(
+        "Location permission is blocked. Allow location for this site in your browser and device settings, then retry.",
+      );
+    return read({
+      enableHighAccuracy: false,
+      timeout: 20000,
+      maximumAge: 120000,
+    }).catch((fallbackError: GeolocationPositionError) => {
+      if (fallbackError.code === fallbackError.PERMISSION_DENIED)
+        throw new Error(
+          "Location permission is blocked. Allow location for this site in your browser and device settings, then retry.",
+        );
+      throw new Error(
+        "Your browser could not determine your location. Turn on Location Services and Wi-Fi, allow location for this site, then try again. You can also enter the coordinates manually.",
+      );
+    });
+  });
+}
+
+function applyDetectedClassroomLocation(
+  coords: ClassroomCoordinates,
+  context: "classroom" | "captured",
+  setCoordinates: (value: ClassroomCoordinateFields) => void,
+  setMessage: (value: string) => void,
+) {
+  setCoordinates({
+    latitude: coords.latitude.toFixed(6),
+    longitude: coords.longitude.toFixed(6),
+    accuracy: String(Math.min(1000, Math.max(100, Math.ceil(coords.accuracy)))),
+  });
+  setMessage(
+    coords.accuracy > 1000
+      ? `Location found (±${Math.round(coords.accuracy)} m), but that reading is too imprecise for reliable classroom checks. Try again near a window or enter the room coordinates manually.`
+      : context === "classroom"
+        ? `Classroom location detected (±${Math.round(coords.accuracy)} m). Check the room details before saving.`
+        : `Location captured (±${Math.round(coords.accuracy)} m). Review the room radius before saving.`,
+  );
+}
+
 const nav = [
   ["", "Overview", LayoutDashboard],
   ["exams", "Examinations", FileText],
@@ -2561,33 +2638,21 @@ function Classrooms() {
     });
   useEffect(() => {
     if (!adding || editingRoom) return;
-    if (!navigator.geolocation) {
-      setMessage("Location detection is unavailable in this browser.");
-      return;
-    }
     let cancelled = false;
     setMessage("Detecting classroom location… Allow location access if asked.");
-    navigator.geolocation.getCurrentPosition(
-      ({ coords }) => {
-        if (cancelled) return;
-        setCoordinates({
-          latitude: coords.latitude.toFixed(6),
-          longitude: coords.longitude.toFixed(6),
-          accuracy: String(Math.max(100, Math.ceil(coords.accuracy))),
-        });
-        setMessage(
-          `Classroom location detected (±${Math.round(coords.accuracy)} m). Check the room details before saving.`,
-        );
-      },
-      (geoError) => {
-        if (cancelled) return;
-        setMessage(
-          geoError.message ||
-            "Could not detect your location. Allow location access or enter the coordinates manually.",
-        );
-      },
-      { enableHighAccuracy: true, timeout: 20000, maximumAge: 0 },
-    );
+    detectClassroomLocation()
+      .then((coords) => {
+        if (!cancelled)
+          applyDetectedClassroomLocation(
+            coords,
+            "classroom",
+            setCoordinates,
+            setMessage,
+          );
+      })
+      .catch((error: Error) => {
+        if (!cancelled) setMessage(error.message);
+      });
     return () => {
       cancelled = true;
     };
@@ -2709,33 +2774,17 @@ function Classrooms() {
             <button
               type="button"
               onClick={() => {
-                if (!navigator.geolocation) {
-                  setMessage(
-                    "Location detection is unavailable in this browser.",
-                  );
-                  return;
-                }
                 setMessage("Detecting classroom location…");
-                navigator.geolocation.getCurrentPosition(
-                  ({ coords }) => {
-                    setCoordinates({
-                      latitude: coords.latitude.toFixed(6),
-                      longitude: coords.longitude.toFixed(6),
-                      accuracy: String(
-                        Math.max(100, Math.ceil(coords.accuracy)),
-                      ),
-                    });
-                    setMessage(
-                      `Location captured (±${Math.round(coords.accuracy)} m). Review the room radius before saving.`,
-                    );
-                  },
-                  (err) =>
-                    setMessage(
-                      err.message ||
-                        "Could not detect your location. Allow location access and try again.",
+                detectClassroomLocation()
+                  .then((coords) =>
+                    applyDetectedClassroomLocation(
+                      coords,
+                      "captured",
+                      setCoordinates,
+                      setMessage,
                     ),
-                  { enableHighAccuracy: true, timeout: 20000, maximumAge: 0 },
-                );
+                  )
+                  .catch((error: Error) => setMessage(error.message));
               }}
             >
               <MapPin size={16} /> Use my current location
