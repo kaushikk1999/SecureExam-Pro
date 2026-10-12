@@ -38,11 +38,17 @@ describe("location uncertainty", () => {
         .acceptable,
     ).toBe(false);
   });
-  it("requires distance beyond uncertainty for a clear outside reading", () =>
+  it("allows an overlapping indoor GPS uncertainty area for tighter rooms", () =>
     expect(
-      geofence({ latitude: 14.00095, longitude: 100, accuracy: 20 }, room)
-        .clearlyOutside,
-    ).toBe(false));
+      geofence(
+        { latitude: 14.0004, longitude: 100, accuracy: 79 },
+        { ...room, radius: 40, accuracy: 30 },
+      ),
+    ).toMatchObject({ inside: true, acceptable: true, clearlyOutside: false }));
+  it("keeps readings clearly outside the geofence when uncertainty cannot reach it", () =>
+    expect(
+      geofence({ latitude: 14.0011, longitude: 100, accuracy: 20 }, room),
+    ).toMatchObject({ inside: false, clearlyOutside: true }));
 });
 describe("course enrollment invitations", () => {
   const secret = "course-signing-secret-that-is-long-enough-to-be-safe";

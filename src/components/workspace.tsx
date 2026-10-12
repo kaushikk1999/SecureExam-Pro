@@ -45,6 +45,53 @@ import {
   setDisplayTimezone,
   Loading,
 } from "./ui";
+
+function OptionsEditor({
+  options,
+  onChange,
+}: {
+  options: string[];
+  onChange: (options: string[]) => void;
+}) {
+  const editable = options.length ? options : ["", ""];
+  return (
+    <div className="option-list">
+      {editable.map((option, index) => (
+        <div className="option-row" key={index}>
+          <label>
+            Option {index + 1}
+            <input
+              value={option}
+              maxLength={2000}
+              onChange={(event) =>
+                onChange(
+                  editable.map((item, itemIndex) =>
+                    itemIndex === index ? event.target.value : item,
+                  ),
+                )
+              }
+            />
+          </label>
+          <button
+            type="button"
+            aria-label={`Remove option ${index + 1}`}
+            title={`Remove option ${index + 1}`}
+            disabled={editable.length <= 2}
+            onClick={() =>
+              onChange(editable.filter((_, itemIndex) => itemIndex !== index))
+            }
+          >
+            Remove
+          </button>
+        </div>
+      ))}
+      <button type="button" onClick={() => onChange([...editable, ""])}>
+        <Plus size={15} /> Add option
+      </button>
+    </div>
+  );
+}
+
 const nav = [
   ["", "Overview", LayoutDashboard],
   ["exams", "Examinations", FileText],
@@ -1314,29 +1361,16 @@ function ExamDetail({ id }: { id: string }) {
                           {["MCQ", "MULTI_SELECT", "TRUE_FALSE"].includes(
                             question.type,
                           ) && (
-                            <label>
-                              Options (one per line)
-                              <textarea
-                                rows={4}
-                                value={question.options.join("\n")}
-                                onChange={(event) =>
-                                  setPaperDrafts((current) =>
-                                    current.map((item, i) =>
-                                      i === index
-                                        ? {
-                                            ...item,
-                                            options: event.target.value
-                                              .split("\n")
-                                              .filter((option: string) =>
-                                                option.trim(),
-                                              ),
-                                          }
-                                        : item,
-                                    ),
-                                  )
-                                }
-                              />
-                            </label>
+                            <OptionsEditor
+                              options={question.options}
+                              onChange={(options) =>
+                                setPaperDrafts((current) =>
+                                  current.map((item, i) =>
+                                    i === index ? { ...item, options } : item,
+                                  ),
+                                )
+                              }
+                            />
                           )}
                           <label>
                             Suggested answer
@@ -1850,21 +1884,15 @@ function QuestionBank() {
                       }
                     />
                   </label>
-                  {["MCQ", "MULTI_SELECT"].includes(question.type) && (
-                    <label>
-                      Choices (one per line)
-                      <textarea
-                        rows={3}
-                        value={question.options.join("\n")}
-                        onChange={(event) =>
-                          updateBulkQuestion(index, {
-                            options: event.target.value
-                              .split("\n")
-                              .filter((option: string) => option.trim()),
-                          })
-                        }
-                      />
-                    </label>
+                  {["MCQ", "MULTI_SELECT", "TRUE_FALSE"].includes(
+                    question.type,
+                  ) && (
+                    <OptionsEditor
+                      options={question.options}
+                      onChange={(options) =>
+                        updateBulkQuestion(index, { options })
+                      }
+                    />
                   )}
                   <label>
                     Answer key (teacher only; verify before saving)
@@ -2526,6 +2554,39 @@ function Classrooms() {
       longitude: "",
       accuracy: "100",
     });
+  useEffect(() => {
+    if (!adding) return;
+    if (!navigator.geolocation) {
+      setMessage("Location detection is unavailable in this browser.");
+      return;
+    }
+    let cancelled = false;
+    setMessage("Detecting classroom location… Allow location access if asked.");
+    navigator.geolocation.getCurrentPosition(
+      ({ coords }) => {
+        if (cancelled) return;
+        setCoordinates({
+          latitude: coords.latitude.toFixed(6),
+          longitude: coords.longitude.toFixed(6),
+          accuracy: String(Math.max(100, Math.ceil(coords.accuracy))),
+        });
+        setMessage(
+          `Classroom location detected (±${Math.round(coords.accuracy)} m). Check the room details before saving.`,
+        );
+      },
+      (geoError) => {
+        if (cancelled) return;
+        setMessage(
+          geoError.message ||
+            "Could not detect your location. Allow location access or enter the coordinates manually.",
+        );
+      },
+      { enableHighAccuracy: true, timeout: 20000, maximumAge: 0 },
+    );
+    return () => {
+      cancelled = true;
+    };
+  }, [adding]);
   return (
     <>
       <Heading

@@ -1202,6 +1202,24 @@ pre {
 .ai-question-card .form-grid {
   gap: 0 14px;
 }
+.option-list {
+  display: grid;
+  gap: 10px;
+  margin: 10px 0 16px;
+}
+.option-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: end;
+  gap: 10px;
+}
+.option-row > button {
+  margin-bottom: 2px;
+}
+.option-row > button:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
 .action-bar {
   gap: 8px;
 }

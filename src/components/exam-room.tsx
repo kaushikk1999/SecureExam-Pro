@@ -379,6 +379,7 @@ export default function ExamRoom({
       }
       if (p.location) {
         const maximumAccuracy = Math.max(
+          100,
           Number(exam.classroom?.accuracy ?? 0),
           Number(exam.classroom?.radius ?? 0),
         );
@@ -632,6 +633,7 @@ export default function ExamRoom({
   if (!attempt) {
     const p = exam.policy;
     const maximumLocationUncertainty = Math.max(
+      100,
       Number(exam.classroom?.accuracy ?? 0),
       Number(exam.classroom?.radius ?? 0),
     );

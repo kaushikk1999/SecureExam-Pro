@@ -61,14 +61,15 @@ export function geofence(
   },
 ) {
   const metres = distance(point, room);
-  // Browser GPS often reports 50–150 m uncertainty indoors. Treat readings as
-  // usable up to the larger of the configured limit and the room's radius;
-  // the center point still has to be inside the room geofence below.
+  // Indoor GPS is coarse: accept a reading when its uncertainty area overlaps
+  // the room geofence. Keep the uncertainty cap bounded so a very poor fix
+  // cannot qualify a student from far away.
+  const clearlyOutside = metres - point.accuracy > room.radius;
   return {
     distance: metres,
-    inside: metres <= room.radius,
-    clearlyOutside: metres - point.accuracy > room.radius,
-    acceptable: point.accuracy <= Math.max(room.accuracy, room.radius),
+    inside: !clearlyOutside,
+    clearlyOutside,
+    acceptable: point.accuracy <= Math.max(room.accuracy, room.radius, 100),
   };
 }
 export const hardEvents = [
