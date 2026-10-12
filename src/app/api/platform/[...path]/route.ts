@@ -29,6 +29,7 @@ import {
   createCourseEnrollmentInvite,
   validCourseEnrollmentInvite,
   csv,
+  auditHash,
 } from "@/lib/domain";
 import {
   examSchema,
@@ -786,16 +787,108 @@ async function dispatch(req: Request, parts: string[]) {
           409,
           "This exam has not ended yet. Close it or wait until its scheduled end before deleting it.",
         );
-      await query(
-        sql`UPDATE exams SET deleted_at=now() WHERE id=${id} AND deleted_at IS NULL`,
+
+      // Remove private uploads first. If storage rejects a deletion, keep the
+      // exam and its database records so the teacher can retry safely.
+      const examFiles = await query<{ id: string; url: string }>(
+        sql`SELECT id,url FROM files WHERE exam_id=${id}`,
       );
-      await record({
-        userId: u.id,
-        examId: id,
-        type: "EXAM_DELETED",
-        metadata: { retained: "attempt and audit history" },
+      for (const file of examFiles) await deletePrivateFile(file.url);
+
+      await db.transaction(async (tx) => {
+        const [lockedExam] = await query(
+          sql`SELECT e.id,e.status,e.ends_at FROM exams e JOIN courses c ON c.id=e.course_id WHERE e.id=${id} AND e.deleted_at IS NULL AND (${u.role === "ADMIN"} OR c.teacher_id=${u.id}) FOR UPDATE OF e`,
+          tx,
+        );
+        if (!lockedExam) throw new HttpError(404, "Exam not found.");
+        const [activeAttempt] = await query(
+          sql`SELECT id FROM attempts WHERE exam_id=${id} AND status='ACTIVE' LIMIT 1`,
+          tx,
+        );
+        if (activeAttempt)
+          throw new HttpError(
+            409,
+            "This exam still has an active student attempt. Close it after the student submits, then delete it.",
+          );
+        if (
+          !["DRAFT", "CLOSED", "ARCHIVED"].includes(lockedExam.status) &&
+          new Date(lockedExam.ends_at).getTime() > Date.now()
+        )
+          throw new HttpError(
+            409,
+            "This exam has not ended yet. Close it or wait until its scheduled end before deleting it.",
+          );
+
+        await tx.execute(
+          sql`SELECT set_config('secureexam.allow_exam_purge','on',true)`,
+        );
+
+        const affectedChains = await query<{ chain_key: string }>(
+          sql`SELECT DISTINCT chain_key FROM audit_events WHERE exam_id=${id} OR attempt_id IN (SELECT id FROM attempts WHERE exam_id=${id})`,
+          tx,
+        );
+
+        await tx.execute(
+          sql`DELETE FROM incident_reviews WHERE event_id IN (SELECT id FROM audit_events WHERE exam_id=${id} OR attempt_id IN (SELECT id FROM attempts WHERE exam_id=${id}))`,
+        );
+        await tx.execute(
+          sql`DELETE FROM appeal_messages WHERE appeal_id IN (SELECT id FROM appeals WHERE attempt_id IN (SELECT id FROM attempts WHERE exam_id=${id}) OR event_id IN (SELECT id FROM audit_events WHERE exam_id=${id} OR attempt_id IN (SELECT id FROM attempts WHERE exam_id=${id})))`,
+        );
+        await tx.execute(
+          sql`DELETE FROM appeals WHERE attempt_id IN (SELECT id FROM attempts WHERE exam_id=${id}) OR event_id IN (SELECT id FROM audit_events WHERE exam_id=${id} OR attempt_id IN (SELECT id FROM attempts WHERE exam_id=${id}))`,
+        );
+        await tx.execute(
+          sql`DELETE FROM audit_events WHERE exam_id=${id} OR attempt_id IN (SELECT id FROM attempts WHERE exam_id=${id})`,
+        );
+        await tx.execute(
+          sql`DELETE FROM notifications WHERE attempt_id IN (SELECT id FROM attempts WHERE exam_id=${id})`,
+        );
+        await tx.execute(
+          sql`DELETE FROM event_receipts WHERE attempt_id IN (SELECT id FROM attempts WHERE exam_id=${id})`,
+        );
+        await tx.execute(
+          sql`DELETE FROM answer_revisions WHERE attempt_id IN (SELECT id FROM attempts WHERE exam_id=${id})`,
+        );
+        await tx.execute(
+          sql`DELETE FROM answers WHERE attempt_id IN (SELECT id FROM attempts WHERE exam_id=${id})`,
+        );
+        await tx.execute(sql`DELETE FROM files WHERE exam_id=${id}`);
+        await tx.execute(sql`DELETE FROM attempts WHERE exam_id=${id}`);
+        await tx.execute(sql`DELETE FROM exam_questions WHERE exam_id=${id}`);
+        await tx.execute(sql`DELETE FROM accommodations WHERE exam_id=${id}`);
+        await tx.execute(sql`DELETE FROM checkins WHERE exam_id=${id}`);
+        await tx.execute(sql`DELETE FROM lms_exam_links WHERE exam_id=${id}`);
+        await tx.execute(sql`DELETE FROM exams WHERE id=${id}`);
+
+        // Some course-enrollment audit events use a student's account-wide
+        // chain. Rebuild the remaining chain after removing this exam's events.
+        for (const { chain_key } of affectedChains) {
+          const events = await query<any>(
+            sql`SELECT * FROM audit_events WHERE chain_key=${chain_key} ORDER BY sequence`,
+            tx,
+          );
+          let previous = "GENESIS";
+          for (const event of events) {
+            const data = {
+              id: event.id,
+              chain: event.chain_key,
+              examId: event.exam_id,
+              attemptId: event.attempt_id,
+              userId: event.user_id,
+              type: event.event_type,
+              severity: event.severity,
+              metadata: event.metadata,
+              createdAt: new Date(event.created_at).toISOString(),
+            };
+            const hash = auditHash(previous, data);
+            await tx.execute(
+              sql`UPDATE audit_events SET previous_hash=${previous},event_hash=${hash} WHERE id=${event.id}`,
+            );
+            previous = hash;
+          }
+        }
       });
-      return json({ ok: true });
+      return json({ ok: true, deletedFiles: examFiles.length });
     }
     if (action === "enrollment-invite") {
       if (method !== "GET") throw new HttpError(405, "GET required.");

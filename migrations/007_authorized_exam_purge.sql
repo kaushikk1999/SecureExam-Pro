@@ -1,0 +1,1 @@
+CREATE OR REPLACE FUNCTION deny_audit_mutation() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN IF current_setting('secureexam.allow_exam_purge', true) = 'on' THEN IF TG_OP = 'DELETE' THEN RETURN OLD; END IF; RETURN NEW; END IF; RAISE EXCEPTION 'Audit records are append-only'; END; $$;

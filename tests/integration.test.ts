@@ -27,7 +27,7 @@ const { GET, POST, PATCH, DELETE } =
   await import("../src/app/api/platform/[...path]/route");
 const { resolveGoogleIdentity } = await import("../src/lib/sso");
 const { authOptions } = await import("../src/lib/auth");
-const { policySchema, createCourseEnrollmentInvite } =
+const { auditHash, policySchema, createCourseEnrollmentInvite } =
   await import("../src/lib/domain");
 const teacher = randomUUID(),
   student = randomUUID(),
@@ -781,7 +781,7 @@ it("authenticates cron and expires an offline attempt", async () => {
   expect((await r.json()).expired).toBe(1);
 });
 
-it("lets teachers remove old exams, papers, and bank questions safely", async () => {
+it("permanently removes an exam and every related result and private file", async () => {
   login(teacher);
   const fileId = randomUUID();
   await db.execute(
@@ -812,8 +812,28 @@ it("lets teachers remove old exams, papers, and bank questions safely", async ()
     question,
   );
 
+  const submissionFileId = randomUUID();
+  let [submittedAttempt] = await query<{ id: string }>(
+    sql`SELECT id FROM attempts WHERE exam_id=${exam} ORDER BY started_at LIMIT 1`,
+  );
+  if (!submittedAttempt) {
+    const attemptId = randomUUID();
+    await db.execute(
+      sql`INSERT INTO attempts(id,exam_id,user_id,device_session_id,deadline,question_order,status,submitted_at) VALUES(${attemptId},${exam},${student},${device},now(),${JSON.stringify([question])}::jsonb,'SUBMITTED',now())`,
+    );
+    await db.execute(
+      sql`INSERT INTO answers(attempt_id,question_id,value) VALUES(${attemptId},${question},'"answer"'::jsonb)`,
+    );
+    submittedAttempt = { id: attemptId };
+  }
+  await db.execute(
+    sql`INSERT INTO files(id,exam_id,attempt_id,owner_id,name,mime,url,size) VALUES(${submissionFileId},${exam},${submittedAttempt.id},${student},'SUBMISSION::Test.docx','application/vnd.openxmlformats-officedocument.wordprocessingml.document','private-submission',20)`,
+  );
+
   const deletedExam = await deleteRequest(`exams/${exam}`);
   expect(deletedExam.status).toBe(200);
+  expect(await deletedExam.json()).toMatchObject({ ok: true, deletedFiles: 1 });
+  expect(blob.del).toHaveBeenCalledWith("private-submission");
   expect((await request("exams")).status).toBe(200);
   expect(
     (await (await request("exams")).json()).some(
@@ -822,13 +842,49 @@ it("lets teachers remove old exams, papers, and bank questions safely", async ()
   ).toBe(false);
   expect((await request(`exams/${exam}`)).status).toBe(404);
   expect(
-    (await query(sql`SELECT id FROM attempts WHERE exam_id=${exam}`)).length,
-  ).toBeGreaterThan(0);
+    await query(sql`SELECT id FROM attempts WHERE exam_id=${exam}`),
+  ).toHaveLength(0);
   expect(
     await query(
-      sql`SELECT id FROM audit_events WHERE exam_id=${exam} AND event_type='EXAM_DELETED'`,
+      sql`SELECT attempt_id FROM answers WHERE attempt_id=${submittedAttempt.id}`,
     ),
+  ).toHaveLength(0);
+  expect(
+    await query(sql`SELECT id FROM files WHERE exam_id=${exam}`),
+  ).toHaveLength(0);
+  expect(
+    await query(
+      sql`SELECT id FROM audit_events WHERE exam_id=${exam} OR attempt_id=${submittedAttempt.id}`,
+    ),
+  ).toHaveLength(0);
+  expect(
+    await query(sql`SELECT exam_id FROM exam_questions WHERE exam_id=${exam}`),
+  ).toHaveLength(0);
+  expect(
+    await query(sql`SELECT id FROM questions WHERE id=${question}`),
   ).toHaveLength(1);
+
+  const events = await query<any>(
+    sql`SELECT * FROM audit_events ORDER BY sequence`,
+  );
+  const previous = new Map<string, string>();
+  for (const event of events) {
+    const prior = previous.get(event.chain_key) ?? "GENESIS";
+    const data = {
+      id: event.id,
+      chain: event.chain_key,
+      examId: event.exam_id,
+      attemptId: event.attempt_id,
+      userId: event.user_id,
+      type: event.event_type,
+      severity: event.severity,
+      metadata: event.metadata,
+      createdAt: new Date(event.created_at).toISOString(),
+    };
+    expect(event.previous_hash).toBe(prior);
+    expect(auditHash(prior, data)).toBe(event.event_hash);
+    previous.set(event.chain_key, event.event_hash);
+  }
 });
 
 it("adds a generated paper to only its draft exam and keeps it out of the bank", async () => {

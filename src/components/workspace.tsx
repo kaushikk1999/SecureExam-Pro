@@ -1151,10 +1151,10 @@ function ExamDetail({ id }: { id: string }) {
               </label>
             ) : controlDialog === "delete" ? (
               <p>
-                This removes the exam from teacher and student lists. Student
-                attempts and the immutable audit history are retained. Questions
-                stay in your question bank, and uploaded papers can be removed
-                separately after the exam ends.
+                This permanently deletes the exam, all student attempts,
+                answers, scores, monitoring records, and uploaded exam and
+                submission files. Questions saved in your question bank remain
+                available for other exams.
               </p>
             ) : (
               <p>
