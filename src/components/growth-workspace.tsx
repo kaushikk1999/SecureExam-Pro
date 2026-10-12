@@ -829,8 +829,9 @@ function Integrations() {
             </strong>
           </div>
           <p>
-            Student sign-in on this Vercel deployment is restricted to
-            kaushikka99@gmail.com. Only exact addresses listed in
+            Verified Bangkok University student accounts ending in @bumail.net
+            can sign in as students. Additional exact test accounts can be
+            listed in STUDENT_LOGIN_EMAILS. Only exact addresses listed in
             GOOGLE_TEACHER_EMAILS receive teacher access. Existing roles are
             preserved. Configure the Google OAuth credentials on the server.
           </p>

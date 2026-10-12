@@ -352,6 +352,22 @@ it("binds existing Google accounts and provisions verified university accounts s
     hd: "bumail.net",
   });
   expect(defaultBuStudent?.role).toBe("STUDENT");
+
+  const previousVercel = process.env.VERCEL;
+  const previousStudentAllowlist = process.env.STUDENT_LOGIN_EMAILS;
+  vi.stubEnv("VERCEL", "1");
+  vi.stubEnv("STUDENT_LOGIN_EMAILS", "kaushikka99@gmail.com");
+  const productionBuStudent = await resolveGoogleIdentity({
+    iss: "https://accounts.google.com",
+    sub: "google-production-bu-student",
+    email: "siraphob.nimn@bumail.net",
+    email_verified: true,
+    hd: "bumail.net",
+  });
+  expect(productionBuStudent?.role).toBe("STUDENT");
+  vi.stubEnv("VERCEL", previousVercel ?? "");
+  vi.stubEnv("STUDENT_LOGIN_EMAILS", previousStudentAllowlist ?? "");
+
   expect(
     await resolveGoogleIdentity({
       iss: "https://accounts.google.com",

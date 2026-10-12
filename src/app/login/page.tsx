@@ -50,7 +50,7 @@ export default function Login() {
     if (authError)
       setError(
         authError === "AccessDenied"
-          ? "Student testing is currently limited to kaushikka99@gmail.com. Choose that Google account or contact your administrator if you need another student approved."
+          ? "Use a verified Bangkok University student Google account ending in @bumail.net, or an approved test account. If access still fails, confirm you selected the university account and contact your instructor."
           : "Sign-in could not be completed. Check your account access or contact your administrator.",
       );
   }, [router]);

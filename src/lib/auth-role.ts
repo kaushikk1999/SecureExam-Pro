@@ -2,29 +2,34 @@ export type LoginAudience = "student" | "teacher";
 export const STUDENT_LOGIN_EMAIL = "kaushikka99@gmail.com";
 
 /**
- * Restrict student accounts to an exact allowlist. Production on Vercel is
- * pinned to the current test account; local environments can use an explicit
- * list (or '*' for isolated browser tests).
+ * Permit Bangkok University students using verified Workspace email addresses.
+ * An explicit `configured` value is a strict allowlist for tests. In production,
+ * optional exact addresses extend access for approved test accounts.
  */
 export function isStudentEmailAllowed(email: unknown, configured?: string) {
-  const studentPolicy =
-    configured ??
-    (process.env.VERCEL
-      ? STUDENT_LOGIN_EMAIL
-      : process.env.STUDENT_LOGIN_EMAILS?.trim() || STUDENT_LOGIN_EMAIL);
+  const normalizedEmail = String(email ?? "")
+    .trim()
+    .toLowerCase();
+  const configuredPolicy =
+    configured ?? process.env.STUDENT_LOGIN_EMAILS?.trim() ?? "";
   const allowed = new Set(
-    studentPolicy
+    configuredPolicy
       .split(/[\s,]+/)
       .map((item) => item.trim().toLowerCase())
       .filter(Boolean),
   );
+  if (allowed.has("*") || allowed.has(normalizedEmail)) return true;
+
+  // Tests can pass an explicit list to verify strict account restrictions.
+  if (configured !== undefined) return false;
+
+  // Non-production deployments may opt into a strict list. Production always
+  // retains verified BU student access, even if an old test-address variable
+  // remains configured in Vercel.
+  if (configuredPolicy && !process.env.VERCEL) return false;
   return (
-    allowed.has("*") ||
-    allowed.has(
-      String(email ?? "")
-        .trim()
-        .toLowerCase(),
-    )
+    normalizedEmail === STUDENT_LOGIN_EMAIL ||
+    normalizedEmail.endsWith("@bumail.net")
   );
 }
 

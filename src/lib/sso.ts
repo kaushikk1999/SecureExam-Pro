@@ -74,9 +74,7 @@ export async function resolveGoogleIdentity(
   const isApprovedTeacher = teacherEmails.has(email);
   const isApprovedStudent = isStudentEmailAllowed(email);
   const explicitStudentAllowlist = configuredValues(
-    process.env.VERCEL
-      ? STUDENT_LOGIN_EMAIL
-      : process.env.STUDENT_LOGIN_EMAILS?.trim() || STUDENT_LOGIN_EMAIL,
+    [STUDENT_LOGIN_EMAIL, process.env.STUDENT_LOGIN_EMAILS ?? ""].join(","),
   );
   return db.transaction(async (tx) => {
     const issuer = "https://accounts.google.com";

@@ -66,6 +66,22 @@ it("keeps Vercel student access pinned to the requested account", async () => {
   vi.stubEnv("VERCEL", "1");
   vi.stubEnv("STUDENT_LOGIN_EMAILS", "kaushikds1999@gmail.com");
   expect(isStudentEmailAllowed("kaushikka99@gmail.com")).toBe(true);
-  expect(isStudentEmailAllowed("kaushikds1999@gmail.com")).toBe(false);
+  expect(isStudentEmailAllowed("siraphob.nimn@bumail.net")).toBe(true);
+  expect(isStudentEmailAllowed("kaushikds1999@gmail.com")).toBe(true);
+  expect(isStudentEmailAllowed("student@other.edu")).toBe(false);
+  vi.unstubAllEnvs();
+});
+
+it("allows BU student addresses in the default policy while keeping local test lists strict", async () => {
+  const { vi } = await import("vitest");
+  vi.stubEnv("VERCEL", "");
+  vi.stubEnv("STUDENT_LOGIN_EMAILS", "");
+  expect(isStudentEmailAllowed("siraphob.nimn@bumail.net")).toBe(true);
+  expect(isStudentEmailAllowed("kaushikka99@gmail.com")).toBe(true);
+  expect(isStudentEmailAllowed("student@other.edu")).toBe(false);
+
+  vi.stubEnv("STUDENT_LOGIN_EMAILS", "test.student@example.com");
+  expect(isStudentEmailAllowed("test.student@example.com")).toBe(true);
+  expect(isStudentEmailAllowed("siraphob.nimn@bumail.net")).toBe(false);
   vi.unstubAllEnvs();
 });
