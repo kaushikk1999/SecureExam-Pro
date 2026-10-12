@@ -117,6 +117,7 @@ export function auditHash(previous: string, data: unknown) {
     .digest("hex");
 }
 export const CLASSROOM_CODE_WINDOW_MS = 5 * 60_000;
+export const EXAM_ENROLLMENT_INVITE_WINDOW_MS = 10 * 60_000;
 
 export function classroomCode(secret: string, time = Date.now()) {
   const n = createHmac("sha256", secret)
@@ -158,11 +159,12 @@ export function createExamEnrollmentInvite(
   storedSecret: string,
   examId: string,
   courseId: string,
+  issuedAt = Date.now(),
 ) {
   const key = examInviteKey(storedSecret);
   if (!key) throw new Error("Exam invitation key is invalid.");
   return createHmac("sha256", key)
-    .update(`exam-course-enrollment:v1:${examId}:${courseId}`)
+    .update(`exam-course-enrollment:v2:${examId}:${courseId}:${issuedAt}`)
     .digest("hex");
 }
 export function validExamEnrollmentInvite(
@@ -170,12 +172,21 @@ export function validExamEnrollmentInvite(
   examId: string,
   courseId: string,
   token: string,
+  issuedAt: number,
+  now = Date.now(),
 ) {
-  if (!/^[a-f0-9]{64}$/.test(token)) return false;
+  if (
+    !/^[a-f0-9]{64}$/.test(token) ||
+    !Number.isSafeInteger(issuedAt) ||
+    issuedAt <= 0 ||
+    issuedAt > now ||
+    now >= issuedAt + EXAM_ENROLLMENT_INVITE_WINDOW_MS
+  )
+    return false;
   const key = examInviteKey(storedSecret);
   if (!key) return false;
   const expected = createHmac("sha256", key)
-    .update(`exam-course-enrollment:v1:${examId}:${courseId}`)
+    .update(`exam-course-enrollment:v2:${examId}:${courseId}:${issuedAt}`)
     .digest();
   return timingSafeEqual(expected, Buffer.from(token, "hex"));
 }

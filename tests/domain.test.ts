@@ -11,6 +11,7 @@ import {
   auditHash,
   classroomCode,
   CLASSROOM_CODE_WINDOW_MS,
+  EXAM_ENROLLMENT_INVITE_WINDOW_MS,
   validClassroomCode,
   createExamEnrollmentInvite,
   validExamEnrollmentInvite,
@@ -73,24 +74,73 @@ describe("exam course enrollment invitations", () => {
   const examId = "d6a1c12e-1188-46ea-9a19-4e522ed2da9e";
   const courseId = "c9a15d3a-79c8-45bb-9e62-0987654321ab";
 
-  it("binds invitations to the exam and its course", () => {
-    const token = createExamEnrollmentInvite(secret, examId, courseId);
-    expect(validExamEnrollmentInvite(secret, examId, courseId, token)).toBe(
-      true,
+  it("binds a ten-minute invitation to the exam, course and issue time", () => {
+    const issuedAt = 1_790_000_000_000;
+    const token = createExamEnrollmentInvite(
+      secret,
+      examId,
+      courseId,
+      issuedAt,
     );
     expect(
-      validExamEnrollmentInvite(secret, examId, "another-course", token),
+      validExamEnrollmentInvite(
+        secret,
+        examId,
+        courseId,
+        token,
+        issuedAt,
+        issuedAt + 1_000,
+      ),
+    ).toBe(true);
+    expect(
+      validExamEnrollmentInvite(
+        secret,
+        examId,
+        courseId,
+        token,
+        issuedAt,
+        issuedAt + EXAM_ENROLLMENT_INVITE_WINDOW_MS,
+      ),
     ).toBe(false);
     expect(
-      validExamEnrollmentInvite(secret, "another-exam", courseId, token),
+      validExamEnrollmentInvite(
+        secret,
+        examId,
+        "another-course",
+        token,
+        issuedAt,
+        issuedAt + 1_000,
+      ),
+    ).toBe(false);
+    expect(
+      validExamEnrollmentInvite(
+        secret,
+        "another-exam",
+        courseId,
+        token,
+        issuedAt,
+        issuedAt + 1_000,
+      ),
+    ).toBe(false);
+    expect(
+      validExamEnrollmentInvite(
+        secret,
+        examId,
+        courseId,
+        token,
+        issuedAt,
+        issuedAt - 1,
+      ),
     ).toBe(false);
   });
 
   it("supports classroom-code timestamps and rejects malformed tokens", () => {
+    const issuedAt = 1_790_000_000_000;
     const token = createExamEnrollmentInvite(
       `${secret}:1791811200000`,
       examId,
       courseId,
+      issuedAt,
     );
     expect(
       validExamEnrollmentInvite(
@@ -98,13 +148,22 @@ describe("exam course enrollment invitations", () => {
         examId,
         courseId,
         token,
+        issuedAt,
+        issuedAt,
       ),
     ).toBe(true);
     expect(
-      validExamEnrollmentInvite(secret, examId, courseId, "not-a-token"),
+      validExamEnrollmentInvite(
+        secret,
+        examId,
+        courseId,
+        "not-a-token",
+        issuedAt,
+        issuedAt,
+      ),
     ).toBe(false);
     expect(() =>
-      createExamEnrollmentInvite("invalid", examId, courseId),
+      createExamEnrollmentInvite("invalid", examId, courseId, issuedAt),
     ).toThrow("Exam invitation key is invalid.");
   });
 });

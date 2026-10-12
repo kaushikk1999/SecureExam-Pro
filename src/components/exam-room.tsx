@@ -21,7 +21,12 @@ import {
   Send,
 } from "lucide-react";
 import type { Actor } from "@/lib/auth";
-import { classifyExamDevice, type ExamDeviceClass } from "@/lib/exam-device";
+import {
+  classifyExamDevice,
+  examFullscreenRequired,
+  examFullscreenSatisfied,
+  type ExamDeviceClass,
+} from "@/lib/exam-device";
 import { api, Markdown, ErrorBox, Loading, time } from "./ui";
 import { Upload } from "./workspace";
 const Editor = dynamic(() => import("@monaco-editor/react"), { ssr: false });
@@ -82,10 +87,12 @@ function readBestLocation(maxAccuracy: number) {
 export default function ExamRoom({
   examId,
   enrollmentToken,
+  enrollmentInviteIssuedAt,
   user,
 }: {
   examId: string;
   enrollmentToken: string | null;
+  enrollmentInviteIssuedAt: string | null;
   user: Actor;
 }) {
   const [exam, setExam] = useState<any>(null),
@@ -187,7 +194,11 @@ export default function ExamRoom({
               screen: !!screenStream.current
                 ?.getVideoTracks()
                 .some(captureTrackIsActive),
-              fullscreen: !!document.fullscreenElement,
+              fullscreen:
+                !examFullscreenRequired(
+                  active.current.policy.fullscreen,
+                  deviceClass,
+                ) || !!document.fullscreenElement,
               online: navigator.onLine,
             },
           },
@@ -248,7 +259,7 @@ export default function ExamRoom({
         syncing.current = false;
       }
     },
-    [alert, key, persist],
+    [alert, deviceClass, key, persist],
   );
   const emit = useCallback(
     (type: string, metadata: Record<string, any> = {}) => {
@@ -281,22 +292,32 @@ export default function ExamRoom({
     const browserNavigator = navigator as Navigator & {
       userAgentData?: { mobile?: boolean };
     };
-    setDeviceClass(
-      classifyExamDevice({
-        userAgent: navigator.userAgent,
-        platform: navigator.platform,
-        maxTouchPoints: navigator.maxTouchPoints,
-        minScreenDimension: Math.min(screen.width, screen.height),
-        mobileHint: browserNavigator.userAgentData?.mobile,
-      }),
-    );
+    const detectedDeviceClass = classifyExamDevice({
+      userAgent: navigator.userAgent,
+      platform: navigator.platform,
+      maxTouchPoints: navigator.maxTouchPoints,
+      minScreenDimension: Math.min(screen.width, screen.height),
+      mobileHint: browserNavigator.userAgentData?.mobile,
+    });
+    setDeviceClass(detectedDeviceClass);
     setChecks((c) => ({
       ...c,
-      fullscreen: document.fullscreenEnabled,
+      fullscreen:
+        detectedDeviceClass === "tablet" || document.fullscreenEnabled,
     }));
     async function loadExam() {
-      if (enrollmentToken)
-        await api(`exams/${examId}/self-enroll`, { token: enrollmentToken });
+      if (enrollmentToken && enrollmentInviteIssuedAt) {
+        await api(`exams/${examId}/self-enroll`, {
+          token: enrollmentToken,
+          issuedAt: Number(enrollmentInviteIssuedAt),
+        });
+      } else if (enrollmentToken) {
+        const enrolledExams = await api("exams");
+        if (!enrolledExams.some((item: any) => item.id === examId))
+          throw new Error(
+            "This exam QR code is outdated. Ask your instructor to display a fresh QR code.",
+          );
+      }
       const [e, list] = await Promise.all([
         api("exams/" + examId),
         api("exams"),
@@ -311,7 +332,7 @@ export default function ExamRoom({
       void microphoneAudio.current?.context.close();
       microphoneAudio.current = null;
     };
-  }, [examId, enrollmentToken]);
+  }, [examId, enrollmentToken, enrollmentInviteIssuedAt]);
   useEffect(() => {
     if (video.current && stream.current)
       video.current.srcObject = stream.current;
@@ -482,13 +503,18 @@ export default function ExamRoom({
     setBusy(true);
     setError("");
     try {
-      if (exam.policy.fullscreen)
+      if (examFullscreenRequired(exam.policy.fullscreen, deviceClass))
         await document.documentElement.requestFullscreen();
       const result = await api(`exams/${examId}/start`, {
         deviceSessionId: device.current,
         deviceClass,
         accepted,
-        checks: { ...checks, fullscreen: !!document.fullscreenElement },
+        checks: {
+          ...checks,
+          fullscreen:
+            !examFullscreenRequired(exam.policy.fullscreen, deviceClass) ||
+            !!document.fullscreenElement,
+        },
         code,
         location: point,
       });
@@ -563,6 +589,15 @@ export default function ExamRoom({
       if (document.activeElement?.tagName !== "IFRAME") emit("WINDOW_BLUR");
     };
     const full = () => {
+      if (
+        !examFullscreenRequired(
+          active.current?.policy.fullscreen ?? false,
+          deviceClass,
+        )
+      ) {
+        setFullscreen(true);
+        return;
+      }
       setFullscreen(!!document.fullscreenElement);
       if (!document.fullscreenElement) emit("FULLSCREEN_EXIT");
     };
@@ -757,6 +792,7 @@ export default function ExamRoom({
     attempt?.policy.camera,
     attempt?.policy.location,
     attempt?.policy.microphone,
+    deviceClass,
     alert,
     emit,
     key,
@@ -929,7 +965,7 @@ export default function ExamRoom({
       (!p.microphone || checks.microphone) &&
       (!p.screen || checks.screen) &&
       (!p.location || locationGood) &&
-      (!p.fullscreen || checks.fullscreen) &&
+      examFullscreenSatisfied(p.fullscreen, deviceClass, checks.fullscreen) &&
       (deviceClass === "laptop" || deviceClass === "tablet") &&
       (!p.classroomCode || code.length === 6);
     return (
@@ -1023,7 +1059,9 @@ export default function ExamRoom({
                       "location",
                       "fullscreen",
                       "tabMonitoring",
-                    ].includes(k) && v,
+                    ].includes(k) &&
+                    v &&
+                    !(k === "fullscreen" && deviceClass === "tablet"),
                 )
                 .map(([k]) => k)
                 .join(", ")}
@@ -1064,8 +1102,14 @@ export default function ExamRoom({
               ],
               [
                 Maximize2,
-                "Fullscreen capability",
-                !p.fullscreen || checks.fullscreen,
+                deviceClass === "tablet"
+                  ? "Tablet typing mode"
+                  : "Fullscreen capability",
+                examFullscreenSatisfied(
+                  p.fullscreen,
+                  deviceClass,
+                  checks.fullscreen,
+                ),
               ],
               [
                 ShieldCheck,
@@ -1097,6 +1141,13 @@ export default function ExamRoom({
               {locationGood
                 ? " Classroom eligibility is verified by the server at entry."
                 : ` Improve the GPS reading or ask your instructor to check the classroom location settings (allowed uncertainty: ${Math.round(maximumLocationUncertainty)} m).`}
+            </p>
+          )}
+          {deviceClass === "tablet" && p.fullscreen && (
+            <p className="small muted">
+              Tablet mode keeps the exam page available when the on-screen
+              keyboard opens. Tab-change and other enabled security checks
+              remain active.
             </p>
           )}
           <button
@@ -1494,6 +1545,7 @@ export default function ExamRoom({
                     <label>
                       Your answer
                       <input
+                        className="exam-answer-field"
                         type={q.type === "NUMERIC" ? "number" : "text"}
                         step="any"
                         value={values[q.id] ?? ""}
@@ -1506,6 +1558,7 @@ export default function ExamRoom({
                         ? "Enter your matching pairs, one per line"
                         : "Your response"}
                       <textarea
+                        className="exam-answer-field"
                         rows={12}
                         value={values[q.id] ?? ""}
                         onChange={(e) => change(q.id, e.target.value)}

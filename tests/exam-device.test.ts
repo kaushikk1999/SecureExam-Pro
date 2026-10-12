@@ -1,10 +1,19 @@
 import { describe, expect, it } from "vitest";
 import {
   classifyExamDevice,
+  examFullscreenRequired,
+  examFullscreenSatisfied,
   examRequestDeviceAllowed,
 } from "../src/lib/exam-device";
 
 describe("supported exam devices", () => {
+  it("keeps tablet answer entry usable when native fullscreen is dismissed", () => {
+    expect(examFullscreenRequired(true, "tablet")).toBe(false);
+    expect(examFullscreenSatisfied(true, "tablet", false)).toBe(true);
+    expect(examFullscreenRequired(true, "laptop")).toBe(true);
+    expect(examFullscreenSatisfied(true, "laptop", false)).toBe(false);
+  });
+
   it("allows laptops and common iPad and Android tablet identifiers", () => {
     expect(
       classifyExamDevice({

@@ -42,6 +42,11 @@ export function matchesLoginAudience(role: unknown, audience: LoginAudience) {
 /** Only allow app-owned exam URLs as a post-login destination. */
 export function safeStudentReturnPath(next: string | null | undefined) {
   if (!next) return null;
+  const expiringExamInvite = next.match(
+    /^\/exam\/([0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12})\?invite=([a-f0-9]{64})&issuedAt=(\d{13})$/i,
+  );
+  if (expiringExamInvite)
+    return `/exam/${expiringExamInvite[1].toLowerCase()}?invite=${expiringExamInvite[2].toLowerCase()}&issuedAt=${expiringExamInvite[3]}`;
   const courseMatch = next.match(
     /^\/enroll\/course\/([0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12})\?invite=([a-f0-9]{64})$/i,
   );

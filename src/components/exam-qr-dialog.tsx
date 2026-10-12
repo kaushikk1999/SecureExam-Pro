@@ -22,23 +22,34 @@ export default function ExamQrDialog({
   const [open, setOpen] = useState(false);
   const [image, setImage] = useState("");
   const [examUrl, setExamUrl] = useState("");
+  const [expiresAt, setExpiresAt] = useState("");
+  const [now, setNow] = useState(0);
+  const [generation, setGeneration] = useState(0);
   const [message, setMessage] = useState("");
   const panel = useRef<HTMLElement>(null);
 
   useEffect(() => {
     if (!open) return;
+    setNow(Date.now());
     let active = true;
     setExamUrl("");
     setImage("");
+    setExpiresAt("");
     setMessage("");
     void (async () => {
       try {
-        const { token } = await api(`exams/${examId}/enrollment-invite`);
+        const {
+          token,
+          issuedAt,
+          expiresAt: inviteExpiresAt,
+        } = await api(`exams/${examId}/enrollment-invite`);
         if (!active) return;
         const url = new URL(`/exam/${examId}`, window.location.origin);
         url.searchParams.set("invite", token);
+        url.searchParams.set("issuedAt", String(issuedAt));
         const link = url.toString();
         setExamUrl(link);
+        setExpiresAt(inviteExpiresAt);
         const dataUrl = await QRCode.toDataURL(link, {
           errorCorrectionLevel: "H",
           margin: 2,
@@ -57,7 +68,13 @@ export default function ExamQrDialog({
     return () => {
       active = false;
     };
-  }, [examId, open]);
+  }, [examId, open, generation]);
+
+  useEffect(() => {
+    if (!open || !expiresAt) return;
+    const timer = setInterval(() => setNow(Date.now()), 1000);
+    return () => clearInterval(timer);
+  }, [open, expiresAt]);
 
   useEffect(() => {
     if (!open) return;
@@ -69,6 +86,10 @@ export default function ExamQrDialog({
   }, [open]);
 
   async function copyLink() {
+    if (expired) {
+      setMessage("This exam QR has expired. Generate a fresh QR code.");
+      return;
+    }
     try {
       await navigator.clipboard.writeText(examUrl);
       setMessage("Exam link copied.");
@@ -80,6 +101,10 @@ export default function ExamQrDialog({
   }
 
   async function present() {
+    if (expired) {
+      setMessage("This exam QR has expired. Generate a fresh QR code.");
+      return;
+    }
     try {
       await panel.current?.requestFullscreen();
     } catch {
@@ -88,6 +113,11 @@ export default function ExamQrDialog({
       );
     }
   }
+
+  const expired = !!expiresAt && Date.parse(expiresAt) <= now;
+  const remainingMinutes = expiresAt
+    ? Math.max(0, Math.ceil((Date.parse(expiresAt) - now) / 60_000))
+    : 0;
 
   return (
     <>
@@ -124,7 +154,7 @@ export default function ExamQrDialog({
               {title}
             </p>
             <div className="exam-qr-image">
-              {image ? (
+              {image && !expired ? (
                 <Image
                   src={image}
                   alt={`QR code for ${title}`}
@@ -133,21 +163,45 @@ export default function ExamQrDialog({
                   unoptimized
                 />
               ) : (
-                <span>{message || "Preparing your QR code…"}</span>
+                <span>
+                  {expired
+                    ? "This QR code has expired. Generate a fresh one."
+                    : message || "Preparing your QR code…"}
+                </span>
               )}
             </div>
             <p className="exam-qr-help">
               Approved student accounts can scan this code, sign in, and be
               enrolled in this course automatically before returning to the
-              exam. Enrollment is available while the exam is open; students
-              must still meet the exam entry requirements.
+              exam. The QR code and its link expire 10 minutes after generation.
+              Enrollment is available while the exam is open; students must
+              still meet the exam entry requirements.
             </p>
-            {examUrl && <code className="exam-qr-link">{examUrl}</code>}
+            {expiresAt && (
+              <p className={expired ? "error" : "small muted"} role="status">
+                {expired
+                  ? "This QR code has expired."
+                  : `Valid for ${remainingMinutes} more minute${remainingMinutes === 1 ? "" : "s"} · expires ${new Date(expiresAt).toLocaleTimeString()}.`}
+              </p>
+            )}
+            {examUrl && !expired && (
+              <code className="exam-qr-link">{examUrl}</code>
+            )}
             <div className="actions exam-qr-actions">
-              <button onClick={() => void copyLink()} disabled={!examUrl}>
+              <button
+                onClick={() => void copyLink()}
+                disabled={!examUrl || expired}
+              >
                 <Copy size={15} /> Copy exam link
               </button>
-              <button className="primary" onClick={() => void present()}>
+              <button onClick={() => setGeneration((value) => value + 1)}>
+                Generate fresh QR
+              </button>
+              <button
+                className="primary"
+                onClick={() => void present()}
+                disabled={!examUrl || expired}
+              >
                 <Maximize2 size={15} /> Present QR full screen
               </button>
             </div>

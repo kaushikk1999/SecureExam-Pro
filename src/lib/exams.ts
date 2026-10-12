@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import { sql } from "drizzle-orm";
 import { db, query, type Tx } from "./db";
 import { audit } from "./audit";
+import { examFullscreenRequired } from "./exam-device";
 import { HttpError, type Actor } from "./auth";
 import {
   validClassroomCode,
@@ -176,7 +177,12 @@ export async function startAttempt(
     if (!input.accepted)
       throw new HttpError(400, "Accept the monitoring notice.");
     for (const k of ["camera", "microphone", "screen", "fullscreen"] as const)
-      if (p[k] && !input.checks[k])
+      if (
+        (k !== "fullscreen" ||
+          examFullscreenRequired(p.fullscreen, input.deviceClass)) &&
+        p[k] &&
+        !input.checks[k]
+      )
         throw new HttpError(400, `Required ${k} check has not passed.`);
     if (!["laptop", "tablet"].includes(input.deviceClass))
       throw new HttpError(

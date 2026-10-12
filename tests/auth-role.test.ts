@@ -32,6 +32,16 @@ it("allows only local exam and course enrollment links as return paths", () => {
   expect(safeStudentReturnPath(`/exam/${examId}?invite=${invite}`)).toBe(
     `/exam/${examId}?invite=${invite}`,
   );
+  expect(
+    safeStudentReturnPath(
+      `/exam/${examId}?invite=${invite}&issuedAt=1791811200000`,
+    ),
+  ).toBe(`/exam/${examId}?invite=${invite}&issuedAt=1791811200000`);
+  expect(
+    safeStudentReturnPath(
+      `/exam/${examId}?invite=${invite}&issuedAt=not-a-time`,
+    ),
+  ).toBeNull();
   expect(safeStudentReturnPath(`/exam/${examId}?invite=bad`)).toBeNull();
   const courseId = "c9a15d3a-79c8-45bb-9e62-0987654321ab";
   expect(

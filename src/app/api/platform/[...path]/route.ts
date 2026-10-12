@@ -24,6 +24,7 @@ import {
   classroomCode,
   classroomCodeSecret,
   CLASSROOM_CODE_WINDOW_MS,
+  EXAM_ENROLLMENT_INVITE_WINDOW_MS,
   createExamEnrollmentInvite,
   validExamEnrollmentInvite,
   createCourseEnrollmentInvite,
@@ -694,7 +695,10 @@ async function dispatch(req: Request, parts: string[]) {
       if (u.role !== "STUDENT")
         throw new HttpError(403, "Only student accounts can self-enroll.");
       const v = z
-        .object({ token: z.string().regex(/^[a-f0-9]{64}$/) })
+        .object({
+          token: z.string().regex(/^[a-f0-9]{64}$/),
+          issuedAt: z.number().int().positive(),
+        })
         .parse(await body(req));
       const result = await db.transaction(async (tx) => {
         const [exam] = await query(
@@ -729,11 +733,12 @@ async function dispatch(req: Request, parts: string[]) {
             exam.id,
             exam.course_id,
             v.token,
+            v.issuedAt,
           )
         )
           throw new HttpError(
             403,
-            "This course enrollment QR code is invalid.",
+            "This exam QR code has expired or is invalid. Ask your instructor to display a fresh QR code.",
           );
         await tx.execute(
           sql`INSERT INTO enrollments(course_id,user_id) VALUES(${exam.course_id},${u.id}) ON CONFLICT DO NOTHING`,
@@ -895,8 +900,18 @@ async function dispatch(req: Request, parts: string[]) {
     }
     if (action === "enrollment-invite") {
       if (method !== "GET") throw new HttpError(405, "GET required.");
+      const issuedAt = Date.now();
       return json({
-        token: createExamEnrollmentInvite(e.code_secret, e.id, e.course_id),
+        token: createExamEnrollmentInvite(
+          e.code_secret,
+          e.id,
+          e.course_id,
+          issuedAt,
+        ),
+        issuedAt,
+        expiresAt: new Date(
+          issuedAt + EXAM_ENROLLMENT_INVITE_WINDOW_MS,
+        ).toISOString(),
       });
     }
     if (action === "ai-paper-draft") {

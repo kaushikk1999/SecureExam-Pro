@@ -8,14 +8,21 @@ export default async function Page({
   searchParams,
 }: {
   params: Promise<{ id: string }>;
-  searchParams: Promise<{ invite?: string | string[] }>;
+  searchParams: Promise<{
+    invite?: string | string[];
+    issuedAt?: string | string[];
+  }>;
 }) {
   const [{ id }, search] = await Promise.all([params, searchParams]);
   const candidate =
     typeof search.invite === "string"
-      ? safeStudentReturnPath(`/exam/${id}?invite=${search.invite}`)
+      ? safeStudentReturnPath(
+          `/exam/${id}?invite=${search.invite}${typeof search.issuedAt === "string" ? `&issuedAt=${search.issuedAt}` : ""}`,
+        )
       : null;
   const inviteToken = candidate?.split("?invite=")[1] ?? null;
+  const inviteIssuedAt =
+    candidate?.match(/[?&]issuedAt=(\d{13})$/)?.[1] ?? null;
   const returnPath =
     candidate ?? safeStudentReturnPath(`/exam/${id}`) ?? `/exam/${id}`;
   let user;
@@ -26,5 +33,12 @@ export default async function Page({
       redirect(`/login?role=student&next=${encodeURIComponent(returnPath)}`);
     throw e;
   }
-  return <ExamRoom examId={id} enrollmentToken={inviteToken} user={user} />;
+  return (
+    <ExamRoom
+      examId={id}
+      enrollmentToken={inviteToken?.split("&")[0] ?? null}
+      enrollmentInviteIssuedAt={inviteIssuedAt}
+      user={user}
+    />
+  );
 }

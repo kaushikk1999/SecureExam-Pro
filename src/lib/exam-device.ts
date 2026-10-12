@@ -8,6 +8,25 @@ export type ExamDeviceSignals = {
   mobileHint?: boolean;
 };
 
+/** Tablets need the browser's native keyboard, which can dismiss Fullscreen API mode. */
+export function examFullscreenRequired(
+  policyRequiresFullscreen: boolean,
+  deviceClass: ExamDeviceClass,
+) {
+  return policyRequiresFullscreen && deviceClass !== "tablet";
+}
+
+export function examFullscreenSatisfied(
+  policyRequiresFullscreen: boolean,
+  deviceClass: ExamDeviceClass,
+  isFullscreen: boolean,
+) {
+  return (
+    !examFullscreenRequired(policyRequiresFullscreen, deviceClass) ||
+    isFullscreen
+  );
+}
+
 const phoneUserAgent =
   /iPhone|iPod|Windows Phone|BlackBerry|IEMobile|Opera Mini|Android.*Mobile/i;
 const tabletUserAgent = /iPad|Tablet|PlayBook|Silk/i;

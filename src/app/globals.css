@@ -1788,6 +1788,13 @@ fieldset {
 .exam-shell {
   background: #f7f9fc;
   min-height: 100vh;
+  min-height: 100dvh;
+}
+.exam-answer-field {
+  font-size: 16px;
+  touch-action: manipulation;
+  -webkit-user-select: text;
+  user-select: text;
 }
 .exam-top {
   background: white;
