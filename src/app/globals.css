@@ -1605,6 +1605,49 @@ td .actions select {
   color: #7693ad;
   margin-bottom: 15px;
 }
+.room-card-actions {
+  display: flex;
+  justify-content: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 16px;
+}
+.room-card-actions button,
+.room-delete-confirmation button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+}
+.danger-button {
+  color: #a34739;
+  border-color: #e8c6be;
+}
+.danger-button:hover {
+  background: #fff2ee;
+}
+.room-delete-confirmation {
+  margin-top: 14px;
+  padding: 12px;
+  text-align: left;
+  border: 1px solid #f3d9d0;
+  border-radius: 9px;
+  background: #fff8f6;
+}
+.room-delete-confirmation p {
+  color: #8d4b40;
+  font-size: 12px;
+}
+.room-delete-confirmation > div,
+.room-delete-confirmation {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+.room-delete-confirmation p {
+  flex-basis: 100%;
+}
 .monitor-strip {
   display: flex;
   justify-content: space-between;

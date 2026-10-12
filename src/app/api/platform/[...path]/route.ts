@@ -488,6 +488,36 @@ async function dispatch(req: Request, parts: string[]) {
           sql`SELECT * FROM classrooms WHERE ${u.role === "ADMIN"} OR teacher_id=${u.id} ORDER BY name`,
         ),
       );
+    if (id) {
+      uuid.parse(id);
+      if (method === "PATCH") {
+        const v = classroomSchema.parse(await body(req));
+        const [updated] = await query(
+          sql`UPDATE classrooms SET name=${v.name},configuration=${JSON.stringify(v)}::jsonb WHERE id=${id} AND (${u.role === "ADMIN"} OR teacher_id=${u.id}) RETURNING id`,
+        );
+        if (!updated) throw new HttpError(404, "Classroom not found.");
+        await record({
+          userId: u.id,
+          type: "CLASSROOM_UPDATED",
+          metadata: { id },
+        });
+        return json({ ok: true });
+      }
+      if (method === "DELETE") {
+        const [deleted] = await query(
+          sql`DELETE FROM classrooms WHERE id=${id} AND (${u.role === "ADMIN"} OR teacher_id=${u.id}) RETURNING id`,
+        );
+        if (!deleted) throw new HttpError(404, "Classroom not found.");
+        await record({
+          userId: u.id,
+          type: "CLASSROOM_DELETED",
+          metadata: { id },
+        });
+        return json({ ok: true });
+      }
+      throw new HttpError(405, "PATCH or DELETE required.");
+    }
+    if (method !== "POST") throw new HttpError(405, "POST required.");
     const v = classroomSchema.parse(await body(req));
     const cid = randomUUID();
     await query(

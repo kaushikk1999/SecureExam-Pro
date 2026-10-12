@@ -16,7 +16,7 @@ process.env.PGLITE_PATH = "./.data/test-" + randomUUID();
 process.env.NEXTAUTH_URL = "http://localhost:3000";
 process.env.NEXT_PUBLIC_APP_URL = "http://localhost:3000";
 const { db, query } = await import("../src/lib/db");
-const { GET, POST, DELETE } =
+const { GET, POST, PATCH, DELETE } =
   await import("../src/app/api/platform/[...path]/route");
 const { policySchema } = await import("../src/lib/domain");
 const teacher = randomUUID(),
@@ -35,9 +35,10 @@ async function request(
   path: string,
   data?: any,
   extra: Record<string, string> = {},
+  method?: string,
 ) {
   const request = new Request("http://localhost:3000/api/platform/" + path, {
-    method: data === undefined ? "GET" : "POST",
+    method: method ?? (data === undefined ? "GET" : "POST"),
     headers: {
       origin: "http://localhost:3000",
       "content-type": "application/json",
@@ -48,7 +49,8 @@ async function request(
     },
     body: data === undefined ? undefined : JSON.stringify(data),
   });
-  return (data === undefined ? GET : POST)(request, {
+  const handler = method === "PATCH" ? PATCH : data === undefined ? GET : POST;
+  return handler(request, {
     params: Promise.resolve({ path: path.split("/") }),
   });
 }
@@ -153,6 +155,41 @@ describe("server authorization and exam lifecycle", () => {
   it("allows an authorized teacher", async () => {
     login(teacher);
     expect((await request("exams/" + exam)).status).toBe(200);
+  });
+  it("lets a teacher edit and delete an owned classroom", async () => {
+    login(teacher);
+    const configuration = {
+      name: "Lab 1",
+      building: "Main",
+      floor: "2",
+      room: "201",
+      latitude: 14,
+      longitude: 100,
+      radius: 100,
+      accuracy: 100,
+    };
+    const created = await request("classrooms", configuration);
+    expect(created.status).toBe(200);
+    const { id } = await created.json();
+    const edited = await request(
+      "classrooms/" + id,
+      { ...configuration, name: "Lab 2", latitude: 14.1 },
+      {},
+      "PATCH",
+    );
+    expect(edited.status).toBe(200);
+    const listing = await request("classrooms");
+    const rooms = await listing.json();
+    expect(rooms.find((room: any) => room.id === id)).toMatchObject({
+      name: "Lab 2",
+      configuration: { name: "Lab 2", latitude: 14.1 },
+    });
+    expect((await deleteRequest("classrooms/" + id)).status).toBe(200);
+    expect(
+      (await (await request("classrooms")).json()).some(
+        (room: any) => room.id === id,
+      ),
+    ).toBe(false);
   });
   it("rejects a foreign origin on mutation", async () => {
     login(teacher);

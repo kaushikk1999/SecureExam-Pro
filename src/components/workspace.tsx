@@ -28,6 +28,8 @@ import {
   Radio,
   Menu,
   X,
+  Pencil,
+  Trash2,
 } from "lucide-react";
 import type { Actor } from "@/lib/auth";
 import { COURSE_CATALOG } from "@/lib/course-data";
@@ -2548,6 +2550,9 @@ function Students() {
 function Classrooms() {
   const { data: rooms, error, refresh } = useData("classrooms");
   const [adding, setAdding] = useState(false),
+    [editingRoom, setEditingRoom] = useState<any>(null),
+    [confirmDeleteId, setConfirmDeleteId] = useState(""),
+    [deletingId, setDeletingId] = useState(""),
     [message, setMessage] = useState(""),
     [coordinates, setCoordinates] = useState({
       latitude: "",
@@ -2555,7 +2560,7 @@ function Classrooms() {
       accuracy: "100",
     });
   useEffect(() => {
-    if (!adding) return;
+    if (!adding || editingRoom) return;
     if (!navigator.geolocation) {
       setMessage("Location detection is unavailable in this browser.");
       return;
@@ -2586,53 +2591,92 @@ function Classrooms() {
     return () => {
       cancelled = true;
     };
-  }, [adding]);
+  }, [adding, editingRoom]);
   return (
     <>
       <Heading
         title="Classrooms"
         description="A physical place for a connected examination."
       >
-        <button className="primary" onClick={() => setAdding(!adding)}>
+        <button
+          className="primary"
+          onClick={() => {
+            setEditingRoom(null);
+            setCoordinates({ latitude: "", longitude: "", accuracy: "100" });
+            setMessage("");
+            setAdding((current) => !current);
+          }}
+        >
           <Plus size={17} /> Add classroom
         </button>
       </Heading>
       <ErrorBox message={error || message} />
-      {adding && (
+      {(adding || editingRoom) && (
         <section className="panel form-panel">
           <form
+            key={editingRoom?.id ?? "new-classroom"}
             onSubmit={async (e) => {
               e.preventDefault();
               const f = Object.fromEntries(new FormData(e.currentTarget));
               try {
-                await api("classrooms", {
+                const configuration = {
                   ...f,
                   latitude: Number(f.latitude),
                   longitude: Number(f.longitude),
                   radius: Number(f.radius),
                   accuracy: Number(f.accuracy),
-                });
+                };
+                await api(
+                  editingRoom ? `classrooms/${editingRoom.id}` : "classrooms",
+                  configuration,
+                  editingRoom ? "PATCH" : "POST",
+                );
                 setAdding(false);
+                setEditingRoom(null);
+                setMessage("");
                 await refresh();
               } catch (err) {
                 setMessage((err as Error).message);
               }
             }}
           >
+            <h2>{editingRoom ? "Edit classroom" : "Add classroom"}</h2>
             <div className="form-grid">
               {[
-                ["name", "Classroom name", "text", ""],
-                ["building", "Building", "text", ""],
-                ["floor", "Floor", "text", ""],
-                ["room", "Room number", "text", ""],
+                ["name", "Classroom name", "text", editingRoom?.name ?? ""],
+                [
+                  "building",
+                  "Building",
+                  "text",
+                  editingRoom?.configuration.building ?? "",
+                ],
+                [
+                  "floor",
+                  "Floor",
+                  "text",
+                  editingRoom?.configuration.floor ?? "",
+                ],
+                [
+                  "room",
+                  "Room number",
+                  "text",
+                  editingRoom?.configuration.room ?? "",
+                ],
                 ["latitude", "Latitude", "number", coordinates.latitude],
                 ["longitude", "Longitude", "number", coordinates.longitude],
-                ["radius", "Allowed radius (m)", "number", "100"],
+                [
+                  "radius",
+                  "Allowed radius (m)",
+                  "number",
+                  editingRoom?.configuration.radius ?? "100",
+                ],
                 [
                   "accuracy",
                   "Maximum location uncertainty (m)",
                   "number",
-                  coordinates.accuracy,
+                  coordinates.accuracy ||
+                    editingRoom?.configuration.accuracy ||
+                    "100",
                 ],
               ].map(([key, label, type, value]) => (
                 <label key={key}>
@@ -2700,7 +2744,21 @@ function Classrooms() {
               Capture the location while you are in the classroom. GPS is
               approximate indoors and cannot distinguish rooms or floors.
             </p>
-            <button className="primary">Save classroom</button>
+            <div className="actions">
+              <button className="primary">
+                {editingRoom ? "Save classroom changes" : "Save classroom"}
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setAdding(false);
+                  setEditingRoom(null);
+                  setMessage("");
+                }}
+              >
+                Cancel
+              </button>
+            </div>
           </form>
         </section>
       )}
@@ -2725,6 +2783,65 @@ function Classrooms() {
             <p className="small muted">
               Maximum accuracy uncertainty: ±{r.configuration.accuracy} m
             </p>
+            <div className="room-card-actions">
+              <button
+                onClick={() => {
+                  setAdding(false);
+                  setEditingRoom(r);
+                  setConfirmDeleteId("");
+                  setMessage("");
+                  setCoordinates({
+                    latitude: String(r.configuration.latitude),
+                    longitude: String(r.configuration.longitude),
+                    accuracy: String(r.configuration.accuracy),
+                  });
+                }}
+              >
+                <Pencil size={15} /> Edit location
+              </button>
+              <button
+                className="danger-button"
+                onClick={() => {
+                  setConfirmDeleteId(r.id);
+                  setMessage("");
+                }}
+              >
+                <Trash2 size={15} /> Delete classroom
+              </button>
+            </div>
+            {confirmDeleteId === r.id && (
+              <div className="room-delete-confirmation">
+                <p>
+                  Remove this classroom from future exam setup? Exams already
+                  created keep their saved location settings.
+                </p>
+                <button
+                  className="danger-button"
+                  disabled={deletingId === r.id}
+                  onClick={async () => {
+                    setDeletingId(r.id);
+                    setMessage("");
+                    try {
+                      await api(`classrooms/${r.id}`, {}, "DELETE");
+                      setConfirmDeleteId("");
+                      await refresh();
+                    } catch (err) {
+                      setMessage((err as Error).message);
+                    } finally {
+                      setDeletingId("");
+                    }
+                  }}
+                >
+                  {deletingId === r.id ? "Deleting…" : "Delete permanently"}
+                </button>
+                <button
+                  disabled={deletingId === r.id}
+                  onClick={() => setConfirmDeleteId("")}
+                >
+                  Cancel
+                </button>
+              </div>
+            )}
           </article>
         ))}
       </div>
