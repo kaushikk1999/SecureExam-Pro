@@ -387,6 +387,16 @@ input[type="radio"] {
   width: 21px;
   height: 21px;
 }
+.login-card-heading .brand-icon {
+  margin-bottom: 20px;
+}
+.login-kicker {
+  display: block;
+  color: #6d85a0;
+  font-size: 9px;
+  font-weight: 750;
+  letter-spacing: 1.65px;
+}
 .login-form h2 {
   font-size: clamp(27px, 3vw, 34px);
   letter-spacing: -1.2px;
@@ -438,6 +448,20 @@ input[type="radio"] {
 .login-role-picker button strong {
   font-size: 15px;
 }
+.login-role-picker .login-role-title {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  color: #385673;
+  font-size: 15px;
+}
+.login-role-picker .login-role-title svg {
+  color: #6d8fb5;
+}
+.login-role-picker button.selected .login-role-title,
+.login-role-picker button.selected .login-role-title svg {
+  color: #2457a7;
+}
 .login-role-picker button span {
   color: var(--muted);
   font-size: 12px;
@@ -467,6 +491,68 @@ input[type="radio"] {
   min-height: 50px;
   border-radius: 11px;
   box-shadow: 0 8px 18px #2563eb20;
+}
+.login-form button.login-provider {
+  position: relative;
+  justify-content: center;
+  min-height: 52px;
+  margin: 8px 0;
+  padding: 12px 76px 12px 48px;
+  border-radius: 11px;
+  box-shadow: 0 4px 12px #183b5b0d;
+  font-size: 13px;
+}
+.login-form button.google-provider {
+  color: #26384b;
+  background: #fff;
+  border-color: #d9e2ed;
+}
+.login-form button.google-provider:hover {
+  background: #f8faff;
+  border-color: #b9cbe0;
+}
+.google-mark {
+  position: absolute;
+  left: 17px;
+  font-family: Arial, sans-serif;
+  font-size: 20px;
+  font-weight: 750;
+  color: transparent;
+  background: conic-gradient(
+    from -45deg,
+    #4285f4 0 25%,
+    #34a853 25% 48%,
+    #fbbc05 48% 72%,
+    #ea4335 72% 88%,
+    #4285f4 88%
+  );
+  background-clip: text;
+  -webkit-background-clip: text;
+}
+.provider-audience {
+  position: absolute;
+  right: 14px;
+  color: #6b7e92;
+  font-size: 9px;
+  font-weight: 750;
+  letter-spacing: 0.7px;
+  text-transform: uppercase;
+}
+.login-form .login-divider {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin: 21px 0 18px;
+  color: #8a99aa;
+  font-size: 10px;
+  font-weight: 600;
+}
+.login-divider::before,
+.login-divider::after {
+  content: "";
+  height: 1px;
+  flex: 1;
+  background: #e7edf4;
 }
 .login-form > div > p.small {
   line-height: 1.6;
@@ -2491,6 +2577,15 @@ fieldset {
   }
   .check-grid {
     grid-template-columns: 1fr;
+  }
+  .login-form button.login-provider {
+    padding-right: 58px;
+    padding-left: 43px;
+    font-size: 12px;
+  }
+  .login-form button.login-provider .provider-audience {
+    right: 9px;
+    font-size: 8px;
   }
 }
 

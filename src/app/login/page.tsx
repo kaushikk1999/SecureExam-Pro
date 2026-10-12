@@ -1,7 +1,13 @@
 "use client";
 import { useState, useEffect } from "react";
 import { signIn, signOut, getProviders } from "next-auth/react";
-import { ShieldCheck, ArrowRight, LockKeyhole } from "lucide-react";
+import {
+  ShieldCheck,
+  ArrowRight,
+  LockKeyhole,
+  GraduationCap,
+  ClipboardList,
+} from "lucide-react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { matchesLoginAudience, safeStudentReturnPath } from "@/lib/auth-role";
@@ -122,12 +128,15 @@ export default function Login() {
       </section>
       <section className="login-form">
         <div>
-          <span className="brand-icon">
-            <LockKeyhole />
-          </span>
-          <h2>
-            {audience === "student" ? "Student sign in" : "Teacher sign in"}
-          </h2>
+          <div className="login-card-heading">
+            <span className="brand-icon">
+              <LockKeyhole />
+            </span>
+            <span className="login-kicker">SECURE UNIVERSITY ACCESS</span>
+            <h2>
+              {audience === "student" ? "Student sign in" : "Teacher sign in"}
+            </h2>
+          </div>
           <p className="muted">
             {audience === "student"
               ? "Access your exams, practice, and learning progress."
@@ -147,7 +156,10 @@ export default function Login() {
                 setError("");
               }}
             >
-              <strong>Student</strong>
+              <span className="login-role-title">
+                <GraduationCap size={19} />
+                <strong>Student</strong>
+              </span>
               <span>Take exams and view results</span>
             </button>
             <button
@@ -159,33 +171,47 @@ export default function Login() {
                 setError("");
               }}
             >
-              <strong>Teacher</strong>
+              <span className="login-role-title">
+                <ClipboardList size={18} />
+                <strong>Teacher</strong>
+              </span>
               <span>Manage classes and exams</span>
             </button>
           </div>
           {google && (
             <button
-              className="primary large"
+              className="primary large login-provider google-provider"
               onClick={() =>
                 void signIn("google", {
                   callbackUrl: authCallbackUrl(audience),
                 })
               }
             >
-              Continue as {audience} with Google
+              <span className="google-mark" aria-hidden="true">
+                G
+              </span>
+              <span>Continue with Google</span>
+              <span className="provider-audience">{audience}</span>
             </button>
           )}
           {sso && (
             <button
-              className="primary large"
+              className="primary large login-provider login-sso-button"
               onClick={() =>
                 void signIn("university", {
                   callbackUrl: authCallbackUrl(audience),
                 })
               }
             >
-              Continue as {audience} with university SSO
+              <ShieldCheck size={19} />
+              <span>Continue with university SSO</span>
+              <span className="provider-audience">{audience}</span>
             </button>
+          )}
+          {(google || sso) && (
+            <div className="login-divider" aria-hidden="true">
+              <span>or use your university email</span>
+            </div>
           )}
           <form
             onSubmit={async (e) => {
