@@ -1103,6 +1103,18 @@ pre {
   margin: 14px 0;
   font-size: 12px;
 }
+.location-success {
+  padding: 13px 16px;
+  color: #25765e;
+  background: #eaf7f1;
+  border: 1px solid #cbe9da;
+  border-radius: 8px;
+  margin: 14px 0;
+  font-size: 13px;
+  display: flex;
+  align-items: center;
+  gap: 9px;
+}
 .notice {
   padding: 16px 20px;
   color: #527392;

@@ -106,6 +106,18 @@ type ClassroomCoordinateFields = {
   accuracy: string;
 };
 
+type ClassroomLocationFeedback = "pending" | "success" | "warning" | "error";
+
+function classroomLocationError(error: GeolocationPositionError): string {
+  if (error.code === error.PERMISSION_DENIED)
+    return "Location access is blocked. In Chrome, open the site controls beside the address bar, set Location to Allow, enable Chrome in your device's Location Services, reload this page, and try again.";
+  if (error.code === error.POSITION_UNAVAILABLE)
+    return "Your device's location service returned no position. Turn on Location Services and Wi-Fi, allow location for this site, then retry near a window. If it still fails, enter the classroom coordinates manually.";
+  if (error.code === error.TIMEOUT)
+    return "Location lookup timed out. Keep Location Services and Wi-Fi on, retry near a window, or enter the classroom coordinates manually.";
+  return "Location could not be detected. Check your browser and device location permissions, then retry or enter the coordinates manually.";
+}
+
 function detectClassroomLocation(): Promise<ClassroomCoordinates> {
   if (!navigator.geolocation)
     return Promise.reject(
@@ -132,21 +144,13 @@ function detectClassroomLocation(): Promise<ClassroomCoordinates> {
     maximumAge: 30000,
   }).catch((error: GeolocationPositionError) => {
     if (error.code === error.PERMISSION_DENIED)
-      throw new Error(
-        "Location permission is blocked. Allow location for this site in your browser and device settings, then retry.",
-      );
+      throw new Error(classroomLocationError(error));
     return read({
       enableHighAccuracy: false,
       timeout: 20000,
       maximumAge: 120000,
     }).catch((fallbackError: GeolocationPositionError) => {
-      if (fallbackError.code === fallbackError.PERMISSION_DENIED)
-        throw new Error(
-          "Location permission is blocked. Allow location for this site in your browser and device settings, then retry.",
-        );
-      throw new Error(
-        "Your browser could not determine your location. Turn on Location Services and Wi-Fi, allow location for this site, then try again. You can also enter the coordinates manually.",
-      );
+      throw new Error(classroomLocationError(fallbackError));
     });
   });
 }
@@ -156,6 +160,7 @@ function applyDetectedClassroomLocation(
   context: "classroom" | "captured",
   setCoordinates: (value: ClassroomCoordinateFields) => void,
   setMessage: (value: string) => void,
+  setFeedback: (value: ClassroomLocationFeedback) => void,
 ) {
   setCoordinates({
     latitude: coords.latitude.toFixed(6),
@@ -166,9 +171,10 @@ function applyDetectedClassroomLocation(
     coords.accuracy > 1000
       ? `Location found (±${Math.round(coords.accuracy)} m), but that reading is too imprecise for reliable classroom checks. Try again near a window or enter the room coordinates manually.`
       : context === "classroom"
-        ? `Classroom location detected (±${Math.round(coords.accuracy)} m). Check the room details before saving.`
-        : `Location captured (±${Math.round(coords.accuracy)} m). Review the room radius before saving.`,
+        ? `Classroom location detected; latitude and longitude fields are filled (±${Math.round(coords.accuracy)} m). Check the room details, then save.`
+        : `Location detected; latitude and longitude fields are filled (±${Math.round(coords.accuracy)} m). Review the room radius, then save.`,
   );
+  setFeedback(coords.accuracy > 1000 ? "warning" : "success");
 }
 
 const nav = [
@@ -2631,6 +2637,8 @@ function Classrooms() {
     [confirmDeleteId, setConfirmDeleteId] = useState(""),
     [deletingId, setDeletingId] = useState(""),
     [message, setMessage] = useState(""),
+    [locationFeedback, setLocationFeedback] =
+      useState<ClassroomLocationFeedback>("error"),
     [coordinates, setCoordinates] = useState({
       latitude: "",
       longitude: "",
@@ -2639,6 +2647,7 @@ function Classrooms() {
   useEffect(() => {
     if (!adding || editingRoom) return;
     let cancelled = false;
+    setLocationFeedback("pending");
     setMessage("Detecting classroom location… Allow location access if asked.");
     detectClassroomLocation()
       .then((coords) => {
@@ -2648,10 +2657,14 @@ function Classrooms() {
             "classroom",
             setCoordinates,
             setMessage,
+            setLocationFeedback,
           );
       })
       .catch((error: Error) => {
-        if (!cancelled) setMessage(error.message);
+        if (!cancelled) {
+          setMessage(error.message);
+          setLocationFeedback("error");
+        }
       });
     return () => {
       cancelled = true;
@@ -2675,7 +2688,19 @@ function Classrooms() {
           <Plus size={17} /> Add classroom
         </button>
       </Heading>
-      <ErrorBox message={error || message} />
+      <ErrorBox message={error} />
+      {message &&
+        (locationFeedback === "success" ? (
+          <div className="location-success" role="status" aria-live="polite">
+            <MapPin size={17} /> {message}
+          </div>
+        ) : locationFeedback === "pending" ? (
+          <div className="notice" role="status" aria-live="polite">
+            {message}
+          </div>
+        ) : (
+          <ErrorBox message={message} />
+        ))}
       {(adding || editingRoom) && (
         <section className="panel form-panel">
           <form
@@ -2702,6 +2727,7 @@ function Classrooms() {
                 await refresh();
               } catch (err) {
                 setMessage((err as Error).message);
+                setLocationFeedback("error");
               }
             }}
           >
@@ -2774,6 +2800,7 @@ function Classrooms() {
             <button
               type="button"
               onClick={() => {
+                setLocationFeedback("pending");
                 setMessage("Detecting classroom location…");
                 detectClassroomLocation()
                   .then((coords) =>
@@ -2782,9 +2809,13 @@ function Classrooms() {
                       "captured",
                       setCoordinates,
                       setMessage,
+                      setLocationFeedback,
                     ),
                   )
-                  .catch((error: Error) => setMessage(error.message));
+                  .catch((error: Error) => {
+                    setMessage(error.message);
+                    setLocationFeedback("error");
+                  });
               }}
             >
               <MapPin size={16} /> Use my current location
@@ -2839,6 +2870,7 @@ function Classrooms() {
                   setEditingRoom(r);
                   setConfirmDeleteId("");
                   setMessage("");
+                  setLocationFeedback("pending");
                   setCoordinates({
                     latitude: String(r.configuration.latitude),
                     longitude: String(r.configuration.longitude),
