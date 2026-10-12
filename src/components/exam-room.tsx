@@ -28,6 +28,52 @@ const Editor = dynamic(() => import("@monaco-editor/react"), { ssr: false });
 loader.config({ paths: { vs: "/monaco/vs" } });
 type QueuedAnswer = { questionId: string; value: any; version: number };
 type QueuedEvent = { id: string; type: string; metadata: Record<string, any> };
+function readBestLocation(maxAccuracy: number) {
+  return new Promise<{ latitude: number; longitude: number; accuracy: number }>(
+    (resolve, reject) => {
+      if (!navigator.geolocation) {
+        reject(new Error("Location detection is unavailable in this browser."));
+        return;
+      }
+      let best: {
+          latitude: number;
+          longitude: number;
+          accuracy: number;
+        } | null = null,
+        settled = false;
+      const watchId: { current?: number } = {};
+      const finish = (error?: GeolocationPositionError) => {
+        if (settled) return;
+        settled = true;
+        if (watchId.current !== undefined)
+          navigator.geolocation.clearWatch(watchId.current);
+        clearTimeout(timer);
+        if (best) resolve(best);
+        else
+          reject(
+            new Error(
+              error?.message ||
+                "Could not get your location. Allow location access and try again.",
+            ),
+          );
+      };
+      const timer = setTimeout(() => finish(), 15000);
+      watchId.current = navigator.geolocation.watchPosition(
+        ({ coords }) => {
+          const reading = {
+            latitude: coords.latitude,
+            longitude: coords.longitude,
+            accuracy: coords.accuracy,
+          };
+          if (!best || reading.accuracy < best.accuracy) best = reading;
+          if (reading.accuracy <= maxAccuracy) finish();
+        },
+        (error) => finish(error),
+        { enableHighAccuracy: true, maximumAge: 0, timeout: 15000 },
+      );
+    },
+  );
+}
 export default function ExamRoom({
   examId,
   enrollmentToken,
@@ -332,19 +378,11 @@ export default function ExamRoom({
           .forEach((t) => (t.onended = () => emit("SCREEN_SHARE_STOPPED")));
       }
       if (p.location) {
-        const reading = await new Promise<GeolocationPosition>(
-          (resolve, reject) =>
-            navigator.geolocation.getCurrentPosition(resolve, reject, {
-              enableHighAccuracy: true,
-              timeout: 20000,
-              maximumAge: 0,
-            }),
+        const maximumAccuracy = Math.max(
+          Number(exam.classroom?.accuracy ?? 0),
+          Number(exam.classroom?.radius ?? 0),
         );
-        const loc = {
-          latitude: reading.coords.latitude,
-          longitude: reading.coords.longitude,
-          accuracy: reading.coords.accuracy,
-        };
+        const loc = await readBestLocation(maximumAccuracy);
         location.current = loc;
         setPoint(loc);
       }
@@ -593,6 +631,12 @@ export default function ExamRoom({
     );
   if (!attempt) {
     const p = exam.policy;
+    const maximumLocationUncertainty = Math.max(
+      Number(exam.classroom?.accuracy ?? 0),
+      Number(exam.classroom?.radius ?? 0),
+    );
+    const locationGood =
+      !!point && point.accuracy <= maximumLocationUncertainty;
     const examOpen =
       ["LIVE", "PUBLISHED", "SCHEDULED"].includes(exam.status) &&
       new Date(exam.starts_at).getTime() <= clockNow &&
@@ -605,7 +649,7 @@ export default function ExamRoom({
       (!p.camera || checks.camera) &&
       (!p.microphone || checks.microphone) &&
       (!p.screen || checks.screen) &&
-      (!p.location || !!point) &&
+      (!p.location || locationGood) &&
       (!p.fullscreen || checks.fullscreen) &&
       (deviceClass === "laptop" || deviceClass === "tablet") &&
       (!p.classroomCode || code.length === 6);
@@ -662,7 +706,7 @@ export default function ExamRoom({
               [
                 MapPin,
                 p.location ? "Location required" : "Location optional",
-                !p.location || !!point,
+                !p.location || locationGood,
               ],
               [
                 Maximize2,
@@ -694,9 +738,11 @@ export default function ExamRoom({
             </p>
           )}
           {point && (
-            <p className="small muted">
-              Location accuracy: ±{Math.round(point.accuracy)} m. Classroom
-              eligibility is verified by the server at entry.
+            <p className={locationGood ? "small muted" : "small error"}>
+              Location accuracy: ±{Math.round(point.accuracy)} m.
+              {locationGood
+                ? " Classroom eligibility is verified by the server at entry."
+                : ` Improve the GPS reading or ask your instructor to check the classroom location settings (allowed uncertainty: ${Math.round(maximumLocationUncertainty)} m).`}
             </p>
           )}
           <button

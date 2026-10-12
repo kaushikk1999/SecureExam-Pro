@@ -515,7 +515,73 @@ function ExamForm({ done, initial }: { done: () => void; initial?: any }) {
   const [policy, setPolicy] = useState(initial?.policy ?? standard),
     [instructions, setInstructions] = useState(initial?.instructions ?? ""),
     [error, setError] = useState(""),
-    [busy, setBusy] = useState(false);
+    [busy, setBusy] = useState(false),
+    [roomId, setRoomId] = useState(""),
+    [locationStatus, setLocationStatus] = useState("");
+  useEffect(() => {
+    if (!rooms?.length || roomId) return;
+    let cancelled = false;
+    if (initial?.classroom) {
+      const saved = rooms.find(
+        (room: any) => room.configuration?.name === initial.classroom.name,
+      );
+      if (saved) {
+        setRoomId(saved.id);
+        return;
+      }
+    }
+    if (!navigator.geolocation) {
+      setLocationStatus(
+        "Location detection is unavailable; select a classroom below.",
+      );
+      return;
+    }
+    setLocationStatus("Detecting your classroom location…");
+    navigator.geolocation.getCurrentPosition(
+      (position) => {
+        if (cancelled) return;
+        const { latitude, longitude, accuracy } = position.coords;
+        const distance = (room: any) => {
+          const r = Math.PI / 180;
+          const roomLatitude = Number(room.configuration.latitude);
+          const dLat = (roomLatitude - latitude) * r;
+          const dLon = (Number(room.configuration.longitude) - longitude) * r;
+          const h =
+            Math.sin(dLat / 2) ** 2 +
+            Math.cos(latitude * r) *
+              Math.cos(roomLatitude * r) *
+              Math.sin(dLon / 2) ** 2;
+          return 6371000 * 2 * Math.asin(Math.sqrt(Math.min(1, h)));
+        };
+        const nearest = [...rooms]
+          .map((room: any) => ({ room, metres: distance(room) }))
+          .sort((a: any, b: any) => a.metres - b.metres)[0];
+        if (
+          nearest &&
+          nearest.metres <= Number(nearest.room.configuration.radius) + accuracy
+        ) {
+          setRoomId(nearest.room.id);
+          setLocationStatus(
+            `Detected ${nearest.room.configuration.name} (location uncertainty ±${Math.round(accuracy)} m).`,
+          );
+        } else {
+          setLocationStatus(
+            "Your location did not match a saved classroom. Choose a classroom below or create one from your current location.",
+          );
+        }
+      },
+      () => {
+        if (!cancelled)
+          setLocationStatus(
+            "Allow location access to detect a classroom automatically, or select one below.",
+          );
+      },
+      { enableHighAccuracy: true, timeout: 15000, maximumAge: 30000 },
+    );
+    return () => {
+      cancelled = true;
+    };
+  }, [rooms, initial, roomId]);
   function date(v?: string) {
     const d = v ? new Date(v) : new Date();
     return new Date(d.getTime() - d.getTimezoneOffset() * 60000)
@@ -543,8 +609,7 @@ function ExamForm({ done, initial }: { done: () => void; initial?: any }) {
                 instructions,
                 policy,
                 classroom:
-                  rooms?.find((r: any) => r.id === f.get("room"))
-                    ?.configuration ??
+                  rooms?.find((r: any) => r.id === roomId)?.configuration ??
                   initial?.classroom ??
                   null,
               },
@@ -623,7 +688,11 @@ function ExamForm({ done, initial }: { done: () => void; initial?: any }) {
           </label>
           <label>
             Classroom
-            <select name="room">
+            <select
+              name="room"
+              value={roomId}
+              onChange={(e) => setRoomId(e.target.value)}
+            >
               <option value="">
                 {initial?.classroom
                   ? "Keep " + initial.classroom.name
@@ -636,6 +705,11 @@ function ExamForm({ done, initial }: { done: () => void; initial?: any }) {
               ))}
             </select>
           </label>
+          {locationStatus && (
+            <p className="small muted" role="status">
+              {locationStatus}
+            </p>
+          )}
           <label>
             Security preset
             <select
@@ -2071,7 +2145,12 @@ function Students() {
 function Classrooms() {
   const { data: rooms, error, refresh } = useData("classrooms");
   const [adding, setAdding] = useState(false),
-    [message, setMessage] = useState("");
+    [message, setMessage] = useState(""),
+    [coordinates, setCoordinates] = useState({
+      latitude: "",
+      longitude: "",
+      accuracy: "100",
+    });
   return (
     <>
       <Heading
@@ -2110,14 +2189,14 @@ function Classrooms() {
                 ["building", "Building", "text", ""],
                 ["floor", "Floor", "text", ""],
                 ["room", "Room number", "text", ""],
-                ["latitude", "Latitude", "number", "14.039"],
-                ["longitude", "Longitude", "number", "100.615"],
+                ["latitude", "Latitude", "number", coordinates.latitude],
+                ["longitude", "Longitude", "number", coordinates.longitude],
                 ["radius", "Allowed radius (m)", "number", "100"],
                 [
                   "accuracy",
                   "Maximum location uncertainty (m)",
                   "number",
-                  "50",
+                  coordinates.accuracy,
                 ],
               ].map(([key, label, type, value]) => (
                 <label key={key}>
@@ -2127,14 +2206,63 @@ function Classrooms() {
                     name={key}
                     type={type}
                     step={type === "number" ? "any" : undefined}
-                    defaultValue={value}
+                    value={
+                      key === "latitude"
+                        ? coordinates.latitude
+                        : key === "longitude"
+                          ? coordinates.longitude
+                          : key === "accuracy"
+                            ? coordinates.accuracy
+                            : undefined
+                    }
+                    defaultValue={
+                      key === "latitude" ||
+                      key === "longitude" ||
+                      key === "accuracy"
+                        ? undefined
+                        : value
+                    }
                   />
                 </label>
               ))}
             </div>
+            <button
+              type="button"
+              onClick={() => {
+                if (!navigator.geolocation) {
+                  setMessage(
+                    "Location detection is unavailable in this browser.",
+                  );
+                  return;
+                }
+                setMessage("Detecting classroom location…");
+                navigator.geolocation.getCurrentPosition(
+                  ({ coords }) => {
+                    setCoordinates({
+                      latitude: coords.latitude.toFixed(6),
+                      longitude: coords.longitude.toFixed(6),
+                      accuracy: String(
+                        Math.max(100, Math.ceil(coords.accuracy)),
+                      ),
+                    });
+                    setMessage(
+                      `Location captured (±${Math.round(coords.accuracy)} m). Review the room radius before saving.`,
+                    );
+                  },
+                  (err) =>
+                    setMessage(
+                      err.message ||
+                        "Could not detect your location. Allow location access and try again.",
+                    ),
+                  { enableHighAccuracy: true, timeout: 20000, maximumAge: 0 },
+                );
+              }}
+            >
+              <MapPin size={16} /> Use my current location
+            </button>
             <p className="muted">
-              Verify coordinates on campus. Indoor GPS cannot reliably
-              distinguish rooms or floors.
+              Capture the location while you are in the classroom. GPS is
+              approximate indoors and cannot distinguish rooms or floors.
             </p>
             <button className="primary">Save classroom</button>
           </form>

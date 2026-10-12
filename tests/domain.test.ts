@@ -29,6 +29,15 @@ describe("location uncertainty", () => {
       geofence({ latitude: 14.1, longitude: 100, accuracy: 1000 }, room)
         .acceptable,
     ).toBe(false));
+  it("accepts typical indoor GPS uncertainty up to the room radius", () => {
+    expect(
+      geofence({ latitude: 14, longitude: 100, accuracy: 79 }, room),
+    ).toMatchObject({ inside: true, acceptable: true });
+    expect(
+      geofence({ latitude: 14, longitude: 100, accuracy: 101 }, room)
+        .acceptable,
+    ).toBe(false);
+  });
   it("requires distance beyond uncertainty for a clear outside reading", () =>
     expect(
       geofence({ latitude: 14.00095, longitude: 100, accuracy: 20 }, room)
