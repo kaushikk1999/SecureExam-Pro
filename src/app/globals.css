@@ -2353,3 +2353,56 @@ fieldset {
     display: none;
   }
 }
+
+.live-exam-list {
+  display: grid;
+  gap: 10px;
+}
+.live-exam-card {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 18px;
+  width: 100%;
+  padding: 16px;
+  text-align: left;
+  border: 1px solid var(--line, #d9e2ee);
+  border-radius: 12px;
+  background: #fff;
+  color: inherit;
+  cursor: pointer;
+}
+.live-exam-card.selected {
+  border-color: #2463eb;
+  box-shadow: 0 0 0 2px #2463eb20;
+}
+.live-exam-card > span:first-child,
+.live-exam-count {
+  display: grid;
+  gap: 5px;
+}
+.live-exam-card small {
+  color: #657991;
+}
+.live-exam-count {
+  justify-items: end;
+  white-space: nowrap;
+}
+.screen-share-viewer video {
+  display: block;
+  width: 100%;
+  max-height: min(70vh, 760px);
+  margin: 14px 0;
+  border-radius: 10px;
+  background: #111827;
+  object-fit: contain;
+}
+@media (max-width: 700px) {
+  .live-exam-card {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+  .live-exam-count {
+    justify-items: start;
+  }
+}

@@ -2938,8 +2938,11 @@ function Classrooms() {
   );
 }
 function MonitorPage() {
-  const { data: exams } = useData("exams");
+  const { data: exams } = useData("exams", 5000);
   const [id, setId] = useState("");
+  const activeExams = (exams ?? []).filter((exam: any) =>
+    ["LIVE", "PAUSED", "PUBLISHED", "SCHEDULED"].includes(exam.status),
+  );
   return (
     <>
       <Heading
@@ -2947,6 +2950,50 @@ function MonitorPage() {
         title="Live monitoring"
         description="Timely signals, clear context, and room for human judgment."
       />
+      <section className="panel form-panel">
+        <div className="panel-heading">
+          <div>
+            <h2>Exams in progress</h2>
+            <p className="muted">
+              Select an exam to see its roster, student progress and live
+              screen-share availability.
+            </p>
+          </div>
+          <strong>
+            {activeExams.filter((exam: any) => exam.status === "LIVE").length}{" "}
+            live
+          </strong>
+        </div>
+        {activeExams.length ? (
+          <div className="live-exam-list">
+            {activeExams.map((exam: any) => (
+              <button
+                className={
+                  "live-exam-card" + (id === exam.id ? " selected" : "")
+                }
+                key={exam.id}
+                onClick={() => setId(exam.id)}
+              >
+                <span>
+                  <strong>
+                    {exam.course_code} · {exam.course_name} · {exam.section}
+                  </strong>
+                  <small>{exam.title}</small>
+                </span>
+                <span className="live-exam-count">
+                  <Status value={exam.status} />
+                  <b>{exam.active_now ?? 0} taking</b>
+                  <small>of {exam.enrolled ?? 0} enrolled</small>
+                </span>
+              </button>
+            ))}
+          </div>
+        ) : (
+          <p className="muted">
+            No published or live exams are available to monitor.
+          </p>
+        )}
+      </section>
       <label className="exam-select">
         Examination
         <select value={id} onChange={(e) => setId(e.target.value)}>
@@ -2973,6 +3020,7 @@ function Monitor({ id, policy }: { id: string; policy?: any }) {
   const { data, error, refresh } = useData(`exams/${id}/monitor`, 3000);
   const { data: settings } = useData("settings");
   const [selected, setSelected] = useState(""),
+    [screenStudent, setScreenStudent] = useState<any>(null),
     [message] = useState(""),
     [sound, setSound] = useState(false),
     [last, setLast] = useState(0),
@@ -3155,6 +3203,13 @@ function Monitor({ id, policy }: { id: string; policy?: any }) {
         </label>
         <small>{time(data.serverTime)}</small>
       </div>
+      <div className="notice">
+        <strong>{data.exam?.title}</strong> · {data.exam?.status} ·{" "}
+        {students.filter((s: any) => s.status === "ACTIVE").length} students
+        taking the exam.
+        {data.policy?.screen &&
+          " Screen views start only when you select a student's active shared screen."}
+      </div>
       <ErrorBox message={error || message} />
       {liveSignal && (
         <div className="warning-banner" role="status">
@@ -3227,7 +3282,8 @@ function Monitor({ id, policy }: { id: string; policy?: any }) {
                 <tr key={s.user_id}>
                   <td>
                     <strong>{s.name}</strong>
-                    <small>{s.student_id}</small>
+                    <small>{s.student_id || "No student ID"}</small>
+                    <small>{s.email}</small>
                   </td>
                   <td>
                     <Status
@@ -3254,6 +3310,12 @@ function Monitor({ id, policy }: { id: string; policy?: any }) {
                     <br />
                     Mic {s.device_state?.microphone ? "✓" : "—"} · Fullscreen{" "}
                     {s.device_state?.fullscreen ? "✓" : "—"}
+                    {data.policy?.screen && (
+                      <>
+                        <br />
+                        Screen {s.device_state?.screen ? "✓" : "—"}
+                      </>
+                    )}
                   </td>
                   <td className="small">
                     {s.location_status?.replaceAll("_", " ") ?? "—"}
@@ -3267,7 +3329,26 @@ function Monitor({ id, policy }: { id: string; policy?: any }) {
                   </td>
                   <td>
                     {s.id ? (
-                      <button onClick={() => setSelected(s.id)}>Inspect</button>
+                      <div className="actions">
+                        <button onClick={() => setSelected(s.id)}>
+                          Inspect
+                        </button>
+                        {data.policy?.screen && s.status === "ACTIVE" && (
+                          <button
+                            disabled={!s.device_state?.screen}
+                            title={
+                              s.device_state?.screen
+                                ? "Request a temporary live view"
+                                : "Student screen share is unavailable"
+                            }
+                            onClick={() => setScreenStudent(s)}
+                          >
+                            {s.device_state?.screen
+                              ? "View screen"
+                              : "Screen unavailable"}
+                          </button>
+                        )}
+                      </div>
                     ) : s.checkin_at && !s.approved ? (
                       <button
                         onClick={async () => {
@@ -3296,6 +3377,15 @@ function Monitor({ id, policy }: { id: string; policy?: any }) {
             setSelected("");
             void refresh();
           }}
+        />
+      )}
+      {screenStudent && (
+        <LiveScreenViewer
+          id={screenStudent.id}
+          name={screenStudent.name}
+          studentId={screenStudent.student_id}
+          email={screenStudent.email}
+          close={() => setScreenStudent(null)}
         />
       )}
       <section className="panel form-panel">
@@ -3331,6 +3421,140 @@ function Monitor({ id, policy }: { id: string; policy?: any }) {
         </div>
       </section>
     </>
+  );
+}
+function LiveScreenViewer({
+  id,
+  name,
+  studentId,
+  email,
+  close,
+}: {
+  id: string;
+  name: string;
+  studentId?: string;
+  email?: string;
+  close: () => void;
+}) {
+  const video = useRef<HTMLVideoElement | null>(null);
+  const [status, setStatus] = useState("Requesting student screen share…");
+  const [error, setError] = useState("");
+  useEffect(() => {
+    let disposed = false;
+    let busy = false;
+    let peer: RTCPeerConnection | null = null;
+    let requestId = "";
+    let expectedRequestId = "";
+    const videoElement = video.current;
+    const path = `attempts/${id}/screen`;
+    async function gatherIce(connection: RTCPeerConnection) {
+      if (connection.iceGatheringState === "complete") return;
+      await new Promise<void>((resolve) => {
+        const timeout = setTimeout(resolve, 8000);
+        const done = () => {
+          if (connection.iceGatheringState !== "complete") return;
+          clearTimeout(timeout);
+          connection.removeEventListener("icegatheringstatechange", done);
+          resolve();
+        };
+        connection.addEventListener("icegatheringstatechange", done);
+      });
+    }
+    async function poll() {
+      if (disposed || busy) return;
+      busy = true;
+      try {
+        const signal = await api(path);
+        if (disposed) return;
+        if (!signal.offer || signal.requestId !== expectedRequestId) {
+          setStatus("Waiting for the student's browser to connect…");
+          return;
+        }
+        if (signal.requestId === requestId) return;
+        requestId = signal.requestId;
+        peer?.close();
+        peer = new RTCPeerConnection({
+          iceServers: [{ urls: "stun:stun.l.google.com:19302" }],
+        });
+        peer.ontrack = (event) => {
+          if (videoElement) {
+            videoElement.srcObject =
+              event.streams[0] ?? new MediaStream([event.track]);
+            setStatus("Live screen view");
+            void videoElement.play().catch(() => undefined);
+          }
+        };
+        peer.onconnectionstatechange = () => {
+          if (peer?.connectionState === "failed")
+            setError(
+              "The connection could not be established on this network. Ask the student to check screen sharing and retry.",
+            );
+        };
+        await peer.setRemoteDescription(signal.offer);
+        const answer = await peer.createAnswer();
+        await peer.setLocalDescription(answer);
+        await gatherIce(peer);
+        const description = peer.localDescription;
+        if (!description?.sdp)
+          throw new Error("Could not prepare the live screen connection.");
+        await api(path + "/answer", {
+          requestId,
+          description: { type: description.type, sdp: description.sdp },
+        });
+        setStatus("Connecting to the student's screen…");
+      } catch (cause) {
+        if (!disposed) setError((cause as Error).message);
+      } finally {
+        busy = false;
+      }
+    }
+    void api(path + "/request", {})
+      .then((result) => {
+        if (!disposed) {
+          expectedRequestId = result.requestId;
+          setStatus("Waiting for the student's browser to connect…");
+        }
+      })
+      .catch((cause) => !disposed && setError((cause as Error).message));
+    const timer = setInterval(() => void poll(), 1600);
+    return () => {
+      disposed = true;
+      clearInterval(timer);
+      if (expectedRequestId)
+        void api(path + "/stop", { requestId: expectedRequestId }).catch(
+          () => undefined,
+        );
+      peer?.getReceivers().forEach((receiver) => receiver.track.stop());
+      peer?.close();
+      if (videoElement) videoElement.srcObject = null;
+    };
+  }, [id]);
+  return (
+    <section className="panel form-panel screen-share-viewer">
+      <div className="panel-heading">
+        <div>
+          <h2>Live student screen</h2>
+          <p>
+            {name} · {studentId || "No student ID"} · {email}
+          </p>
+        </div>
+        <button onClick={close}>Stop viewing</button>
+      </div>
+      <p className="muted" role="status">
+        {status}
+      </p>
+      <ErrorBox message={error} />
+      <video
+        ref={video}
+        autoPlay
+        playsInline
+        controls
+        aria-label={`Live shared screen from ${name}`}
+      />
+      <small className="muted">
+        This view is live and is not recorded or stored.
+      </small>
+    </section>
   );
 }
 function AttemptReview({ id, close }: { id: string; close: () => void }) {

@@ -624,7 +624,7 @@ async function dispatch(req: Request, parts: string[]) {
           );
         return json(
           await query(
-            sql`SELECT e.id,e.title,e.status,e.starts_at,e.ends_at,e.duration_minutes,c.code AS course_code,(SELECT count(*)::int FROM enrollments WHERE course_id=e.course_id) AS enrolled,(SELECT count(*)::int FROM attempts WHERE exam_id=e.id) AS attended FROM exams e JOIN courses c ON c.id=e.course_id WHERE e.deleted_at IS NULL AND (${u.role === "ADMIN"} OR c.teacher_id=${u.id}) ORDER BY e.created_at DESC`,
+            sql`SELECT e.id,e.title,e.status,e.starts_at,e.ends_at,e.duration_minutes,c.code AS course_code,c.name AS course_name,c.section,(SELECT count(*)::int FROM enrollments WHERE course_id=e.course_id) AS enrolled,(SELECT count(*)::int FROM attempts WHERE exam_id=e.id) AS attended,(SELECT count(*)::int FROM attempts WHERE exam_id=e.id AND status='ACTIVE' AND deadline>now() AND last_heartbeat_at>now()-interval '45 seconds') AS active_now FROM exams e JOIN courses c ON c.id=e.course_id WHERE e.deleted_at IS NULL AND (${u.role === "ADMIN"} OR c.teacher_id=${u.id}) ORDER BY e.created_at DESC`,
           ),
         );
       }
@@ -845,6 +845,9 @@ async function dispatch(req: Request, parts: string[]) {
         );
         await tx.execute(
           sql`DELETE FROM event_receipts WHERE attempt_id IN (SELECT id FROM attempts WHERE exam_id=${id})`,
+        );
+        await tx.execute(
+          sql`DELETE FROM screen_share_sessions WHERE attempt_id IN (SELECT id FROM attempts WHERE exam_id=${id})`,
         );
         await tx.execute(
           sql`DELETE FROM answer_revisions WHERE attempt_id IN (SELECT id FROM attempts WHERE exam_id=${id})`,
@@ -1072,7 +1075,7 @@ async function dispatch(req: Request, parts: string[]) {
             await finish(tx, a, "AUTO_SUBMITTED_TIME", u.id);
       });
       const students = await query(
-        sql`SELECT u.id AS user_id,u.name,u.student_id,a.*,(SELECT count(*)::int FROM answers an WHERE an.attempt_id=a.id AND an.value NOT IN('null'::jsonb,'""'::jsonb)) AS answered,k.approved,k.created_at AS checkin_at FROM enrollments n JOIN users u ON u.id=n.user_id LEFT JOIN attempts a ON a.user_id=u.id AND a.exam_id=${id} LEFT JOIN checkins k ON k.user_id=u.id AND k.exam_id=${id} WHERE n.course_id=${e.course_id} ORDER BY u.name`,
+        sql`SELECT u.id AS user_id,u.name,u.email,u.student_id,a.*,(SELECT count(*)::int FROM answers an WHERE an.attempt_id=a.id AND an.value NOT IN('null'::jsonb,'""'::jsonb)) AS answered,k.approved,k.created_at AS checkin_at FROM enrollments n JOIN users u ON u.id=n.user_id LEFT JOIN attempts a ON a.user_id=u.id AND a.exam_id=${id} LEFT JOIN checkins k ON k.user_id=u.id AND k.exam_id=${id} WHERE n.course_id=${e.course_id} ORDER BY u.name`,
       );
       const events = await query(
         sql`SELECT ae.*,u.name FROM audit_events ae LEFT JOIN users u ON u.id=ae.user_id WHERE ae.exam_id=${id} ORDER BY sequence DESC LIMIT 100`,
@@ -1099,6 +1102,8 @@ async function dispatch(req: Request, parts: string[]) {
         students,
         events,
         stats,
+        policy: e.policy,
+        exam: { id: e.id, title: e.title, status: e.status },
         serverTime: new Date().toISOString(),
       });
     }
@@ -1308,6 +1313,118 @@ async function dispatch(req: Request, parts: string[]) {
   if (resource === "attempts") {
     uuid.parse(id);
     const device = req.headers.get("x-exam-device") ?? undefined;
+    if (action === "screen") {
+      const operation = parts[3];
+      if (method === "GET") {
+        const [attempt] = await query<any>(
+          sql`SELECT a.id,a.user_id,a.exam_id,a.status,e.policy FROM attempts a JOIN exams e ON e.id=a.exam_id WHERE a.id=${id}`,
+        );
+        if (!attempt) throw new HttpError(404, "Attempt not found.");
+        if (u.role === "STUDENT") {
+          if (attempt.user_id !== u.id)
+            throw new HttpError(403, "Attempt access denied.");
+        } else await ownedExam(attempt.exam_id, u);
+        if (!attempt.policy?.screen)
+          throw new HttpError(
+            409,
+            "Live screen sharing is not enabled for this exam.",
+          );
+        if (attempt.status !== "ACTIVE")
+          return json({ requestId: null, offer: null, answer: null });
+        const [session] = await query<any>(
+          sql`SELECT request_id,offer,answer FROM screen_share_sessions WHERE attempt_id=${id} AND updated_at>now()-interval '12 hours'`,
+        );
+        return json({
+          requestId: session?.request_id ?? null,
+          offer: u.role === "STUDENT" ? null : (session?.offer ?? null),
+          answer: u.role === "STUDENT" ? (session?.answer ?? null) : null,
+        });
+      }
+      const input = await body(req);
+      if (operation === "request") {
+        teacher(u);
+        const [attempt] = await query<any>(
+          sql`SELECT a.id,a.exam_id,a.status,e.policy FROM attempts a JOIN exams e ON e.id=a.exam_id WHERE a.id=${id}`,
+        );
+        if (!attempt) throw new HttpError(404, "Attempt not found.");
+        await ownedExam(attempt.exam_id, u);
+        if (!attempt.policy?.screen || attempt.status !== "ACTIVE")
+          throw new HttpError(
+            409,
+            "This student does not have an active screen-share exam.",
+          );
+        const requestId = randomUUID();
+        await query(
+          sql`INSERT INTO screen_share_sessions(attempt_id,request_id,requested_by,offer,answer,updated_at) VALUES(${id},${requestId},${u.id},NULL,NULL,now()) ON CONFLICT(attempt_id) DO UPDATE SET request_id=EXCLUDED.request_id,requested_by=EXCLUDED.requested_by,offer=NULL,answer=NULL,updated_at=now()`,
+        );
+        await record({
+          userId: u.id,
+          examId: attempt.exam_id,
+          attemptId: id,
+          type: "SCREEN_VIEW_REQUESTED",
+        });
+        return json({ requestId });
+      }
+      if (operation === "stop") {
+        teacher(u);
+        const v = z.object({ requestId: uuid }).parse(input);
+        const [attempt] = await query<any>(
+          sql`SELECT exam_id FROM attempts WHERE id=${id}`,
+        );
+        if (!attempt) throw new HttpError(404, "Attempt not found.");
+        await ownedExam(attempt.exam_id, u);
+        await query(
+          sql`DELETE FROM screen_share_sessions WHERE attempt_id=${id} AND request_id=${v.requestId}`,
+        );
+        return json({ ok: true });
+      }
+      if (operation === "offer" || operation === "answer") {
+        const v = z
+          .object({
+            requestId: uuid,
+            description: z.object({
+              type: z.enum(["offer", "answer"]),
+              sdp: z.string().min(1).max(100000),
+            }),
+          })
+          .parse(input);
+        const [attempt] = await query<any>(
+          sql`SELECT a.id,a.user_id,a.exam_id,a.status,e.policy FROM attempts a JOIN exams e ON e.id=a.exam_id WHERE a.id=${id}`,
+        );
+        if (!attempt) throw new HttpError(404, "Attempt not found.");
+        if (attempt.status !== "ACTIVE" || !attempt.policy?.screen)
+          throw new HttpError(409, "The exam is no longer sharing a screen.");
+        if (operation === "offer") {
+          if (u.role !== "STUDENT" || attempt.user_id !== u.id)
+            throw new HttpError(403, "Student attempt access required.");
+          if (v.description.type !== "offer")
+            throw new HttpError(400, "An SDP offer is required.");
+          const [updated] = await query<any>(
+            sql`UPDATE screen_share_sessions SET offer=${JSON.stringify(v.description)}::jsonb,updated_at=now() WHERE attempt_id=${id} AND request_id=${v.requestId} RETURNING attempt_id`,
+          );
+          if (!updated)
+            throw new HttpError(
+              409,
+              "The screen-view request expired. Retry from live monitoring.",
+            );
+        } else {
+          teacher(u);
+          await ownedExam(attempt.exam_id, u);
+          if (v.description.type !== "answer")
+            throw new HttpError(400, "An SDP answer is required.");
+          const [updated] = await query<any>(
+            sql`UPDATE screen_share_sessions SET answer=${JSON.stringify(v.description)}::jsonb,updated_at=now() WHERE attempt_id=${id} AND request_id=${v.requestId} AND offer IS NOT NULL RETURNING attempt_id`,
+          );
+          if (!updated)
+            throw new HttpError(
+              409,
+              "The student has not shared an offer yet. Retry from live monitoring.",
+            );
+        }
+        return json({ ok: true });
+      }
+      throw new HttpError(404, "Screen-share operation not found.");
+    }
     if (method === "GET") {
       return json(
         await db.transaction(async (tx) => {
@@ -1587,6 +1704,7 @@ async function dispatch(req: Request, parts: string[]) {
           .object({
             camera: z.boolean(),
             microphone: z.boolean(),
+            screen: z.boolean().optional(),
             fullscreen: z.boolean(),
             online: z.boolean(),
           })

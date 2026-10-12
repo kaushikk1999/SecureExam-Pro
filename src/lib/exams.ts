@@ -41,6 +41,9 @@ export async function finish(
   await tx.execute(
     sql`UPDATE attempts SET status=${status},submitted_at=now() WHERE id=${a.id}`,
   );
+  await tx.execute(
+    sql`DELETE FROM screen_share_sessions WHERE attempt_id=${a.id}`,
+  );
   const qs = await query(
     sql`SELECT q.*,an.value FROM questions q LEFT JOIN answers an ON an.question_id=q.id AND an.attempt_id=${a.id} WHERE q.id IN (SELECT jsonb_array_elements_text(question_order)::uuid FROM attempts WHERE id=${a.id})`,
     tx,
@@ -241,8 +244,15 @@ export async function startAttempt(
         p.shuffleOptions ? shuffled(q.options, id + q.id) : q.options,
       ]),
     );
+    const initialDeviceState = {
+      camera: !!input.checks.camera,
+      microphone: !!input.checks.microphone,
+      screen: !!input.checks.screen,
+      fullscreen: !!input.checks.fullscreen,
+      online: true,
+    };
     await tx.execute(
-      sql`INSERT INTO attempts(id,exam_id,user_id,device_session_id,deadline,question_order,option_order) VALUES(${id},${examId},${u.id},${input.deviceSessionId},${deadline(now, e.duration_minutes + (acc?.extra_minutes ?? 0), e.ends_at).toISOString()},${JSON.stringify(order)}::jsonb,${JSON.stringify(options)}::jsonb)`,
+      sql`INSERT INTO attempts(id,exam_id,user_id,device_session_id,deadline,question_order,option_order,device_state) VALUES(${id},${examId},${u.id},${input.deviceSessionId},${deadline(now, e.duration_minutes + (acc?.extra_minutes ?? 0), e.ends_at).toISOString()},${JSON.stringify(order)}::jsonb,${JSON.stringify(options)}::jsonb,${JSON.stringify(initialDeviceState)}::jsonb)`,
     );
     await audit(tx, {
       userId: u.id,

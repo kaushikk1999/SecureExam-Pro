@@ -184,6 +184,9 @@ export default function ExamRoom({
               microphone: !!stream.current
                 ?.getAudioTracks()
                 .some((t) => t.readyState === "live" && t.enabled),
+              screen: !!screenStream.current
+                ?.getVideoTracks()
+                .some(captureTrackIsActive),
               fullscreen: !!document.fullscreenElement,
               online: navigator.onLine,
             },
@@ -424,6 +427,10 @@ export default function ExamRoom({
         }
       }
       if (p.screen) {
+        if (!navigator.mediaDevices?.getDisplayMedia)
+          throw new Error(
+            "This browser cannot share its screen. Use a supported browser on a laptop or tablet, and allow screen sharing when prompted.",
+          );
         screenStream.current = await navigator.mediaDevices.getDisplayMedia({
           video: true,
         });
@@ -755,6 +762,88 @@ export default function ExamRoom({
     key,
     synchronize,
   ]);
+  useEffect(() => {
+    const attemptId = attempt?.id;
+    if (
+      !attemptId ||
+      attempt.status !== "ACTIVE" ||
+      !attempt.policy?.screen ||
+      !screenStream.current?.getVideoTracks().some(captureTrackIsActive)
+    )
+      return;
+
+    let disposed = false;
+    let peer: RTCPeerConnection | null = null;
+    let requestId = "";
+    let sendingOffer = false;
+    let pollBusy = false;
+    const path = `attempts/${attemptId}/screen`;
+    async function gatherIce(connection: RTCPeerConnection) {
+      if (connection.iceGatheringState === "complete") return;
+      await new Promise<void>((resolve) => {
+        const timeout = setTimeout(resolve, 8000);
+        const done = () => {
+          if (connection.iceGatheringState !== "complete") return;
+          clearTimeout(timeout);
+          connection.removeEventListener("icegatheringstatechange", done);
+          resolve();
+        };
+        connection.addEventListener("icegatheringstatechange", done);
+      });
+    }
+    async function poll() {
+      if (pollBusy) return;
+      pollBusy = true;
+      try {
+        const signal = await api(path, undefined, "GET", headers());
+        if (disposed) return;
+        if (!signal.requestId) {
+          peer?.close();
+          peer = null;
+          requestId = "";
+          return;
+        }
+        if (signal.requestId !== requestId) {
+          peer?.close();
+          peer = new RTCPeerConnection({
+            iceServers: [{ urls: "stun:stun.l.google.com:19302" }],
+          });
+          requestId = signal.requestId;
+          const screenTracks = screenStream.current?.getVideoTracks() ?? [];
+          for (const track of screenTracks)
+            peer.addTrack(track, screenStream.current!);
+          const offer = await peer.createOffer();
+          await peer.setLocalDescription(offer);
+          await gatherIce(peer);
+          const description = peer.localDescription;
+          if (!description?.sdp)
+            throw new Error("Could not prepare screen-share connection.");
+          sendingOffer = true;
+          await api(path + "/offer", {
+            requestId,
+            description: { type: description.type, sdp: description.sdp },
+          });
+          sendingOffer = false;
+        }
+        if (signal.answer && peer?.signalingState === "have-local-offer")
+          await peer.setRemoteDescription(signal.answer);
+      } catch {
+        sendingOffer = false;
+        // A dropped signaling poll should not interrupt the exam.
+      } finally {
+        pollBusy = false;
+      }
+    }
+    void poll();
+    const timer = setInterval(() => {
+      if (!sendingOffer) void poll();
+    }, 1800);
+    return () => {
+      disposed = true;
+      clearInterval(timer);
+      peer?.close();
+    };
+  }, [attempt?.id, attempt?.status, attempt?.policy?.screen]);
   function change(questionId: string, value: any) {
     const version = (versions.current[questionId] ?? 0) + 1;
     versions.current[questionId] = version;
@@ -946,8 +1035,11 @@ export default function ExamRoom({
               Sustained microphone sound levels and coarse frame movement are
               checked in this browser. Sound levels cannot identify speech or
               conversation. No audio, transcript or camera images are sent to
-              AI. A browser cannot prevent switching apps; if you leave this
-              tab, the exam screen is held until you acknowledge the signal.
+              AI.{" "}
+              {p.screen &&
+                "Your shared screen may be viewed live by your instructor during the exam; screen content is not recorded or stored."}{" "}
+              A browser cannot prevent switching apps; if you leave this tab,
+              the exam screen is held until you acknowledge the signal.
             </p>
           </div>
         </div>
@@ -1260,6 +1352,16 @@ export default function ExamRoom({
                 ? "active"
                 : "off"}
             </span>
+            {attempt.policy?.screen && (
+              <span>
+                Screen{" "}
+                {screenStream.current
+                  ?.getVideoTracks()
+                  .some(captureTrackIsActive)
+                  ? "shared for live instructor review"
+                  : "share unavailable"}
+              </span>
+            )}
           </div>
         </aside>
         <main className="question-area">
