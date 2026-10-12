@@ -132,11 +132,33 @@ it("requires a session and enforces role boundaries", async () => {
   login(null);
   expect((await request("practice")).status).toBe(401);
   login(student);
-  for (const path of ["actions", "analytics", "integrations"])
+  for (const path of ["actions", "submissions", "integrations"])
     expect((await request(path)).status).toBe(403);
   login(teacher);
   expect((await request("integrations")).status).toBe(403);
   expect((await request("learning")).status).toBe(403);
+});
+it("lists submitted papers by student only for the teacher's courses", async () => {
+  login(teacher);
+  const rows = await ok("submissions");
+  expect(rows).toHaveLength(1);
+  expect(rows[0]).toMatchObject({
+    attempt_id: attempt,
+    exam_id: exam,
+    exam_title: "Midterm",
+    course_code: "CS1",
+    course_name: "Computer Science",
+    student_name: "student@gmail.com",
+    email: "student@gmail.com",
+    attempt_status: "SUBMITTED",
+    answered: 1,
+    question_count: 1,
+    has_document: false,
+  });
+  login(foreign);
+  expect(await ok("submissions")).toEqual([]);
+  login(admin);
+  expect(await ok("submissions")).toHaveLength(1);
 });
 it("isolates practice saves and rejects old versions without touching official attempts", async () => {
   login(student);
@@ -179,18 +201,6 @@ it("withholds unreleased feedback and reports only the current student after rel
   });
   login(other);
   expect((await ok("learning")).responses).toEqual([]);
-});
-it("scopes question statistics to the course instructor and labels small samples", async () => {
-  login(teacher);
-  const r = await ok("analytics");
-  expect(r[0]).toMatchObject({
-    responses: 1,
-    credit: 50,
-    smallSample: true,
-    distribution: { B: 1 },
-  });
-  login(foreign);
-  expect(await ok("analytics")).toEqual([]);
 });
 it("scopes the action queue and durably reviews incidents", async () => {
   login(foreign);

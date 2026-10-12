@@ -83,47 +83,11 @@ export async function growthRequest(
     }
     return { attempts, responses, topics: [...topics.values()] };
   }
-  if (resource === "analytics" && read) {
+  if (resource === "submissions" && read) {
     staff(u);
-    const rows = await query(
-      sql`SELECT q.id,q.prompt,q.type,q.topic,q.marks,an.mark,an.value,a.id AS attempt_id FROM questions q JOIN answers an ON an.question_id=q.id JOIN attempts a ON a.id=an.attempt_id JOIN exams e ON e.id=a.exam_id JOIN courses c ON c.id=e.course_id WHERE (${u.role === "ADMIN"} OR c.teacher_id=${u.id}) AND a.status<>'ACTIVE' AND an.mark IS NOT NULL ORDER BY q.id`,
+    return query(
+      sql`SELECT a.id AS attempt_id,a.exam_id,e.title AS exam_title,e.status AS exam_status,a.status AS attempt_status,a.submitted_at,a.started_at,a.score,u.name AS student_name,u.student_id,u.email,c.code AS course_code,c.name AS course_name,c.section,(SELECT count(*)::int FROM answers an WHERE an.attempt_id=a.id) AS answered,(SELECT count(*)::int FROM questions q WHERE q.id IN(SELECT jsonb_array_elements_text(a.question_order)::uuid)) AS question_count,EXISTS(SELECT 1 FROM files f WHERE f.attempt_id=a.id AND f.owner_id=a.user_id AND f.name LIKE 'SUBMISSION::%') AS has_document FROM attempts a JOIN exams e ON e.id=a.exam_id JOIN courses c ON c.id=e.course_id JOIN users u ON u.id=a.user_id WHERE a.submitted_at IS NOT NULL AND (${u.role === "ADMIN"} OR c.teacher_id=${u.id}) ORDER BY c.code,c.section,e.title,a.submitted_at DESC,u.name`,
     );
-    const grouped = new Map<string, any>();
-    for (const r of rows) {
-      const g = grouped.get(r.id) ?? {
-        id: r.id,
-        prompt: r.prompt,
-        type: r.type,
-        topic: r.topic || "Uncategorized",
-        responses: 0,
-        earned: 0,
-        possible: 0,
-        blank: 0,
-        distribution: Object.create(null),
-      };
-      g.responses++;
-      g.earned += Number(r.mark);
-      g.possible += Number(r.marks);
-      if (
-        r.value === null ||
-        r.value === "" ||
-        (Array.isArray(r.value) && !r.value.length)
-      )
-        g.blank++;
-      if (["MCQ", "TRUE_FALSE", "MULTI_SELECT"].includes(r.type)) {
-        for (const value of Array.isArray(r.value) ? r.value : [r.value]) {
-          const key = String(value ?? "(blank)").slice(0, 200);
-          g.distribution[key] =
-            (Object.hasOwn(g.distribution, key) ? g.distribution[key] : 0) + 1;
-        }
-      }
-      grouped.set(r.id, g);
-    }
-    return [...grouped.values()].map((g) => ({
-      ...g,
-      credit: g.possible ? (100 * g.earned) / g.possible : 0,
-      smallSample: g.responses < 10,
-    }));
   }
   if (resource === "actions") {
     staff(u);

@@ -7,8 +7,8 @@ import {
   GraduationCap,
   Plug,
   FlaskConical,
-  BarChart3,
   MessageSquare,
+  FileText,
 } from "lucide-react";
 import type { Actor } from "@/lib/auth";
 import { api, useData, ErrorBox, Loading, Markdown, time } from "./ui";
@@ -313,7 +313,9 @@ function Actions() {
       <ErrorBox message={error} />
       <Feedback task={task} />
       {!data ? (
-        error ? null : <Loading />
+        error ? null : (
+          <Loading />
+        )
       ) : (
         <>
           <div className={styles.metrics}>
@@ -549,98 +551,197 @@ function Learning() {
   );
 }
 function Analytics() {
-  const { data, error } = useData("growth/analytics");
+  const { data, error } = useData("growth/submissions");
   const [filter, setFilter] = useState("");
+  const [selected, setSelected] = useState("");
+  const normalizedFilter = filter.trim().toLowerCase();
+  const submissions = (data ?? []).filter((submission: any) =>
+    [
+      submission.course_code,
+      submission.course_name,
+      submission.section,
+      submission.exam_title,
+      submission.student_name,
+      submission.student_id,
+      submission.email,
+    ]
+      .filter(Boolean)
+      .join(" ")
+      .toLowerCase()
+      .includes(normalizedFilter),
+  );
+  const subjects = new Map<string, any[]>();
+  for (const submission of submissions) {
+    const key = `${submission.course_code} · ${submission.course_name} · ${submission.section || "No section"}`;
+    subjects.set(key, [...(subjects.get(key) ?? []), submission]);
+  }
   return (
     <>
       <Intro
-        title="Question analytics"
-        text="Use completed, graded responses to guide your next question review."
-        icon={BarChart3}
+        title="Exam submissions"
+        text="Review completed exam papers by subject, exam and student."
+        icon={FileText}
       />
       <ErrorBox message={error} />
       <section className={styles.card}>
         <label>
-          Filter by topic or question
+          Search by subject, exam or student
           <input
             value={filter}
             onChange={(e) => setFilter(e.target.value)}
-            placeholder="Search your questions"
+            placeholder="Name, student ID, subject or exam title"
           />
         </label>
-        <p>
-          Average credit is earned marks divided by possible marks. Low credit
-          can reflect difficulty, teaching coverage or ambiguity; review context
-          before changing a question. Fewer than 10 responses is a small sample.
-        </p>
+        <p>Only submitted exams for courses you teach are listed here.</p>
       </section>
       {!data ? (
         error ? null : (
           <Loading />
         )
-      ) : data.length === 0 ? (
+      ) : submissions.length === 0 ? (
         <section className={styles.card}>
-          Analytics appear when students submit answers and grading is
-          available.
+          {data.length === 0
+            ? "Student submissions will appear here after they submit an exam."
+            : "No submissions match your search."}
         </section>
       ) : (
-        data
-          .filter((q: any) =>
-            (q.prompt + " " + q.topic)
-              .toLowerCase()
-              .includes(filter.toLowerCase()),
-          )
-          .map((q: any) => (
-            <section className={styles.card} key={q.id}>
-              <span className={styles.tag}>
-                {q.topic} · {q.type}
-              </span>
-              <Markdown text={q.prompt} />
-              <div className={styles.metrics}>
-                <div>
-                  <strong className={styles.number}>{q.responses}</strong>Graded
-                  responses
-                </div>
-                <div>
-                  <strong className={styles.number}>
-                    {Math.round(q.credit)}%
-                  </strong>
-                  Average credit
-                </div>
-                <div>
-                  <strong className={styles.number}>
-                    {Math.round((100 * q.blank) / q.responses)}%
-                  </strong>
-                  Blank responses
-                </div>
-              </div>
-              {q.smallSample && (
-                <p className={styles.note}>
-                  Small sample — interpret with caution.
-                </p>
-              )}
-              {q.credit < 40 && (
-                <p className={styles.note}>
-                  Low average credit — consider reviewing wording and topic
-                  coverage.
-                </p>
-              )}
-              {Object.keys(q.distribution).length > 0 && (
-                <details className={styles.details}>
-                  <summary>Answer distribution</summary>
-                  {Object.entries(q.distribution).map(([answer, count]) => (
-                    <div className={styles.row} key={answer}>
-                      <span>{answer}</span>
-                      <strong>{String(count)}</strong>
+        [...subjects.entries()].map(([subject, rows]) => {
+          const exams = new Map<string, any[]>();
+          for (const row of rows)
+            exams.set(row.exam_id, [...(exams.get(row.exam_id) ?? []), row]);
+          return (
+            <section className={styles.card} key={subject}>
+              <h2>{subject}</h2>
+              {[...exams.entries()].map(([examId, examRows]) => (
+                <section className={styles.submissionExam} key={examId}>
+                  <div className={styles.submissionHeading}>
+                    <div>
+                      <h3>{examRows[0].exam_title}</h3>
+                      <p>
+                        {examRows.length} submitted student
+                        {examRows.length === 1 ? "" : "s"}
+                      </p>
                     </div>
-                  ))}
-                </details>
-              )}
-              <Link href="/workspace/questions">Open question bank →</Link>
+                  </div>
+                  <div className={styles.submissionList}>
+                    {examRows.map((submission: any) => (
+                      <article
+                        className={styles.submissionRow}
+                        key={submission.attempt_id}
+                      >
+                        <div className={styles.submissionStudent}>
+                          <strong>{submission.student_name}</strong>
+                          <small>
+                            {submission.student_id || "No student ID"} ·{" "}
+                            {submission.email}
+                          </small>
+                        </div>
+                        <div className={styles.submissionMeta}>
+                          <span>Submitted {time(submission.submitted_at)}</span>
+                          <small>
+                            {submission.answered}/{submission.question_count}{" "}
+                            questions answered
+                          </small>
+                        </div>
+                        <button
+                          type="button"
+                          aria-expanded={selected === submission.attempt_id}
+                          onClick={() =>
+                            setSelected(
+                              selected === submission.attempt_id
+                                ? ""
+                                : submission.attempt_id,
+                            )
+                          }
+                        >
+                          {selected === submission.attempt_id
+                            ? "Close submission"
+                            : "View submission"}
+                        </button>
+                        {selected === submission.attempt_id && (
+                          <SubmissionView id={submission.attempt_id} />
+                        )}
+                      </article>
+                    ))}
+                  </div>
+                </section>
+              ))}
             </section>
-          ))
+          );
+        })
       )}
     </>
+  );
+}
+function SubmissionView({ id }: { id: string }) {
+  const { data: attempt, error } = useData("attempts/" + id);
+  if (!attempt) return error ? <ErrorBox message={error} /> : <Loading />;
+  const orderedQuestions = [...attempt.questions].sort(
+    (a: any, b: any) =>
+      attempt.question_order.indexOf(a.id) -
+      attempt.question_order.indexOf(b.id),
+  );
+  return (
+    <section className={styles.submissionDetail}>
+      <div className={styles.submissionHeading}>
+        <div>
+          <h3>Submitted paper and answers</h3>
+          <p>
+            {attempt.title} · {attempt.status.replaceAll("_", " ")}
+          </p>
+        </div>
+        {attempt.documentSubmission && (
+          <a
+            className="button primary"
+            href={`/api/platform/files/${attempt.documentSubmission.id}?download=1`}
+          >
+            Download completed paper
+          </a>
+        )}
+      </div>
+      {attempt.documentSubmission && (
+        <p className={styles.note}>
+          Uploaded document: {attempt.documentSubmission.name}
+        </p>
+      )}
+      {orderedQuestions.map((question: any, index: number) => {
+        const answer = attempt.answers.find(
+          (entry: any) => entry.question_id === question.id,
+        );
+        const value = answer?.value;
+        return (
+          <article className={styles.submissionAnswer} key={question.id}>
+            <h4>Question {index + 1}</h4>
+            <Markdown text={question.prompt} />
+            <strong>Student answer</strong>
+            {question.type === "FILE_UPLOAD" &&
+            typeof value === "string" &&
+            /^[0-9a-f-]{36}$/i.test(value) ? (
+              <p>
+                <a
+                  href={`/api/platform/files/${value}`}
+                  target="_blank"
+                  rel="noreferrer"
+                >
+                  Open submitted answer file
+                </a>
+              </p>
+            ) : (
+              <pre>
+                {typeof value === "string"
+                  ? value
+                  : value == null
+                    ? "No answer"
+                    : JSON.stringify(value, null, 2)}
+              </pre>
+            )}
+          </article>
+        );
+      })}
+      {!orderedQuestions.length && !attempt.documentSubmission && (
+        <p>No saved answers or uploaded paper were found for this attempt.</p>
+      )}
+    </section>
   );
 }
 function Appeals({ user }: { user: Actor }) {
@@ -842,8 +943,8 @@ function Integrations() {
             </strong>
           </div>
           <p>
-            Custom university providers use an administrator-approved issuer
-            and subject mapping. Existing passwords and roles stay intact.
+            Custom university providers use an administrator-approved issuer and
+            subject mapping. Existing passwords and roles stay intact.
           </p>
           {data.sso.configured && (
             <>

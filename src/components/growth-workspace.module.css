@@ -158,6 +158,86 @@
   letter-spacing: -1px;
   margin-bottom: 8px;
 }
+.submissionExam {
+  border-top: 1px solid #e1e8ef;
+  margin-top: 20px;
+  padding-top: 18px;
+}
+.submissionHeading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+}
+.submissionHeading h3 {
+  margin: 0;
+  font-size: 17px;
+}
+.submissionHeading p {
+  margin: 5px 0 0;
+  font-size: 13px;
+}
+.submissionList {
+  margin-top: 12px;
+}
+.submissionRow {
+  display: grid;
+  grid-template-columns: minmax(180px, 1fr) minmax(160px, 0.8fr) auto;
+  align-items: center;
+  gap: 16px;
+  padding: 15px 0;
+  border-top: 1px solid #ecf0f4;
+}
+.submissionStudent,
+.submissionMeta {
+  min-width: 0;
+}
+.submissionStudent small,
+.submissionMeta small,
+.submissionMeta span {
+  display: block;
+  color: #708196;
+  font-size: 12px;
+  margin-top: 5px;
+  overflow-wrap: anywhere;
+}
+.submissionRow > button {
+  white-space: nowrap;
+}
+.submissionDetail {
+  grid-column: 1 / -1;
+  width: 100%;
+  border-top: 1px solid #dfe7ef;
+  padding-top: 18px;
+}
+.submissionAnswer {
+  padding: 14px 0;
+  border-top: 1px solid #ecf0f4;
+}
+.submissionAnswer h4 {
+  margin: 0 0 10px;
+}
+.submissionAnswer pre {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  background: #f6f8fb;
+  border-radius: 10px;
+  padding: 14px;
+  color: #23384b;
+}
+@media (max-width: 720px) {
+  .submissionHeading {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+  .submissionRow {
+    grid-template-columns: 1fr;
+    gap: 8px;
+  }
+  .submissionRow > button {
+    justify-self: start;
+  }
+}
 .case {
   padding: 20px 0;
   border-top: 1px solid #e1e8ef;

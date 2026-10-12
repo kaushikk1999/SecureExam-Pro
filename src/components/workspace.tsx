@@ -188,7 +188,7 @@ const nav = [
   ["actions", "Action center", Activity],
   ["practice", "Practice & readiness", CheckCircle2],
   ["learning", "My learning", GraduationCap],
-  ["analytics", "Question analytics", Library],
+  ["analytics", "Exam submissions", FileText],
   ["appeals", "Incident appeals", ClipboardList],
   ["integrations", "University integrations", Settings],
   ["settings", "Settings", Settings],
