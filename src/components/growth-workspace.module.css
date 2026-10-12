@@ -210,6 +210,28 @@
   border-top: 1px solid #dfe7ef;
   padding-top: 18px;
 }
+.batchExport {
+  flex: 0 0 auto;
+}
+.batchExportButton {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  white-space: nowrap;
+}
+.batchExportHint {
+  display: block;
+  margin-top: 6px;
+  color: #708196;
+  font-size: 11px;
+}
+.batchExportError {
+  max-width: 300px;
+  margin: 8px 0 0;
+  color: #a33b2c;
+  font-size: 12px;
+}
 .downloadPdf {
   display: inline-flex;
   align-items: center;
@@ -258,9 +280,13 @@
   }
   .printArea,
   .printArea * {
+    visibility: hidden !important;
+  }
+  .printArea.printActive,
+  .printArea.printActive * {
     visibility: visible !important;
   }
-  .printArea {
+  .printArea.printActive {
     display: block !important;
     position: absolute;
     inset: 0 auto auto 0;
@@ -360,6 +386,24 @@
   }
   .printQuestion p {
     margin: 8px 0;
+  }
+  .batchStudent + .batchStudent {
+    break-before: page;
+  }
+  .batchStudentHeader {
+    margin: 18px 0 12px;
+    padding: 12px 14px;
+    border: 1px solid #d8e1ea;
+    border-radius: 8px;
+    break-inside: avoid;
+  }
+  .batchStudentHeader h2 {
+    margin: 0 0 7px;
+    font-size: 16pt;
+  }
+  .batchStudentHeader p {
+    margin: 4px 0;
+    overflow-wrap: anywhere;
   }
   @page {
     size: auto;

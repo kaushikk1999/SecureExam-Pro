@@ -623,6 +623,10 @@ function Analytics() {
                         {examRows.length === 1 ? "" : "s"}
                       </p>
                     </div>
+                    <BatchSubmissionExport
+                      examId={examId}
+                      examTitle={examRows[0].exam_title}
+                    />
                   </div>
                   <div className={styles.submissionList}>
                     {examRows.map((submission: any) => (
@@ -677,32 +681,207 @@ function Analytics() {
     </>
   );
 }
+function printTitle(parts: Array<string | null | undefined>) {
+  return parts
+    .filter(Boolean)
+    .join(" - ")
+    .replace(/[\\/:*?"<>|]+/g, "-")
+    .replace(/[\u0000-\u001f]+/g, "")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+function BatchSubmissionExport({
+  examId,
+  examTitle,
+}: {
+  examId: string;
+  examTitle: string;
+}) {
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState("");
+  const [submissions, setSubmissions] = useState<any[] | null>(null);
+  const [printRequested, setPrintRequested] = useState(false);
+  const printStarted = useRef(false);
+
+  useEffect(() => {
+    if (!printRequested || !submissions?.length || printStarted.current) return;
+    printStarted.current = true;
+    const previousTitle = document.title;
+    document.title = printTitle(["All submissions", examTitle]);
+    const restoreTitle = () => {
+      document.title = previousTitle;
+      printStarted.current = false;
+      setPrintRequested(false);
+    };
+    window.addEventListener("afterprint", restoreTitle, { once: true });
+    window.print();
+    return () => window.removeEventListener("afterprint", restoreTitle);
+  }, [examTitle, printRequested, submissions]);
+
+  const downloadAll = async () => {
+    setError("");
+    setLoading(true);
+    try {
+      const result = await api(`growth/submissions/${examId}`);
+      if (!Array.isArray(result) || result.length === 0) {
+        throw new Error("There are no submitted papers for this exam yet.");
+      }
+      setSubmissions(result);
+      setPrintRequested(true);
+    } catch (cause) {
+      setError((cause as Error).message);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  return (
+    <div className={styles.batchExport}>
+      <button
+        type="button"
+        className={styles.batchExportButton}
+        onClick={() => void downloadAll()}
+        disabled={loading}
+      >
+        <Download size={16} />
+        {loading ? "Preparing submissions…" : "Download all as PDF"}
+      </button>
+      <span className={styles.batchExportHint}>
+        One combined PDF with a section for each student. Choose “Save as PDF”
+        in the print window.
+      </span>
+      {error && (
+        <p className={styles.batchExportError} role="alert">
+          {error}
+        </p>
+      )}
+      {submissions && (
+        <div
+          className={`${styles.printArea} ${printRequested ? styles.printActive : ""}`}
+        >
+          <header className={styles.printHeader}>
+            <span>SECUREEXAM PRO · COMPLETE EXAM SUBMISSIONS</span>
+            <h1>{examTitle}</h1>
+            <p>
+              {submissions[0].course_code} · {submissions[0].course_name} ·
+              Section {submissions[0].section || "—"}
+            </p>
+            <p>
+              {submissions.length} submitted student
+              {submissions.length === 1 ? "" : "s"}
+            </p>
+          </header>
+          {submissions.map((submission) => (
+            <section
+              className={styles.batchStudent}
+              key={submission.attempt_id}
+            >
+              <header className={styles.batchStudentHeader}>
+                <h2>{submission.student_name || "Student"}</h2>
+                <p>
+                  Student ID: {submission.student_id || "Not provided"} · Email:{" "}
+                  {submission.email || "—"}
+                </p>
+                <p>
+                  Submitted: {time(submission.submitted_at)} · Started:{" "}
+                  {time(submission.started_at)}
+                </p>
+                <p>
+                  Status: {submission.attempt_status.replaceAll("_", " ")} ·
+                  Security warnings: {submission.warnings ?? 0}
+                  {submission.score !== null && submission.score !== undefined
+                    ? ` · Score: ${submission.score}`
+                    : ""}
+                </p>
+                {submission.document_submission_name && (
+                  <p>
+                    Uploaded completed paper:{" "}
+                    {submission.document_submission_name.replace(
+                      /^SUBMISSION::/,
+                      "",
+                    )}
+                  </p>
+                )}
+              </header>
+              <h3>Questions and student answers</h3>
+              {submission.questions.map((question: any, index: number) => (
+                <article className={styles.printQuestion} key={question.id}>
+                  <div className={styles.printQuestionHeading}>
+                    <h3>Question {index + 1}</h3>
+                    <span>
+                      {question.type?.replaceAll("_", " ") || "Question"} ·{" "}
+                      {question.marks} marks
+                    </span>
+                  </div>
+                  <Markdown text={question.prompt} />
+                  {Array.isArray(question.options) &&
+                    question.options.length > 0 && (
+                      <div className={styles.printOptions}>
+                        <strong>Options</strong>
+                        <ol type="A">
+                          {question.options.map(
+                            (option: string, optionIndex: number) => (
+                              <li key={`${question.id}-${optionIndex}`}>
+                                {option}
+                              </li>
+                            ),
+                          )}
+                        </ol>
+                      </div>
+                    )}
+                  <strong>Student answer</strong>
+                  <pre>
+                    {typeof question.value === "string"
+                      ? question.value
+                      : question.value == null
+                        ? "No answer"
+                        : JSON.stringify(question.value, null, 2)}
+                  </pre>
+                  {question.mark !== null && question.mark !== undefined && (
+                    <p className={styles.printMark}>
+                      Mark: {question.mark} / {question.marks}
+                    </p>
+                  )}
+                  {question.feedback && <p>Feedback: {question.feedback}</p>}
+                </article>
+              ))}
+            </section>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
 function SubmissionView({ id, submission }: { id: string; submission: any }) {
   const { data: attempt, error } = useData("attempts/" + id);
-  if (!attempt) return error ? <ErrorBox message={error} /> : <Loading />;
-  const printSubmission = () => {
+  const [printActive, setPrintActive] = useState(false);
+  const printStarted = useRef(false);
+  useEffect(() => {
+    if (!printActive || !attempt || printStarted.current) return;
+    printStarted.current = true;
     const previousTitle = document.title;
-    const suggestedFilename = [
+    document.title = printTitle([
       submission.student_name || submission.email || "Student",
       submission.student_id,
       attempt.title,
       "submission",
-    ]
-      .filter(Boolean)
-      .join(" - ")
-      .replace(/[\\/:*?"<>|]+/g, "-")
-      .replace(/\s+/g, " ")
-      .trim();
-    document.title = suggestedFilename;
-    window.addEventListener(
-      "afterprint",
-      () => {
-        document.title = previousTitle;
-      },
-      { once: true },
-    );
+    ]);
+    const restoreTitle = () => {
+      document.title = previousTitle;
+      printStarted.current = false;
+      setPrintActive(false);
+    };
+    window.addEventListener("afterprint", restoreTitle, { once: true });
     window.print();
-  };
+    return () => window.removeEventListener("afterprint", restoreTitle);
+  }, [
+    attempt,
+    printActive,
+    submission.email,
+    submission.student_id,
+    submission.student_name,
+  ]);
+  if (!attempt) return error ? <ErrorBox message={error} /> : <Loading />;
   const orderedQuestions = [...attempt.questions].sort(
     (a: any, b: any) =>
       attempt.question_order.indexOf(a.id) -
@@ -729,7 +908,7 @@ function SubmissionView({ id, submission }: { id: string; submission: any }) {
       <button
         type="button"
         className={styles.downloadPdf}
-        onClick={printSubmission}
+        onClick={() => setPrintActive(true)}
       >
         <Download size={16} />
         Download submission as PDF
@@ -742,7 +921,9 @@ function SubmissionView({ id, submission }: { id: string; submission: any }) {
           Uploaded document: {attempt.documentSubmission.name}
         </p>
       )}
-      <div className={styles.printArea}>
+      <div
+        className={`${styles.printArea} ${printActive ? styles.printActive : ""}`}
+      >
         <header className={styles.printHeader}>
           <span>SECUREEXAM PRO · EXAM SUBMISSION</span>
           <h1>{attempt.title}</h1>

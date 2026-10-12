@@ -160,6 +160,31 @@ it("lists submitted papers by student only for the teacher's courses", async () 
   login(admin);
   expect(await ok("submissions")).toHaveLength(1);
 });
+it("exports every submitted attempt with its ordered questions and answers", async () => {
+  login(teacher);
+  const rows = await ok(`submissions/${exam}`);
+  expect(rows).toHaveLength(1);
+  expect(rows[0]).toMatchObject({
+    attempt_id: attempt,
+    exam_title: "Midterm",
+    student_name: "student@gmail.com",
+    student_id: null,
+    email: "student@gmail.com",
+    questions: [
+      {
+        id: question,
+        type: "MCQ",
+        prompt: "Sample",
+        value: "B",
+        feedback: "Study graphs",
+      },
+    ],
+  });
+  expect(Number(rows[0].questions[0].marks)).toBe(10);
+  expect(Number(rows[0].questions[0].mark)).toBe(5);
+  login(foreign);
+  expect((await request(`submissions/${exam}`)).status).toBe(403);
+});
 it("isolates practice saves and rejects old versions without touching official attempts", async () => {
   login(student);
   await ok("practice", {

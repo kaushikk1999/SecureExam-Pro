@@ -85,6 +85,46 @@ export async function growthRequest(
   }
   if (resource === "submissions" && read) {
     staff(u);
+    if (id) {
+      const examId = uuid.parse(id);
+      await ownedExam(examId, u);
+      const rows = await query(
+        sql`SELECT a.id AS attempt_id,a.status AS attempt_status,a.started_at,a.submitted_at,a.warnings,a.location_status,a.score,e.title AS exam_title,u.name AS student_name,u.student_id,u.email,c.code AS course_code,c.name AS course_name,c.section,ordered.position,q.id AS question_id,q.type,q.prompt,q.marks,q.options AS default_options,COALESCE(a.option_order->q.id::text,q.options) AS options,an.value,an.mark,an.feedback,(SELECT f.name FROM files f WHERE f.attempt_id=a.id AND f.owner_id=a.user_id AND f.name LIKE 'SUBMISSION::%' ORDER BY f.created_at DESC LIMIT 1) AS document_submission_name FROM attempts a JOIN exams e ON e.id=a.exam_id JOIN courses c ON c.id=e.course_id JOIN users u ON u.id=a.user_id JOIN LATERAL jsonb_array_elements_text(a.question_order) WITH ORDINALITY AS ordered(question_id,position) ON TRUE JOIN questions q ON q.id=ordered.question_id::uuid LEFT JOIN answers an ON an.attempt_id=a.id AND an.question_id=q.id WHERE a.exam_id=${examId} AND a.submitted_at IS NOT NULL ORDER BY u.name,a.submitted_at,ordered.position`,
+      );
+      const submissions = new Map<string, any>();
+      for (const row of rows) {
+        const submission = submissions.get(row.attempt_id) ?? {
+          attempt_id: row.attempt_id,
+          attempt_status: row.attempt_status,
+          started_at: row.started_at,
+          submitted_at: row.submitted_at,
+          warnings: row.warnings,
+          location_status: row.location_status,
+          score: row.score,
+          exam_title: row.exam_title,
+          student_name: row.student_name,
+          student_id: row.student_id,
+          email: row.email,
+          course_code: row.course_code,
+          course_name: row.course_name,
+          section: row.section,
+          document_submission_name: row.document_submission_name,
+          questions: [],
+        };
+        submission.questions.push({
+          id: row.question_id,
+          type: row.type,
+          prompt: row.prompt,
+          marks: row.marks,
+          options: row.options ?? row.default_options,
+          value: row.value,
+          mark: row.mark,
+          feedback: row.feedback,
+        });
+        submissions.set(row.attempt_id, submission);
+      }
+      return [...submissions.values()];
+    }
     return query(
       sql`SELECT a.id AS attempt_id,a.exam_id,e.title AS exam_title,e.status AS exam_status,a.status AS attempt_status,a.submitted_at,a.started_at,a.score,u.name AS student_name,u.student_id,u.email,c.code AS course_code,c.name AS course_name,c.section,(SELECT count(*)::int FROM answers an WHERE an.attempt_id=a.id) AS answered,(SELECT count(*)::int FROM questions q WHERE q.id IN(SELECT jsonb_array_elements_text(a.question_order)::uuid)) AS question_count,EXISTS(SELECT 1 FROM files f WHERE f.attempt_id=a.id AND f.owner_id=a.user_id AND f.name LIKE 'SUBMISSION::%') AS has_document FROM attempts a JOIN exams e ON e.id=a.exam_id JOIN courses c ON c.id=e.course_id JOIN users u ON u.id=a.user_id WHERE a.submitted_at IS NOT NULL AND e.deleted_at IS NULL AND (${u.role === "ADMIN"} OR c.teacher_id=${u.id}) ORDER BY c.code,c.section,e.title,a.submitted_at DESC,u.name`,
     );
