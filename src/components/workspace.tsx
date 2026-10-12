@@ -644,6 +644,7 @@ function ExamForm({ done, initial }: { done: () => void; initial?: any }) {
   const { data: courses } = useData("courses"),
     { data: rooms } = useData("classrooms");
   const [policy, setPolicy] = useState(initial?.policy ?? standard),
+    [preset, setPreset] = useState(initial ? "custom" : "standard"),
     [instructions, setInstructions] = useState(initial?.instructions ?? ""),
     [error, setError] = useState(""),
     [busy, setBusy] = useState(false),
@@ -844,35 +845,108 @@ function ExamForm({ done, initial }: { done: () => void; initial?: any }) {
           <label>
             Security preset
             <select
-              defaultValue="standard"
-              onChange={(e) =>
+              value={preset}
+              onChange={(e) => {
+                const selected = e.target.value;
+                setPreset(selected);
+                if (selected === "custom") return;
                 setPolicy(
-                  e.target.value === "strict"
-                    ? { ...standard, microphone: true }
-                    : e.target.value === "practice"
-                      ? {
-                          ...standard,
-                          camera: false,
-                          microphone: false,
-                          location: false,
-                          fullscreen: false,
-                          classroomCode: false,
-                          allowCopy: true,
-                          allowPaste: true,
-                          tabMonitoring: false,
-                          allowMobile: true,
-                          autoTerminate: false,
-                        }
-                      : standard,
-                )
-              }
+                  selected === "practice"
+                    ? {
+                        ...standard,
+                        camera: false,
+                        microphone: false,
+                        location: false,
+                        fullscreen: false,
+                        classroomCode: false,
+                        allowCopy: true,
+                        allowPaste: true,
+                        tabMonitoring: false,
+                        allowMobile: true,
+                        autoTerminate: false,
+                      }
+                    : standard,
+                );
+              }}
             >
               <option value="standard">Standard exam</option>
               <option value="strict">Strict exam</option>
               <option value="practice">Practice / quiz</option>
+              <option value="custom">Custom checks</option>
             </select>
           </label>
         </div>
+        <fieldset className="exam-checks">
+          <legend>Choose student checks</legend>
+          <p className="small muted">
+            Select the checks for this exam. Students will only be asked to
+            complete the checks you select here.
+          </p>
+          <div className="check-grid">
+            {[
+              [
+                "camera",
+                "Camera",
+                "Request camera access and monitor the camera feed.",
+              ],
+              [
+                "microphone",
+                "Microphone",
+                "Check sustained sound levels; audio is not recorded or transcribed.",
+              ],
+              [
+                "location",
+                "Classroom location",
+                "Check the student is within the selected classroom radius.",
+              ],
+              [
+                "screen",
+                "Screen sharing",
+                "Allow the instructor to view the student's shared screen live.",
+              ],
+              [
+                "fullscreen",
+                "Fullscreen (laptops)",
+                "Require fullscreen on laptops; tablets keep keyboard-friendly page mode.",
+              ],
+              [
+                "classroomCode",
+                "Classroom entry code",
+                "Require the rotating code displayed by the instructor.",
+              ],
+              [
+                "tabMonitoring",
+                "Tab-change monitoring",
+                "Record and warn when a student leaves the exam tab.",
+              ],
+              [
+                "teacherApproval",
+                "Teacher approval",
+                "Require the instructor to approve entry before the exam begins.",
+              ],
+            ].map(([key, label, description]) => (
+              <label key={key} className="exam-check-option">
+                <span className="check">
+                  <input
+                    type="checkbox"
+                    checked={Boolean(policy[key])}
+                    onChange={(event) => {
+                      setPreset("custom");
+                      setPolicy({ ...policy, [key]: event.target.checked });
+                    }}
+                  />
+                  {label}
+                </span>
+                <small>{description}</small>
+              </label>
+            ))}
+          </div>
+          {policy.location && !roomId && (
+            <p className="small error" role="status">
+              Choose a classroom above to use the location check.
+            </p>
+          )}
+        </fieldset>
         <label>Instructions</label>
         <RichEditor value={instructions} onChange={setInstructions} />
         <details>
@@ -881,7 +955,18 @@ function ExamForm({ done, initial }: { done: () => void; initial?: any }) {
             {Object.entries(policy)
               .filter(
                 ([key, value]) =>
-                  typeof value === "boolean" && key !== "allowMobile",
+                  typeof value === "boolean" &&
+                  ![
+                    "camera",
+                    "microphone",
+                    "location",
+                    "screen",
+                    "fullscreen",
+                    "classroomCode",
+                    "tabMonitoring",
+                    "teacherApproval",
+                    "allowMobile",
+                  ].includes(key),
               )
               .map(([key, value]) => (
                 <label key={key} className="check">
