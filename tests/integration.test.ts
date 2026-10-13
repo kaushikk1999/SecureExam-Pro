@@ -322,6 +322,146 @@ describe("server authorization and exam lifecycle", () => {
     login(teacher);
     expect((await request("exams/" + exam)).status).toBe(200);
   });
+  it("limits student exam visibility to enrolled courses and removes access after unenrollment", async () => {
+    const previousAllowlist = process.env.STUDENT_LOGIN_EMAILS;
+    const scopedStudent = randomUUID();
+    const secondCourse = randomUUID();
+    const secondExam = randomUUID();
+    await db.execute(
+      sql`INSERT INTO users(id,email,name,password_hash,role,student_id) VALUES(${scopedStudent},${scopedStudent + "@test.local"},'Scoped Student','unused','STUDENT','SCOPED-ID')`,
+    );
+    process.env.STUDENT_LOGIN_EMAILS = [
+      previousAllowlist,
+      scopedStudent + "@test.local",
+    ]
+      .filter(Boolean)
+      .join(",");
+    await db.execute(
+      sql`INSERT INTO courses(id,teacher_id,code,name) VALUES(${secondCourse},${teacher},'OTHER','Other course')`,
+    );
+
+    const added = await requestAs(teacher, `courses/${course}/enroll`, {
+      email: scopedStudent + "@test.local",
+    });
+    expect(added.status).toBe(200);
+    const rosterBeforeRemoval = await requestAs(
+      teacher,
+      `courses/${course}/students`,
+    );
+    expect(
+      (await rosterBeforeRemoval.json()).some(
+        (row: any) => row.id === scopedStudent,
+      ),
+    ).toBe(true);
+
+    const removed = await requestSession.run(teacher, () =>
+      deleteRequest(`courses/${course}/students/${scopedStudent}`),
+    );
+    expect(removed.status).toBe(200);
+    const rosterAfterRemoval = await requestAs(
+      teacher,
+      `courses/${course}/students`,
+    );
+    expect(
+      (await rosterAfterRemoval.json()).some(
+        (row: any) => row.id === scopedStudent,
+      ),
+    ).toBe(false);
+
+    await db.execute(
+      sql`INSERT INTO enrollments(course_id,user_id) VALUES(${secondCourse},${scopedStudent})`,
+    );
+    const [sourceExam] = await query(
+      sql`SELECT policy FROM exams WHERE id=${exam}`,
+    );
+    await db.execute(
+      sql`INSERT INTO exams(id,course_id,title,status,starts_at,ends_at,duration_minutes,policy,code_secret) VALUES(${secondExam},${secondCourse},'Other course exam','PUBLISHED',now()-interval '1 hour',now()+interval '2 hours',60,${JSON.stringify(sourceExam.policy)}::jsonb,'secret')`,
+    );
+    await db.execute(
+      sql`INSERT INTO exam_questions(exam_id,question_id,position) VALUES(${secondExam},${question},0)`,
+    );
+
+    const studentExams = await requestAs(scopedStudent, "exams");
+    expect(studentExams.status).toBe(200);
+    const visible = await studentExams.json();
+    expect(visible.map((row: any) => row.id)).toEqual([secondExam]);
+    expect((await requestAs(scopedStudent, `exams/${exam}`)).status).toBe(403);
+    if (previousAllowlist === undefined)
+      delete process.env.STUDENT_LOGIN_EMAILS;
+    else process.env.STUDENT_LOGIN_EMAILS = previousAllowlist;
+  });
+  it("sends enrollment confirmation and a published exam link only to eligible students in that course", async () => {
+    const previousApiKey = process.env.RESEND_API_KEY;
+    const previousFrom = process.env.EMAIL_FROM;
+    const mailCourse = randomUUID();
+    const mailStudent = randomUUID();
+    const mailExam = randomUUID();
+    const sentBatches: any[][] = [];
+    process.env.RESEND_API_KEY = "resend-test-key";
+    process.env.EMAIL_FROM = "SecureExam <noreply@example.test>";
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (_url: string | URL | Request, init?: RequestInit) => {
+        const batch = JSON.parse(String(init?.body));
+        sentBatches.push(batch);
+        return new Response(
+          JSON.stringify({ data: batch.map(() => ({ id: "email-test-id" })) }),
+          { status: 200, headers: { "content-type": "application/json" } },
+        );
+      }),
+    );
+
+    try {
+      await db.execute(
+        sql`INSERT INTO users(id,email,name,password_hash,role,student_id) VALUES(${mailStudent},'mail-student@test.local','Mail Student','unused','STUDENT','MAIL-ID')`,
+      );
+      await db.execute(
+        sql`INSERT INTO courses(id,teacher_id,code,name) VALUES(${mailCourse},${teacher},'MAIL','Mail course')`,
+      );
+      const enrolled = await requestAs(
+        teacher,
+        `courses/${mailCourse}/enroll`,
+        {
+          email: "mail-student@test.local",
+        },
+      );
+      expect(enrolled.status).toBe(200);
+      expect((await enrolled.json()).notification).toMatchObject({
+        sent: 1,
+        failed: 0,
+      });
+      expect(sentBatches[0][0].to).toBe("mail-student@test.local");
+      expect(sentBatches[0][0].subject).toContain("enrolled");
+
+      const [sourceExam] = await query(
+        sql`SELECT policy FROM exams WHERE id=${exam}`,
+      );
+      await db.execute(
+        sql`INSERT INTO exams(id,course_id,title,status,starts_at,ends_at,duration_minutes,policy,code_secret) VALUES(${mailExam},${mailCourse},'Mail course midterm','DRAFT',now()-interval '1 hour',now()+interval '2 hours',60,${JSON.stringify(sourceExam.policy)}::jsonb,'secret')`,
+      );
+      await db.execute(
+        sql`INSERT INTO exam_questions(exam_id,question_id,position) VALUES(${mailExam},${question},0)`,
+      );
+      const published = await requestAs(teacher, `exams/${mailExam}/control`, {
+        action: "publish",
+      });
+      expect(published.status).toBe(200);
+      expect((await published.json()).notification).toMatchObject({
+        sent: 1,
+        failed: 0,
+      });
+      expect(sentBatches).toHaveLength(2);
+      expect(sentBatches[1]).toHaveLength(1);
+      expect(sentBatches[1][0].to).toBe("mail-student@test.local");
+      expect(sentBatches[1][0].text).toContain(`/exam/${mailExam}`);
+    } finally {
+      vi.unstubAllGlobals();
+      if (previousApiKey === undefined) delete process.env.RESEND_API_KEY;
+      else process.env.RESEND_API_KEY = previousApiKey;
+      if (previousFrom === undefined) delete process.env.EMAIL_FROM;
+      else process.env.EMAIL_FROM = previousFrom;
+    }
+  });
   it("lets a student save a unique ID for exam identity confirmation", async () => {
     login(student);
     const response = await request(

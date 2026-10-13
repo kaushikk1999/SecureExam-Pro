@@ -213,6 +213,10 @@ test("student preflight, autosave, refresh recovery, submission and API authoriz
     has: page.getByRole("heading", { name: title }),
   });
   await card.getByRole("link").click();
+  await expect(
+    page.getByRole("heading", { name: "Checks used for this exam" }),
+  ).toBeVisible();
+  await expect(page.locator(".preflight-check-list li")).toHaveCount(14);
   await page
     .getByRole("button", { name: "Check camera, microphone & location" })
     .click();

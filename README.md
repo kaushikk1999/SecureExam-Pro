@@ -14,17 +14,17 @@ A Next.js examination workspace for Bangkok University, with PostgreSQL as the a
 
 ## 2. Architecture
 
-| Layer | Implementation |
-| --- | --- |
-| Frontend | Next.js App Router, React, responsive custom component system, reduced-motion CSS, Lucide, Markdown/GFM/LaTeX, locally hosted Monaco |
-| Backend | Node.js route handlers, Zod input schemas, origin validation, per-user rate limiting |
-| Database | PostgreSQL + Drizzle parameterized SQL and numbered transactional migrations |
-| Authentication | NextAuth encrypted session cookies, bcrypt, database role/active/session-version validation; encrypted TOTP secrets and replay protection |
-| Live updates | Authenticated HTTPS polling: teacher 3 seconds, student 5 seconds, heartbeat 15 seconds; PostgreSQL remains authoritative |
-| Storage | Private Vercel Blob or a service-account-shared Google Drive folder, authenticated streaming, bounded file sizes and content checks |
-| Proctoring | Browser focus/fullscreen/device events, 30-second location samples, fresh 10-minute checkpoints, accuracy checks, consecutive outside readings |
-| AI | Optional server-side Ollama draft endpoint; no autonomous misconduct decisions |
-| Sheets | Optional service-account batch export; never used for transactional data |
+| Layer          | Implementation                                                                                                                                 |
+| -------------- | ---------------------------------------------------------------------------------------------------------------------------------------------- |
+| Frontend       | Next.js App Router, React, responsive custom component system, reduced-motion CSS, Lucide, Markdown/GFM/LaTeX, locally hosted Monaco           |
+| Backend        | Node.js route handlers, Zod input schemas, origin validation, per-user rate limiting                                                           |
+| Database       | PostgreSQL + Drizzle parameterized SQL and numbered transactional migrations                                                                   |
+| Authentication | NextAuth encrypted session cookies, bcrypt, database role/active/session-version validation; encrypted TOTP secrets and replay protection      |
+| Live updates   | Authenticated HTTPS polling: teacher 3 seconds, student 5 seconds, heartbeat 15 seconds; PostgreSQL remains authoritative                      |
+| Storage        | Private Vercel Blob or a service-account-shared Google Drive folder, authenticated streaming, bounded file sizes and content checks            |
+| Proctoring     | Browser focus/fullscreen/device events, 30-second location samples, fresh 10-minute checkpoints, accuracy checks, consecutive outside readings |
+| AI             | Optional server-side Ollama draft endpoint; no autonomous misconduct decisions                                                                 |
+| Sheets         | Optional service-account batch export; never used for transactional data                                                                       |
 
 Polling is intentional: it works within Vercel request lifecycles without maintaining unsupported long-running socket servers. Alerts are near-real-time, with roughly three-second teacher latency. Load-test your anticipated classroom size against the database pool and deployment plan.
 
@@ -166,7 +166,7 @@ See [docs/SECURITY.md](docs/SECURITY.md). Browser signals are untrusted observat
 
 Raw camera/microphone recordings are never uploaded. No facial identity, sensitive attribute, gaze, emotional, or personality inference is implemented. Face/person counting and audio conversation analysis are intentionally not enabled without a validated, accessible local model. Coding responses are manually graded; arbitrary student code is never executed.
 
-The retention setting is a policy/disclosure setting, not an automatic destructive deletion job. Immutable dispute evidence must be archived/deleted through an institution-approved privileged process, including backups. Do not promise automatic deletion at the configured day count. QR check-in, email delivery, automated code execution, image OCR, and AI-driven paper conversion are not enabled; rotating numeric codes, browser alerts, manual grading, document previews and editable AI drafts cover the corresponding core workflows.
+The retention setting is a policy/disclosure setting, not an automatic destructive deletion job. Immutable dispute evidence must be archived/deleted through an institution-approved privileged process, including backups. Do not promise automatic deletion at the configured day count. Course enrollment QR codes and course-scoped email notifications are implemented; email requires a configured Resend account and verified sender. Exam room-code check-in, automated code execution, image OCR, and AI-driven paper conversion are not enabled; rotating numeric codes, browser alerts, manual grading, document previews and editable AI drafts cover the corresponding core workflows.
 
 ## 12. Quality gate
 

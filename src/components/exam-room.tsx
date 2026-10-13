@@ -1229,7 +1229,7 @@ export default function ExamRoom({
       screenSharePreflightSatisfied(
         p.screen,
         checks.screen,
-        screenShareUnsupported && deviceClass === "tablet",
+        screenShareUnsupported,
       ) &&
       (!p.location || locationGood) &&
       examFullscreenSatisfied(p.fullscreen, deviceClass, checks.fullscreen) &&
