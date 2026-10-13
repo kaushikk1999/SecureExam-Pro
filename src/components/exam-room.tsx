@@ -576,11 +576,24 @@ export default function ExamRoom({
               .getVideoTracks()
               .forEach((t) => (t.onended = () => emit("SCREEN_SHARE_STOPPED")));
           } catch (error) {
+            const screenErrorName = (error as DOMException)?.name;
             if (
               deviceClass === "tablet" &&
-              (error as DOMException).name === "NotSupportedError"
+              [
+                "NotSupportedError",
+                "NotFoundError",
+                "NotReadableError",
+                "TypeError",
+              ].includes(screenErrorName)
             ) {
               setScreenShareUnsupported(true);
+            } else if (
+              deviceClass === "tablet" &&
+              screenErrorName === "NotAllowedError"
+            ) {
+              throw new Error(
+                "Screen sharing was blocked or cancelled by the browser. If no screen picker appeared, this tablet browser may not support screen capture. Try again, or ask your instructor to turn off the screen-sharing check for this exam.",
+              );
             } else {
               throw error;
             }
@@ -1360,9 +1373,13 @@ export default function ExamRoom({
           </div>
           {p.screen && screenShareUnsupported && (
             <p className="small muted" role="status">
-              This tablet browser cannot share its screen. You can continue with
-              the other enabled checks, but your instructor will see that live
-              screen sharing is unavailable for this attempt.
+              This tablet browser does not provide screen capture. You can
+              continue with the other enabled checks, but your instructor will
+              not be able to view your screen for this attempt. Switching
+              between Chrome, Edge, Safari, and Opera may not help because
+              tablet operating systems control which screen-capture features
+              browsers provide. Use a laptop browser if your instructor
+              requires live screen sharing.
             </p>
           )}
           {deviceClass !== "laptop" && deviceClass !== "tablet" && (

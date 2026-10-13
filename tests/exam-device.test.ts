@@ -31,6 +31,7 @@ describe("supported exam devices", () => {
     expect(
       classifyExamDevice({
         userAgent: "Mozilla/5.0 (iPad; CPU OS 18_0 like Mac OS X)",
+        mobileHint: true,
       }),
     ).toBe("tablet");
     expect(
@@ -39,6 +40,14 @@ describe("supported exam devices", () => {
         platform: "MacIntel",
         maxTouchPoints: 5,
         minScreenDimension: 768,
+      }),
+    ).toBe("tablet");
+    expect(
+      classifyExamDevice({
+        userAgent: "Mozilla/5.0 (Linux; Android 14; SM-X900) Chrome/130",
+        maxTouchPoints: 10,
+        minScreenDimension: 800,
+        mobileHint: true,
       }),
     ).toBe("tablet");
     expect(
@@ -59,6 +68,15 @@ describe("supported exam devices", () => {
       classifyExamDevice({
         userAgent:
           "Mozilla/5.0 (Linux; Android 14; Pixel 9) Chrome/130 Mobile Safari/537.36",
+        mobileHint: true,
+      }),
+    ).toBe("phone");
+    expect(
+      classifyExamDevice({
+        userAgent:
+          "Mozilla/5.0 (Linux; Android 14; Pixel 9) Chrome/130 Mobile Safari/537.36",
+        maxTouchPoints: 10,
+        minScreenDimension: 800,
         mobileHint: true,
       }),
     ).toBe("phone");

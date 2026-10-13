@@ -48,11 +48,23 @@ export function classifyExamDevice({
   minScreenDimension = 0,
   mobileHint = false,
 }: ExamDeviceSignals): ExamDeviceClass {
-  if (mobileHint || phoneUserAgent.test(userAgent)) return "phone";
   if (tabletUserAgent.test(userAgent)) return "tablet";
-  if (/Android/i.test(userAgent)) return "tablet";
+  if (/iPhone|iPod|Windows Phone|BlackBerry|IEMobile|Opera Mini/i.test(userAgent))
+    return "phone";
   if (platform === "MacIntel" && maxTouchPoints > 1)
     return minScreenDimension >= 600 ? "tablet" : "phone";
+  // iPadOS desktop mode and some Android tablet browsers report a generic
+  // desktop/mobile hint. Prefer the tablet hardware/UA signals over that hint.
+  if (/Android/i.test(userAgent)) {
+    if (/Android.*Mobile/i.test(userAgent)) return "phone";
+    if (
+      minScreenDimension >= 600 &&
+      maxTouchPoints > 1
+    )
+      return "tablet";
+    return /Mobile/i.test(userAgent) || mobileHint ? "phone" : "tablet";
+  }
+  if (phoneUserAgent.test(userAgent) || mobileHint) return "phone";
   if (laptopUserAgent.test(userAgent)) return "laptop";
   return "unsupported";
 }
