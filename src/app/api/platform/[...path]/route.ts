@@ -1720,6 +1720,7 @@ async function dispatch(req: Request, parts: string[]) {
             camera: z.boolean(),
             microphone: z.boolean(),
             screen: z.boolean().optional(),
+            screenShareUnavailable: z.boolean().optional(),
             fullscreen: z.boolean(),
             online: z.boolean(),
           })

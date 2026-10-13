@@ -2,7 +2,10 @@ import { randomUUID } from "node:crypto";
 import { sql } from "drizzle-orm";
 import { db, query, type Tx } from "./db";
 import { audit } from "./audit";
-import { examFullscreenRequired } from "./exam-device";
+import {
+  examFullscreenRequired,
+  screenSharePreflightSatisfied,
+} from "./exam-device";
 import { HttpError, type Actor } from "./auth";
 import {
   validClassroomCode,
@@ -181,7 +184,15 @@ export async function startAttempt(
         (k !== "fullscreen" ||
           examFullscreenRequired(p.fullscreen, input.deviceClass)) &&
         p[k] &&
-        !input.checks[k]
+        !input.checks[k] &&
+        !(
+          k === "screen" &&
+          screenSharePreflightSatisfied(
+            p.screen,
+            input.checks.screen,
+            input.deviceClass === "tablet" && input.screenShareUnavailable,
+          )
+        )
       )
         throw new HttpError(400, `Required ${k} check has not passed.`);
     if (!["laptop", "tablet"].includes(input.deviceClass))
@@ -254,6 +265,7 @@ export async function startAttempt(
       camera: !!input.checks.camera,
       microphone: !!input.checks.microphone,
       screen: !!input.checks.screen,
+      screenShareUnavailable: !!input.screenShareUnavailable,
       fullscreen: !!input.checks.fullscreen,
       online: true,
     };

@@ -75,5 +75,6 @@ export const startSchema = z.object({
     screen: z.boolean(),
     fullscreen: z.boolean(),
   }),
+  screenShareUnavailable: z.boolean().default(false),
   location: locationSchema.nullable().optional(),
 });

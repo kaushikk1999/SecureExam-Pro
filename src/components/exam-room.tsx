@@ -198,6 +198,7 @@ export default function ExamRoom({
               screen: !!screenStream.current
                 ?.getVideoTracks()
                 .some(captureTrackIsActive),
+              screenShareUnavailable: screenShareUnsupported,
               fullscreen:
                 !examFullscreenRequired(
                   active.current.policy.fullscreen,
@@ -268,7 +269,7 @@ export default function ExamRoom({
         syncing.current = false;
       }
     },
-    [alert, deviceClass, key, persist],
+    [alert, deviceClass, key, persist, screenShareUnsupported],
   );
   const captureScreenEvidence = useCallback(
     async (eventId: string, type: string) => {
@@ -647,6 +648,8 @@ export default function ExamRoom({
             !examFullscreenRequired(exam.policy.fullscreen, deviceClass) ||
             !!document.fullscreenElement,
         },
+        screenShareUnavailable:
+          screenShareUnsupported && deviceClass === "tablet",
         code,
         location: point,
       });

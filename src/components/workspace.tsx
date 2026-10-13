@@ -3398,7 +3398,12 @@ function Monitor({ id, policy }: { id: string; policy?: any }) {
                     {data.policy?.screen && (
                       <>
                         <br />
-                        Screen {s.device_state?.screen ? "✓" : "—"}
+                        Screen{" "}
+                        {s.device_state?.screen
+                          ? "✓ Shared"
+                          : s.device_state?.screenShareUnavailable
+                            ? "Unavailable in tablet browser"
+                            : "Not shared"}
                       </>
                     )}
                   </td>
@@ -3424,7 +3429,9 @@ function Monitor({ id, policy }: { id: string; policy?: any }) {
                             title={
                               s.device_state?.screen
                                 ? "Request a temporary live view"
-                                : "Student screen share is unavailable"
+                                : s.device_state?.screenShareUnavailable
+                                  ? "This tablet browser does not provide screen sharing"
+                                  : "Student screen share is unavailable"
                             }
                             onClick={() => setScreenStudent(s)}
                           >
