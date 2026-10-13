@@ -397,7 +397,7 @@ export default function ExamRoom({
     });
     setDeviceClass(detectedDeviceClass);
     setScreenShareUnsupported(
-      detectedDeviceClass === "tablet" &&
+      (detectedDeviceClass === "tablet" || detectedDeviceClass === "laptop") &&
         typeof navigator.mediaDevices?.getDisplayMedia !== "function",
     );
     setChecks((c) => ({
@@ -555,9 +555,9 @@ export default function ExamRoom({
       if (p.screen) {
         const getDisplayMedia = navigator.mediaDevices?.getDisplayMedia;
         if (typeof getDisplayMedia !== "function") {
-          if (deviceClass !== "tablet")
+          if (deviceClass !== "tablet" && deviceClass !== "laptop")
             throw new Error(
-              "This browser cannot share its screen. Use a supported browser or ask your instructor to turn off the screen-sharing check.",
+              "This device cannot start the required screen-sharing check. Please use a supported laptop or tablet browser.",
             );
           setScreenShareUnsupported(true);
         } else {
@@ -578,7 +578,7 @@ export default function ExamRoom({
           } catch (error) {
             const screenErrorName = (error as DOMException)?.name;
             if (
-              deviceClass === "tablet" &&
+              (deviceClass === "tablet" || deviceClass === "laptop") &&
               [
                 "NotSupportedError",
                 "NotFoundError",
@@ -591,8 +591,16 @@ export default function ExamRoom({
               deviceClass === "tablet" &&
               screenErrorName === "NotAllowedError"
             ) {
+              // Some tablet OS/browser combinations expose getDisplayMedia but
+              // cannot complete its capture picker. Record no share and keep
+              // the exam usable; the student is told their screen is not seen.
+              setScreenShareUnsupported(true);
+            } else if (
+              deviceClass === "laptop" &&
+              screenErrorName === "NotAllowedError"
+            ) {
               throw new Error(
-                "Screen sharing was blocked or cancelled by the browser. If no screen picker appeared, this tablet browser may not support screen capture. Try again, or ask your instructor to turn off the screen-sharing check for this exam.",
+                "Screen sharing was blocked or cancelled by the browser. Try again and approve the screen-sharing prompt, or ask your instructor to turn off the screen-sharing check for this exam.",
               );
             } else {
               throw error;
@@ -662,7 +670,8 @@ export default function ExamRoom({
             !!document.fullscreenElement,
         },
         screenShareUnavailable:
-          screenShareUnsupported && deviceClass === "tablet",
+          screenShareUnsupported &&
+          (deviceClass === "tablet" || deviceClass === "laptop"),
         code,
         location: point,
       });
@@ -1195,7 +1204,7 @@ export default function ExamRoom({
           <p>
             The audit records monitored events and answer save/submission times.
             {p.screen && screenShareUnsupported
-              ? " Screen sharing is not available in this tablet browser. You may continue, but your instructor cannot view your live screen or review screen-share screenshots for this attempt."
+              ? " Screen sharing was unavailable or not approved on this device. You may continue, but your instructor cannot view your live screen or review screen-share screenshots for this attempt."
               : p.screen
                 ? " Because this exam requires screen sharing, a small screenshot may be saved with a monitored activity event while your screen is actively shared. Authorized instructors can review those private screenshots while the exam record is retained; deleting the exam also removes its stored files."
                 : " This exam does not enable screen sharing, so event screenshots will not be available."}{" "}
@@ -1303,7 +1312,7 @@ export default function ExamRoom({
               AI.{" "}
               {p.screen &&
                 (screenShareUnsupported
-                  ? "This tablet browser does not support screen sharing, so the instructor will not be able to view your screen."
+                  ? "This browser or device does not provide screen sharing, so the instructor will not be able to view your screen."
                   : "Your shared screen may be viewed live by your instructor, and a screenshot may be stored when a monitored activity event occurs, as explained above.")}{" "}
               A browser cannot prevent switching apps; if you leave this tab,
               the exam screen is held until you acknowledge the signal.
@@ -1336,7 +1345,7 @@ export default function ExamRoom({
                       "Live screen sharing",
                       !screenShareUnsupported && checks.screen,
                       screenShareUnsupported
-                        ? "Unavailable on this tablet"
+                        ? "Unavailable on this device"
                         : undefined,
                     ],
                   ]
@@ -1373,13 +1382,12 @@ export default function ExamRoom({
           </div>
           {p.screen && screenShareUnsupported && (
             <p className="small muted" role="status">
-              This tablet browser does not provide screen capture. You can
-              continue with the other enabled checks, but your instructor will
-              not be able to view your screen for this attempt. Switching
-              between Chrome, Edge, Safari, and Opera may not help because
-              tablet operating systems control which screen-capture features
-              browsers provide. Use a laptop browser if your instructor
-              requires live screen sharing.
+              Screen capture could not start in this browser. You can continue
+              with the other enabled checks, but your instructor will not be
+              able to view your screen for this attempt. Switching
+              browsers may not help because some device operating systems do
+              not expose screen capture to web pages. Use a laptop or desktop
+              browser if your instructor requires live screen sharing.
             </p>
           )}
           {deviceClass !== "laptop" && deviceClass !== "tablet" && (

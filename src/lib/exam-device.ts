@@ -31,9 +31,9 @@ export function examFullscreenSatisfied(
 export function screenSharePreflightSatisfied(
   required: boolean,
   isSharing: boolean,
-  unavailableOnTablet: boolean,
+  screenShareUnavailable: boolean,
 ) {
-  return !required || isSharing || unavailableOnTablet;
+  return !required || isSharing || screenShareUnavailable;
 }
 
 const phoneUserAgent =

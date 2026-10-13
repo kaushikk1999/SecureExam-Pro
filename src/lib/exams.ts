@@ -190,7 +190,7 @@ export async function startAttempt(
           screenSharePreflightSatisfied(
             p.screen,
             input.checks.screen,
-            input.deviceClass === "tablet" && input.screenShareUnavailable,
+            input.screenShareUnavailable,
           )
         )
       )

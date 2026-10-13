@@ -15,7 +15,7 @@ describe("supported exam devices", () => {
     expect(examFullscreenSatisfied(true, "laptop", false)).toBe(false);
   });
 
-  it("lets tablets continue when screen capture is unavailable but keeps it required elsewhere", () => {
+  it("lets eligible devices continue when browser screen capture is unavailable", () => {
     expect(screenSharePreflightSatisfied(true, false, true)).toBe(true);
     expect(screenSharePreflightSatisfied(true, false, false)).toBe(false);
     expect(screenSharePreflightSatisfied(true, true, false)).toBe(true);
