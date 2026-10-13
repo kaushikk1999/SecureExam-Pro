@@ -1352,6 +1352,34 @@ pre {
 .notice p {
   margin: 7px 0 0;
 }
+.exam-risk-warning {
+  margin: 18px 0;
+  padding: 20px 22px;
+  color: #7f1d1d;
+  background: #fff1f0;
+  border: 2px solid #d92d20;
+  border-radius: 12px;
+  box-shadow: 0 8px 24px rgb(127 29 29 / 8%);
+}
+.exam-risk-heading {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.exam-risk-heading h2 {
+  margin: 0;
+  color: #912018;
+  font-size: 18px;
+}
+.exam-risk-warning p {
+  margin: 12px 0 0;
+  line-height: 1.55;
+}
+.exam-risk-warning ul {
+  margin: 10px 0 0;
+  padding-left: 24px;
+  line-height: 1.65;
+}
 .empty {
   text-align: center;
   padding: 55px 25px;

@@ -27,6 +27,15 @@ export function examFullscreenSatisfied(
   );
 }
 
+/** Tablets remain eligible when their browser does not expose screen capture. */
+export function screenSharePreflightSatisfied(
+  required: boolean,
+  isSharing: boolean,
+  unavailableOnTablet: boolean,
+) {
+  return !required || isSharing || unavailableOnTablet;
+}
+
 const phoneUserAgent =
   /iPhone|iPod|Windows Phone|BlackBerry|IEMobile|Opera Mini|Android.*Mobile/i;
 const tabletUserAgent = /iPad|Tablet|PlayBook|Silk/i;

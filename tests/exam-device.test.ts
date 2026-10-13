@@ -3,6 +3,7 @@ import {
   classifyExamDevice,
   examFullscreenRequired,
   examFullscreenSatisfied,
+  screenSharePreflightSatisfied,
   examRequestDeviceAllowed,
 } from "../src/lib/exam-device";
 
@@ -12,6 +13,13 @@ describe("supported exam devices", () => {
     expect(examFullscreenSatisfied(true, "tablet", false)).toBe(true);
     expect(examFullscreenRequired(true, "laptop")).toBe(true);
     expect(examFullscreenSatisfied(true, "laptop", false)).toBe(false);
+  });
+
+  it("lets tablets continue when screen capture is unavailable but keeps it required elsewhere", () => {
+    expect(screenSharePreflightSatisfied(true, false, true)).toBe(true);
+    expect(screenSharePreflightSatisfied(true, false, false)).toBe(false);
+    expect(screenSharePreflightSatisfied(true, true, false)).toBe(true);
+    expect(screenSharePreflightSatisfied(false, false, false)).toBe(true);
   });
 
   it("allows laptops and common iPad and Android tablet identifiers", () => {

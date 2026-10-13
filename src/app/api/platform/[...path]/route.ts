@@ -1738,8 +1738,21 @@ async function dispatch(req: Request, parts: string[]) {
         const answersAccepted = a.status === "ACTIVE" && e.status !== "PAUSED";
         if (answersAccepted) {
           await saveAnswers(tx, a, v.answers);
-          for (const ev of v.events)
+          for (const ev of v.events) {
+            if (typeof ev.metadata.evidenceFileId === "string") {
+              const evidenceFileId = uuid.parse(ev.metadata.evidenceFileId);
+              const [evidence] = await query(
+                sql`SELECT id FROM files WHERE id=${evidenceFileId} AND exam_id=${a.exam_id} AND attempt_id=${a.id} AND owner_id=${u.id} AND name=${`EVIDENCE::${ev.type}::${ev.id}.jpg`}`,
+                tx,
+              );
+              if (!evidence)
+                throw new HttpError(
+                  400,
+                  "Activity screenshot does not match this exam event.",
+                );
+            }
             await event(tx, a, u, ev.type, ev.metadata, ev.id);
+          }
           if (action === "submit" && a.status === "ACTIVE") {
             await finish(tx, a, "SUBMITTED", u.id);
             a.status = "SUBMITTED";
@@ -1862,15 +1875,6 @@ async function dispatch(req: Request, parts: string[]) {
   }
   if (resource === "files") {
     if (method === "POST") {
-      if (!(await rateLimit("upload:" + u.id, 10, 600)))
-        throw new HttpError(429, "Upload limit reached. Please wait.");
-      if (!process.env.BLOB_READ_WRITE_TOKEN && !process.env.GDRIVE_FOLDER_ID)
-        throw new HttpError(
-          503,
-          "Private storage is not configured. Set GDRIVE_FOLDER_ID and share the folder with the configured service account, or set BLOB_READ_WRITE_TOKEN.",
-        );
-      if (Number(req.headers.get("content-length") ?? 0) > 4500000)
-        throw new HttpError(413, "Upload limit is 4 MB.");
       const form = await req.formData();
       const file = form.get("file");
       const examId = uuid.parse(form.get("examId"));
@@ -1878,7 +1882,46 @@ async function dispatch(req: Request, parts: string[]) {
         ? uuid.parse(form.get("attemptId"))
         : null;
       const documentSubmission = form.get("documentSubmission") === "true";
-      if (!(file instanceof File) || file.size > 4000000)
+      const eventEvidence = form.get("eventEvidence") === "true";
+      const eventId = eventEvidence ? uuid.parse(form.get("eventId")) : null;
+      const eventType = eventEvidence
+        ? z
+            .enum([
+              "TAB_HIDDEN",
+              "WINDOW_BLUR",
+              "FULLSCREEN_EXIT",
+              "CAMERA_DISABLED",
+              "MICROPHONE_DISABLED",
+              "SCREEN_SHARE_STOPPED",
+              "LOCATION_OUTSIDE_GEOFENCE",
+              "PASTE_ATTEMPT",
+              "SPEECH_ACTIVITY",
+              "CAMERA_MOTION",
+            ])
+            .parse(form.get("eventType"))
+        : null;
+      if (eventEvidence) {
+        if (!attemptId || u.role !== "STUDENT")
+          throw new HttpError(
+            403,
+            "Event evidence requires a student attempt.",
+          );
+        if (!(await rateLimit("exam-evidence:" + attemptId, 120, 600)))
+          throw new HttpError(429, "Exam evidence upload limit reached.");
+      } else if (!(await rateLimit("upload:" + u.id, 10, 600))) {
+        throw new HttpError(429, "Upload limit reached. Please wait.");
+      }
+      if (!process.env.BLOB_READ_WRITE_TOKEN && !process.env.GDRIVE_FOLDER_ID)
+        throw new HttpError(
+          503,
+          "Private storage is not configured. Set GDRIVE_FOLDER_ID and share the folder with the configured service account, or set BLOB_READ_WRITE_TOKEN.",
+        );
+      if (Number(req.headers.get("content-length") ?? 0) > 4500000)
+        throw new HttpError(413, "Upload limit is 4 MB.");
+      if (
+        !(file instanceof File) ||
+        file.size > (eventEvidence ? 150_000 : 4_000_000)
+      )
         throw new HttpError(400, "A file up to 4 MB is required.");
       if (u.role === "STUDENT") {
         if (!attemptId)
@@ -1892,6 +1935,17 @@ async function dispatch(req: Request, parts: string[]) {
           );
           if (a.exam_id !== examId || a.status !== "ACTIVE")
             throw new HttpError(403, "Upload access denied.");
+          if (eventEvidence) {
+            const [exam] = await query(
+              sql`SELECT policy FROM exams WHERE id=${examId}`,
+              tx,
+            );
+            if (!exam?.policy?.screen)
+              throw new HttpError(
+                403,
+                "Screen evidence is not enabled for this exam.",
+              );
+          }
         });
       } else {
         const exam = await ownedExam(examId, u);
@@ -1912,6 +1966,11 @@ async function dispatch(req: Request, parts: string[]) {
           400,
           "Allowed files: PDF, DOCX, PNG, JPEG and TXT.",
         );
+      if (
+        eventEvidence &&
+        ((ext !== "jpg" && ext !== "jpeg") || file.type !== "image/jpeg")
+      )
+        throw new HttpError(400, "Event evidence must be a JPEG screenshot.");
       const bytes = Buffer.from(await file.arrayBuffer());
       if (
         (ext === "pdf" && !bytes.subarray(0, 5).equals(Buffer.from("%PDF-"))) ||
@@ -1926,7 +1985,9 @@ async function dispatch(req: Request, parts: string[]) {
           "File content does not match the claimed type.",
         );
       let extractedText = "";
-      let storedName = file.name.slice(0, 180);
+      let storedName = eventEvidence
+        ? `EVIDENCE::${eventType}::${eventId}.jpg`
+        : file.name.slice(0, 180);
       if (documentSubmission) {
         if (u.role !== "STUDENT" || !attemptId || ext !== "docx")
           throw new HttpError(
@@ -1992,7 +2053,9 @@ async function dispatch(req: Request, parts: string[]) {
         examId,
         attemptId: attemptId ?? undefined,
         type: "FILE_UPLOADED",
-        metadata: { fileId: fid },
+        metadata: eventEvidence
+          ? { fileId: fid, eventId, eventType, eventEvidence: true }
+          : { fileId: fid },
       });
       return json({ id: fid, name: storedName.replace(/^SUBMISSION::/, "") });
     }

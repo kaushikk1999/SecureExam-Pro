@@ -1,5 +1,20 @@
 import "dotenv/config";
 import { test, expect, type Page } from "@playwright/test";
+import pg from "pg";
+
+test.beforeEach(async () => {
+  if (process.env.VERCEL || process.env.NODE_ENV === "production")
+    throw new Error("Browser E2E tests must only use a development database.");
+  const databaseUrl = process.env.DATABASE_URL;
+  if (!databaseUrl) return;
+  const url = new URL(databaseUrl);
+  if (!["localhost", "127.0.0.1"].includes(url.hostname))
+    throw new Error("Browser E2E tests require a local database.");
+  const client = new pg.Client({ connectionString: databaseUrl });
+  await client.connect();
+  await client.query("DELETE FROM rate_limits WHERE key LIKE $1", ["login:%"]);
+  await client.end();
+});
 async function login(page: Page, email: string) {
   await page.goto("/login");
   const audience = email === "teacher@example.test" ? "teacher" : "student";
@@ -106,13 +121,13 @@ test("teacher workspace, authoring, audit and responsive layout", async ({
   await page.getByLabel("Exam title").fill(title);
   await page.getByLabel("Course / section").selectOption({ index: 1 });
   await page.getByText("Customize monitoring & examination policy").click();
-  await expect(
-    page.getByRole("checkbox", { name: "microphone", exact: true }),
-  ).toBeChecked();
+  const microphoneCheck = page
+    .locator(".exam-check-option")
+    .filter({ hasText: /^Microphone/ })
+    .getByRole("checkbox");
+  await expect(microphoneCheck).toBeChecked();
   await page.getByLabel("Security preset").selectOption("practice");
-  await expect(
-    page.getByRole("checkbox", { name: "microphone", exact: true }),
-  ).not.toBeChecked();
+  await expect(microphoneCheck).not.toBeChecked();
   await page.getByRole("button", { name: "Save draft", exact: true }).click();
   await expect(
     page.getByRole("heading", { name: title, exact: true }),
@@ -337,6 +352,15 @@ test("strict preflight with simulated devices, location checkpoint and fifth-war
     .setGeolocation({ latitude: 14.039, longitude: 100.615, accuracy: 5 });
   await login(page, studentEmail);
   await page.goto("/exam/" + created.id);
+  await expect(page.locator(".exam-risk-warning")).toContainText(
+    "automatically submitted",
+  );
+  await expect(page.locator(".exam-risk-warning")).toContainText(
+    "5 security warnings",
+  );
+  await expect(page.locator(".exam-risk-warning")).toContainText(
+    "switching away from or hiding the exam tab/window",
+  );
   await page
     .getByRole("button", { name: "Check camera, microphone & location" })
     .click();

@@ -902,7 +902,7 @@ function ExamForm({ done, initial }: { done: () => void; initial?: any }) {
               [
                 "screen",
                 "Screen sharing",
-                "Allow the instructor to view the student's shared screen live.",
+                "Allow a live instructor view where the browser supports screen capture. Some tablet browsers cannot provide it; those students can continue with screen sharing marked unavailable.",
               ],
               [
                 "fullscreen",
@@ -3500,6 +3500,15 @@ function Monitor({ id, policy }: { id: string; policy?: any }) {
                 <p>
                   {e.name} {e.metadata.reason && "· " + e.metadata.reason}
                 </p>
+                {typeof e.metadata?.evidenceFileId === "string" && (
+                  <a
+                    href={`/api/platform/files/${encodeURIComponent(e.metadata.evidenceFileId)}`}
+                    target="_blank"
+                    rel="noreferrer"
+                  >
+                    View activity screenshot
+                  </a>
+                )}
               </div>
             </div>
           ))}
@@ -3796,6 +3805,16 @@ function AttemptReview({ id, close }: { id: string; close: () => void }) {
             {time(e.created_at)} · {e.event_type}
           </summary>
           <pre>{JSON.stringify(e.metadata, null, 2)}</pre>
+          {typeof e.metadata?.evidenceFileId === "string" && (
+            <a
+              className="button small"
+              href={`/api/platform/files/${encodeURIComponent(e.metadata.evidenceFileId)}`}
+              target="_blank"
+              rel="noreferrer"
+            >
+              View activity screenshot
+            </a>
+          )}
           <small>Hash: {e.event_hash}</small>
           <div className="actions">
             <button onClick={() => control("review", e.id)}>
@@ -3923,6 +3942,16 @@ function Audit() {
                     <details>
                       <summary>Inspect details</summary>
                       <pre>{JSON.stringify(e.metadata, null, 2)}</pre>
+                      {typeof e.metadata?.evidenceFileId === "string" && (
+                        <a
+                          className="button small"
+                          href={`/api/platform/files/${encodeURIComponent(e.metadata.evidenceFileId)}`}
+                          target="_blank"
+                          rel="noreferrer"
+                        >
+                          View activity screenshot
+                        </a>
+                      )}
                       <small>SHA-256: {e.event_hash}</small>
                     </details>
                   </td>

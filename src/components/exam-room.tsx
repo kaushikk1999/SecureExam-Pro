@@ -25,6 +25,7 @@ import {
   classifyExamDevice,
   examFullscreenRequired,
   examFullscreenSatisfied,
+  screenSharePreflightSatisfied,
   type ExamDeviceClass,
 } from "@/lib/exam-device";
 import { api, Markdown, ErrorBox, Loading, time } from "./ui";
@@ -115,6 +116,7 @@ export default function ExamRoom({
     [code, setCode] = useState(""),
     [point, setPoint] = useState<any>(null),
     [permissionReady, setPermissionReady] = useState(false),
+    [screenShareUnsupported, setScreenShareUnsupported] = useState(false),
     [index, setIndex] = useState(0),
     [values, setValues] = useState<Record<string, any>>({}),
     [flagged, setFlagged] = useState<string[]>([]),
@@ -132,12 +134,14 @@ export default function ExamRoom({
       analyser: AnalyserNode;
     } | null>(null),
     screenStream = useRef<MediaStream | null>(null),
+    screenCaptureVideo = useRef<HTMLVideoElement | null>(null),
     video = useRef<HTMLVideoElement | null>(null),
     active = useRef<any>(null),
     answers = useRef<Record<string, QueuedAnswer>>({}),
     events = useRef<QueuedEvent[]>([]),
     versions = useRef<Record<string, number>>({}),
     lastEvent = useRef<Record<string, number>>({}),
+    lastEvidenceCapture = useRef(0),
     syncing = useRef(false),
     location = useRef<any>(null),
     anchor = useRef({ remaining: 0, at: 0 }),
@@ -246,6 +250,11 @@ export default function ExamRoom({
           if (!Object.keys(answers.current).length) await del(key);
           stream.current?.getTracks().forEach((t) => t.stop());
           screenStream.current?.getTracks().forEach((t) => t.stop());
+          if (screenCaptureVideo.current) {
+            screenCaptureVideo.current.pause();
+            screenCaptureVideo.current.srcObject = null;
+            screenCaptureVideo.current = null;
+          }
           void microphoneAudio.current?.context.close();
           microphoneAudio.current = null;
           if (document.fullscreenElement) void document.exitFullscreen();
@@ -261,6 +270,49 @@ export default function ExamRoom({
     },
     [alert, deviceClass, key, persist],
   );
+  const captureScreenEvidence = useCallback(
+    async (eventId: string, type: string) => {
+      const track = screenStream.current
+        ?.getVideoTracks()
+        .find(captureTrackIsActive);
+      const source = screenCaptureVideo.current;
+      if (
+        !track ||
+        !source ||
+        source.readyState < HTMLMediaElement.HAVE_CURRENT_DATA
+      )
+        return null;
+      const canvas = document.createElement("canvas");
+      canvas.width = 640;
+      canvas.height = 360;
+      const context = canvas.getContext("2d");
+      if (!context) return null;
+      context.drawImage(source, 0, 0, canvas.width, canvas.height);
+      const blob = await new Promise<Blob | null>((resolve) =>
+        canvas.toBlob(resolve, "image/jpeg", 0.52),
+      );
+      if (!blob || blob.size > 150_000) return null;
+      const form = new FormData();
+      form.append("file", blob, `${eventId}.jpg`);
+      form.append("examId", examId);
+      form.append("attemptId", active.current.id);
+      form.append("eventEvidence", "true");
+      form.append("eventId", eventId);
+      form.append("eventType", type);
+      const response = await fetch("/api/platform/files", {
+        method: "POST",
+        headers: headers(),
+        body: form,
+        cache: "no-store",
+        signal: AbortSignal.timeout(4000),
+      });
+      const result = await response.json();
+      if (!response.ok)
+        throw new Error(result.error ?? "Evidence upload failed.");
+      return String(result.id);
+    },
+    [examId],
+  );
   const emit = useCallback(
     (type: string, metadata: Record<string, any> = {}) => {
       if (
@@ -273,11 +325,54 @@ export default function ExamRoom({
         if (now - (lastEvent.current[type] ?? -Infinity) < 1000) return;
         lastEvent.current[type] = now;
       }
-      events.current.push({ id: crypto.randomUUID(), type, metadata });
-      void persist();
-      void synchronize();
+      const id = crypto.randomUUID();
+      const observedAt = new Date().toISOString();
+      const recordEvent = (extra: Record<string, any> = {}) => {
+        events.current.push({
+          id,
+          type,
+          metadata: {
+            ...metadata,
+            ...extra,
+            clientObservedAt: observedAt,
+          },
+        });
+        void persist();
+        void synchronize();
+      };
+      const evidenceTypes = [
+        "TAB_HIDDEN",
+        "WINDOW_BLUR",
+        "FULLSCREEN_EXIT",
+        "CAMERA_DISABLED",
+        "MICROPHONE_DISABLED",
+        "SCREEN_SHARE_STOPPED",
+        "LOCATION_OUTSIDE_GEOFENCE",
+        "PASTE_ATTEMPT",
+        "SPEECH_ACTIVITY",
+        "CAMERA_MOTION",
+      ];
+      const nowMs = Date.now();
+      if (
+        active.current.policy.screen &&
+        evidenceTypes.includes(type) &&
+        nowMs - lastEvidenceCapture.current >= 5000
+      ) {
+        lastEvidenceCapture.current = nowMs;
+        void captureScreenEvidence(id, type)
+          .then((evidenceFileId) =>
+            recordEvent(
+              evidenceFileId
+                ? { evidenceFileId, evidenceCapture: "screen-share snapshot" }
+                : { evidenceCapture: "unavailable" },
+            ),
+          )
+          .catch(() => recordEvent({ evidenceCapture: "unavailable" }));
+        return;
+      }
+      recordEvent();
     },
-    [persist, synchronize],
+    [captureScreenEvidence, persist, synchronize],
   );
   useEffect(() => {
     device.current = sessionStorage.getItem("exam-device:" + examId) ?? "";
@@ -300,6 +395,10 @@ export default function ExamRoom({
       mobileHint: browserNavigator.userAgentData?.mobile,
     });
     setDeviceClass(detectedDeviceClass);
+    setScreenShareUnsupported(
+      detectedDeviceClass === "tablet" &&
+        typeof navigator.mediaDevices?.getDisplayMedia !== "function",
+    );
     setChecks((c) => ({
       ...c,
       fullscreen:
@@ -329,6 +428,11 @@ export default function ExamRoom({
     return () => {
       stream.current?.getTracks().forEach((t) => t.stop());
       screenStream.current?.getTracks().forEach((t) => t.stop());
+      if (screenCaptureVideo.current) {
+        screenCaptureVideo.current.pause();
+        screenCaptureVideo.current.srcObject = null;
+        screenCaptureVideo.current = null;
+      }
       void microphoneAudio.current?.context.close();
       microphoneAudio.current = null;
     };
@@ -448,16 +552,39 @@ export default function ExamRoom({
         }
       }
       if (p.screen) {
-        if (!navigator.mediaDevices?.getDisplayMedia)
-          throw new Error(
-            "This browser cannot share its screen. Use a supported browser on a laptop or tablet, and allow screen sharing when prompted.",
-          );
-        screenStream.current = await navigator.mediaDevices.getDisplayMedia({
-          video: true,
-        });
-        screenStream.current
-          .getVideoTracks()
-          .forEach((t) => (t.onended = () => emit("SCREEN_SHARE_STOPPED")));
+        const getDisplayMedia = navigator.mediaDevices?.getDisplayMedia;
+        if (typeof getDisplayMedia !== "function") {
+          if (deviceClass !== "tablet")
+            throw new Error(
+              "This browser cannot share its screen. Use a supported browser or ask your instructor to turn off the screen-sharing check.",
+            );
+          setScreenShareUnsupported(true);
+        } else {
+          try {
+            screenStream.current = await getDisplayMedia.call(
+              navigator.mediaDevices,
+              { video: true },
+            );
+            const captureVideo = document.createElement("video");
+            captureVideo.muted = true;
+            captureVideo.playsInline = true;
+            captureVideo.srcObject = screenStream.current;
+            screenCaptureVideo.current = captureVideo;
+            void captureVideo.play().catch(() => undefined);
+            screenStream.current
+              .getVideoTracks()
+              .forEach((t) => (t.onended = () => emit("SCREEN_SHARE_STOPPED")));
+          } catch (error) {
+            if (
+              deviceClass === "tablet" &&
+              (error as DOMException).name === "NotSupportedError"
+            ) {
+              setScreenShareUnsupported(true);
+            } else {
+              throw error;
+            }
+          }
+        }
       }
       if (p.location) {
         const maximumAccuracy = Math.max(
@@ -483,6 +610,11 @@ export default function ExamRoom({
     } catch (e) {
       stream.current?.getTracks().forEach((track) => track.stop());
       screenStream.current?.getTracks().forEach((track) => track.stop());
+      if (screenCaptureVideo.current) {
+        screenCaptureVideo.current.pause();
+        screenCaptureVideo.current.srcObject = null;
+        screenCaptureVideo.current = null;
+      }
       void microphoneAudio.current?.context.close();
       microphoneAudio.current = null;
       setChecks((current) => ({
@@ -565,6 +697,11 @@ export default function ExamRoom({
           if (!Object.keys(answers.current).length) await del(key);
           stream.current?.getTracks().forEach((t) => t.stop());
           screenStream.current?.getTracks().forEach((t) => t.stop());
+          if (screenCaptureVideo.current) {
+            screenCaptureVideo.current.pause();
+            screenCaptureVideo.current.srcObject = null;
+            screenCaptureVideo.current = null;
+          }
           void microphoneAudio.current?.context.close();
           microphoneAudio.current = null;
         }
@@ -943,6 +1080,31 @@ export default function ExamRoom({
     );
   if (!attempt) {
     const p = exam.policy;
+    const autoSubmitTriggers: string[] = [];
+    if (p.tabMonitoring)
+      autoSubmitTriggers.push(
+        "switching away from or hiding the exam tab/window",
+      );
+    if (p.fullscreen && examFullscreenRequired(p.fullscreen, deviceClass))
+      autoSubmitTriggers.push("exiting required fullscreen mode");
+    if (p.camera)
+      autoSubmitTriggers.push(
+        "turning off or disconnecting the required camera",
+      );
+    if (p.microphone)
+      autoSubmitTriggers.push(
+        "turning off or disconnecting the required microphone",
+      );
+    if (p.screen && !screenShareUnsupported)
+      autoSubmitTriggers.push(
+        "stopping the screen share you approved in your browser",
+      );
+    if (p.location)
+      autoSubmitTriggers.push(
+        "repeated location readings clearly outside the classroom radius",
+      );
+    if (!p.allowPaste)
+      autoSubmitTriggers.push("attempting to paste into an answer");
     const maximumLocationUncertainty = Math.max(
       100,
       Number(exam.classroom?.accuracy ?? 0),
@@ -963,7 +1125,11 @@ export default function ExamRoom({
       permissionReady &&
       (!p.camera || checks.camera) &&
       (!p.microphone || checks.microphone) &&
-      (!p.screen || checks.screen) &&
+      screenSharePreflightSatisfied(
+        p.screen,
+        checks.screen,
+        screenShareUnsupported && deviceClass === "tablet",
+      ) &&
       (!p.location || locationGood) &&
       examFullscreenSatisfied(p.fullscreen, deviceClass, checks.fullscreen) &&
       (deviceClass === "laptop" || deviceClass === "tablet") &&
@@ -977,6 +1143,51 @@ export default function ExamRoom({
         <h1>Exam security check</h1>
         <h2>{exam.title}</h2>
         <Markdown text={exam.instructions} />
+        <section className="exam-risk-warning" role="alert">
+          <div className="exam-risk-heading">
+            <AlertTriangle size={22} aria-hidden="true" />
+            <h2>Important: your exam may be automatically submitted</h2>
+          </div>
+          {p.autoTerminate ? (
+            <p>
+              The configured security policy allows automatic submission after{" "}
+              <strong>{p.maxWarnings} security warnings</strong>. A warning can
+              be issued for these enabled checks:
+            </p>
+          ) : (
+            <p>
+              Security events are recorded for instructor review. This exam is
+              not configured to auto-submit based on its warning count.
+            </p>
+          )}
+          {autoSubmitTriggers.length > 0 ? (
+            <ul>
+              {autoSubmitTriggers.map((trigger) => (
+                <li key={trigger}>{trigger}</li>
+              ))}
+            </ul>
+          ) : (
+            <p>No security warning triggers are enabled for this exam.</p>
+          )}
+          <p>
+            The exam timer submits your attempt when it expires. An instructor
+            can also close an exam and end active attempts. A security
+            auto-submission does not permanently ban your account; ask your
+            instructor to review the record if you believe a warning was
+            incorrect.
+          </p>
+          <p>
+            The audit records monitored events and answer save/submission times.
+            {p.screen && screenShareUnsupported
+              ? " Screen sharing is not available in this tablet browser. You may continue, but your instructor cannot view your live screen or review screen-share screenshots for this attempt."
+              : p.screen
+                ? " Because this exam requires screen sharing, a small screenshot may be saved with a monitored activity event while your screen is actively shared. Authorized instructors can review those private screenshots while the exam record is retained; deleting the exam also removes its stored files."
+                : " This exam does not enable screen sharing, so event screenshots will not be available."}{" "}
+            Camera movement and microphone sound signals can be mistaken; they
+            do not identify a person or prove misconduct. Your instructor must
+            review the evidence.
+          </p>
+        </section>
         <section className="panel form-panel student-identity">
           <h2>Confirm your student details</h2>
           <p className="muted">
@@ -1075,7 +1286,9 @@ export default function ExamRoom({
               conversation. No audio, transcript or camera images are sent to
               AI.{" "}
               {p.screen &&
-                "Your shared screen may be viewed live by your instructor during the exam; screen content is not recorded or stored."}{" "}
+                (screenShareUnsupported
+                  ? "This tablet browser does not support screen sharing, so the instructor will not be able to view your screen."
+                  : "Your shared screen may be viewed live by your instructor, and a screenshot may be stored when a monitored activity event occurs, as explained above.")}{" "}
               A browser cannot prevent switching apps; if you leave this tab,
               the exam screen is held until you acknowledge the signal.
             </p>
@@ -1100,6 +1313,18 @@ export default function ExamRoom({
                 p.location ? "Location required" : "Location optional",
                 !p.location || locationGood,
               ],
+              ...(p.screen
+                ? [
+                    [
+                      ShieldCheck,
+                      "Live screen sharing",
+                      !screenShareUnsupported && checks.screen,
+                      screenShareUnsupported
+                        ? "Unavailable on this tablet"
+                        : undefined,
+                    ],
+                  ]
+                : []),
               [
                 Maximize2,
                 deviceClass === "tablet"
@@ -1118,16 +1343,25 @@ export default function ExamRoom({
                   : "Laptop or tablet",
                 deviceClass === "laptop" || deviceClass === "tablet",
               ],
-            ].map(([Icon, label, ok]: any) => (
+            ].map(([Icon, label, ok, status]: any) => (
               <div key={label}>
                 <Icon size={20} />
                 <span>{label}</span>
-                <span className={ok ? "check-pass" : "muted"}>
-                  {ok ? "✓ Ready" : "Pending"}
+                <span
+                  className={status ? "muted" : ok ? "check-pass" : "muted"}
+                >
+                  {status ?? (ok ? "✓ Ready" : "Pending")}
                 </span>
               </div>
             ))}
           </div>
+          {p.screen && screenShareUnsupported && (
+            <p className="small muted" role="status">
+              This tablet browser cannot share its screen. You can continue with
+              the other enabled checks, but your instructor will see that live
+              screen sharing is unavailable for this attempt.
+            </p>
+          )}
           {deviceClass !== "laptop" && deviceClass !== "tablet" && (
             <p className="error" role="alert">
               {deviceClass === "phone"
