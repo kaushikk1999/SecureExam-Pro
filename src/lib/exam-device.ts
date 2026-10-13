@@ -51,12 +51,16 @@ export function classifyExamDevice({
   if (tabletUserAgent.test(userAgent)) return "tablet";
   if (/iPhone|iPod|Windows Phone|BlackBerry|IEMobile|Opera Mini/i.test(userAgent))
     return "phone";
+  if (/Android.*Mobile/i.test(userAgent)) return "phone";
+  const largeTouchDevice = maxTouchPoints > 0 && minScreenDimension >= 600;
+  // Desktop-site mode can hide the tablet model and report a desktop OS/UA.
+  // A large touch display is the useful fallback when the UA is generic.
+  if (largeTouchDevice) return "tablet";
   if (platform === "MacIntel" && maxTouchPoints > 1)
     return minScreenDimension >= 600 ? "tablet" : "phone";
   // iPadOS desktop mode and some Android tablet browsers report a generic
   // desktop/mobile hint. Prefer the tablet hardware/UA signals over that hint.
   if (/Android/i.test(userAgent)) {
-    if (/Android.*Mobile/i.test(userAgent)) return "phone";
     if (
       minScreenDimension >= 600 &&
       maxTouchPoints > 1
@@ -75,12 +79,21 @@ export function examRequestDeviceAllowed(
   mobileHeader: string | null,
   claimedClass: ExamDeviceClass,
 ) {
-  if (mobileHeader === "?1" || phoneUserAgent.test(userAgent)) return false;
+  if (phoneUserAgent.test(userAgent)) return false;
+  if (
+    mobileHeader === "?1" &&
+    !tabletUserAgent.test(userAgent) &&
+    !(claimedClass === "tablet" && /Macintosh/i.test(userAgent))
+  )
+    return false;
   if (claimedClass !== "laptop" && claimedClass !== "tablet") return false;
 
   if (tabletUserAgent.test(userAgent)) return claimedClass === "tablet";
   if (/Android/i.test(userAgent))
     return !/Mobile/i.test(userAgent) && claimedClass === "tablet";
   if (/Macintosh/i.test(userAgent)) return true;
+  // The client can identify touch tablets whose browser is using desktop-site
+  // mode. Their server-visible UA is indistinguishable from a laptop UA.
+  if (claimedClass === "tablet" && laptopUserAgent.test(userAgent)) return true;
   return laptopUserAgent.test(userAgent) && claimedClass === "laptop";
 }
