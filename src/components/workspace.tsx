@@ -1051,12 +1051,27 @@ function ExamDetail({ id }: { id: string }) {
         router.replace("/workspace/exams");
         return;
       }
-      await api(`exams/${id}/control`, {
+      const result = await api(`exams/${id}/control`, {
         action: a,
         ...(a === "extend" ? { minutes: extraMinutes } : {}),
       });
       await refresh();
-      setMessage("Change saved.");
+      if (a === "publish" || a === "schedule") {
+        const notification = result.notification;
+        if (!notification) setMessage("Change saved.");
+        else if (notification.sent > 0 && notification.failed === 0)
+          setMessage(
+            `Exam ${a === "schedule" ? "scheduled" : "published"}. ${notification.sent} student email(s) sent.`,
+          );
+        else if (notification.failed > 0)
+          setMessage(
+            `Exam ${a === "schedule" ? "scheduled" : "published"}, but student email was not sent: ${notification.reason ?? "email delivery failed"}`,
+          );
+        else
+          setMessage(
+            "Exam published. No eligible students are enrolled in this course yet.",
+          );
+      } else setMessage("Change saved.");
       setControlDialog(null);
     } catch (err) {
       setMessage((err as Error).message);
@@ -2287,10 +2302,8 @@ function QuestionBank() {
   );
 }
 function Students() {
-  const { data: students, error, refresh } = useData("students"),
-    { data: courses, refresh: refreshCourses } = useData("courses");
+  const { data: courses, refresh: refreshCourses } = useData("courses");
   const [mode, setMode] = useState(""),
-    [search, setSearch] = useState(""),
     [message, setMessage] = useState(""),
     [courseCode, setCourseCode] = useState(""),
     [courseSection, setCourseSection] = useState(""),
@@ -2298,7 +2311,8 @@ function Students() {
     [roster, setRoster] = useState<any[] | null>(null),
     [rosterLoading, setRosterLoading] = useState(false),
     [rosterError, setRosterError] = useState(""),
-    [enrollEmail, setEnrollEmail] = useState("");
+    [enrollEmail, setEnrollEmail] = useState(""),
+    [removingStudentId, setRemovingStudentId] = useState("");
   const selectedCourse = COURSE_CATALOG.find((c) => c.code === courseCode);
   const selectedRosterCourse = courses?.find(
     (course: any) => course.id === selectedCourseId,
@@ -2327,11 +2341,18 @@ function Students() {
     if (!selectedCourseId) return;
     setRosterError("");
     try {
-      await api(`courses/${selectedCourseId}/enroll`, { email: enrollEmail });
+      const result = await api(`courses/${selectedCourseId}/enroll`, {
+        email: enrollEmail,
+      });
       setEnrollEmail("");
-      setMessage("Student enrolled in this course.");
+      setMessage(
+        result.alreadyEnrolled
+          ? "This student is already enrolled in this course."
+          : result.notification?.sent
+            ? "Student enrolled. Confirmation email sent."
+            : `Student enrolled. Confirmation email was not sent${result.notification?.reason ? `: ${result.notification.reason}` : "."}`,
+      );
       setRoster(await api(`courses/${selectedCourseId}/students`));
-      await refresh();
       await refreshCourses();
     } catch (err) {
       setRosterError((err as Error).message);
@@ -2341,7 +2362,7 @@ function Students() {
     e.preventDefault();
     const f = Object.fromEntries(new FormData(e.currentTarget));
     try {
-      await api(
+      const result = await api(
         mode === "course"
           ? "courses"
           : mode === "import"
@@ -2353,7 +2374,15 @@ function Students() {
       setCourseCode("");
       setCourseSection("");
       setMessage("Saved successfully.");
-      await refresh();
+      if (result.notification?.failed) {
+        setMessage(
+          `Saved ${result.count} student record(s), but enrollment email was not sent: ${result.notification.reason ?? "email delivery failed"}`,
+        );
+      } else if (result.notification?.sent) {
+        setMessage(
+          `Saved successfully. ${result.notification.sent} enrollment email(s) sent.`,
+        );
+      }
       await refreshCourses();
     } catch (err) {
       setMessage((err as Error).message);
@@ -2384,7 +2413,6 @@ function Students() {
           <Plus size={16} /> Add student
         </button>
       </Heading>
-      <ErrorBox message={error} />
       {message && (
         <div className="notice" role="status">
           {message}
@@ -2586,6 +2614,7 @@ function Students() {
                     <th>Email</th>
                     <th>Student ID</th>
                     <th>Status</th>
+                    <th>Enrollment</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -2595,6 +2624,46 @@ function Students() {
                       <td>{student.email}</td>
                       <td>{student.student_id}</td>
                       <td>{student.active ? "Active" : "Inactive"}</td>
+                      <td>
+                        <button
+                          type="button"
+                          disabled={removingStudentId === student.id}
+                          onClick={async () => {
+                            if (
+                              !window.confirm(
+                                `Remove ${student.name} from ${selectedRosterCourse?.code}? They will no longer see or enter exams for this course.`,
+                              )
+                            )
+                              return;
+                            setRemovingStudentId(student.id);
+                            setRosterError("");
+                            try {
+                              await api(
+                                `courses/${selectedCourseId}/students/${student.id}`,
+                                {},
+                                "DELETE",
+                              );
+                              setRoster(
+                                await api(
+                                  `courses/${selectedCourseId}/students`,
+                                ),
+                              );
+                              await refreshCourses();
+                              setMessage(
+                                `${student.name} was removed from this course.`,
+                              );
+                            } catch (err) {
+                              setRosterError((err as Error).message);
+                            } finally {
+                              setRemovingStudentId("");
+                            }
+                          }}
+                        >
+                          {removingStudentId === student.id
+                            ? "Removing…"
+                            : "Remove from course"}
+                        </button>
+                      </td>
                     </tr>
                   ))}
                 </tbody>
@@ -2608,118 +2677,6 @@ function Students() {
           )}
         </section>
       )}
-      <div className="list-tools">
-        <Search size={18} />
-        <input
-          aria-label="Search students"
-          placeholder="Search name, student ID or section…"
-          value={search}
-          onChange={(e) => setSearch(e.target.value)}
-        />
-      </div>
-      <div className="panel table-wrap">
-        <table>
-          <thead>
-            <tr>
-              <th>Student</th>
-              <th>Student ID</th>
-              <th>Section</th>
-              <th>Status</th>
-              <th>Last login</th>
-              <th>Access</th>
-            </tr>
-          </thead>
-          <tbody>
-            {students
-              ?.filter((s: any) =>
-                (s.name + s.email + s.student_id + s.section)
-                  .toLowerCase()
-                  .includes(search.toLowerCase()),
-              )
-              .map((s: any) => (
-                <tr key={s.id}>
-                  <td>
-                    <strong>{s.name}</strong>
-                    <small>{s.email}</small>
-                  </td>
-                  <td>{s.student_id}</td>
-                  <td>{s.section || "—"}</td>
-                  <td>
-                    <Status value={s.active ? "ACTIVE" : "INACTIVE"} />
-                  </td>
-                  <td>{time(s.last_login)}</td>
-                  <td>
-                    <div className="actions">
-                      <button
-                        onClick={async () => {
-                          try {
-                            await api("students/" + s.id, {
-                              action: s.active ? "deactivate" : "activate",
-                            });
-                            await refresh();
-                          } catch (e) {
-                            setMessage((e as Error).message);
-                          }
-                        }}
-                      >
-                        {s.active ? "Deactivate" : "Activate"}
-                      </button>
-                      <button
-                        onClick={async () => {
-                          const password = prompt(
-                            "New temporary password (12+ characters). Share privately with the student.",
-                          );
-                          if (!password) return;
-                          try {
-                            await api("students/" + s.id, {
-                              action: "reset",
-                              password,
-                            });
-                            setMessage(
-                              "Access reset. Existing sessions revoked.",
-                            );
-                          } catch (e) {
-                            setMessage((e as Error).message);
-                          }
-                        }}
-                      >
-                        Reset
-                      </button>
-                      <select
-                        aria-label={"Enroll " + s.name}
-                        value=""
-                        onChange={async (ev) => {
-                          try {
-                            await api("students/" + s.id, {
-                              action: "enroll",
-                              courseId: ev.target.value,
-                            });
-                            setMessage("Enrollment saved.");
-                          } catch (e) {
-                            setMessage((e as Error).message);
-                          }
-                        }}
-                      >
-                        <option value="">Enroll…</option>
-                        {courses?.map((c: any) => (
-                          <option value={c.id} key={c.id}>
-                            {c.code}
-                          </option>
-                        ))}
-                      </select>
-                    </div>
-                  </td>
-                </tr>
-              ))}
-          </tbody>
-        </table>
-        {students?.length === 0 && (
-          <Empty
-            title="Your class will appear here"
-            description="Add individual students or import a CSV roster."
-          />
-        )}
-      </div>
     </>
   );
 }

@@ -49,6 +49,7 @@ import {
   deletePrivateFile,
 } from "@/lib/integrations";
 import { examRequestDeviceAllowed } from "@/lib/exam-device";
+import { appUrl, escapeEmailHtml, sendEmailBatch } from "@/lib/email";
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 const json = (data: unknown) =>
@@ -351,7 +352,23 @@ async function dispatch(req: Request, parts: string[]) {
         });
         return { enrolled: true };
       });
-      return json({ ok: true, ...result });
+      const [course] = result.enrolled
+        ? await query(
+            sql`SELECT code,name,section FROM courses WHERE id=${courseId}`,
+          )
+        : [];
+      const notification =
+        result.enrolled && course
+          ? await sendEmailBatch([
+              {
+                to: u.email,
+                subject: `You are enrolled in ${course.code}`,
+                text: `Hello ${u.name},\n\nYou are enrolled in ${course.code} · ${course.name}${course.section ? ` · ${course.section}` : ""}. Sign in to SecureExam Pro to view course exams: ${appUrl("/login?role=student")}`,
+                html: `<p>Hello ${escapeEmailHtml(u.name)},</p><p>You are enrolled in <strong>${escapeEmailHtml(course.code)} · ${escapeEmailHtml(course.name)}${course.section ? ` · ${escapeEmailHtml(course.section)}` : ""}</strong>.</p><p><a href="${escapeEmailHtml(appUrl("/login?role=student"))}">Sign in to SecureExam Pro</a> to view course exams.</p>`,
+              },
+            ])
+          : { sent: 0, failed: 0 };
+      return json({ ok: true, ...result, notification });
     }
     teacher(u);
     if (id && action === "enrollment-invite" && method === "GET") {
@@ -371,6 +388,25 @@ async function dispatch(req: Request, parts: string[]) {
         ),
       );
     }
+    if (id && action === "students" && parts[3] && method === "DELETE") {
+      await courseAccess(id, u);
+      const studentId = uuid.parse(parts[3]);
+      const [enrollment] = await query(
+        sql`SELECT user_id FROM enrollments WHERE course_id=${id} AND user_id=${studentId}`,
+      );
+      if (!enrollment) throw new HttpError(404, "Course enrollment not found.");
+      await db.transaction(async (tx) => {
+        await tx.execute(
+          sql`DELETE FROM enrollments WHERE course_id=${id} AND user_id=${studentId}`,
+        );
+        await audit(tx, {
+          userId: u.id,
+          type: "STUDENT_UNENROLLED",
+          metadata: { courseId: id, studentId },
+        });
+      });
+      return json({ ok: true });
+    }
     if (id && action === "enroll" && method === "POST") {
       await courseAccess(id, u);
       const v = z
@@ -378,22 +414,35 @@ async function dispatch(req: Request, parts: string[]) {
         .parse(await body(req));
       const email = v.email.trim().toLowerCase();
       const [student] = await query(
-        sql`SELECT id FROM users WHERE lower(email)=${email} AND role='STUDENT' AND active=true`,
+        sql`SELECT id,name,email FROM users WHERE lower(email)=${email} AND role='STUDENT' AND active=true`,
       );
       if (!student)
         throw new HttpError(
           404,
           "No active student account found for that email. Ask the student to sign in once with their approved account, then try again.",
         );
-      await query(
-        sql`INSERT INTO enrollments(course_id,user_id) VALUES(${id},${student.id}) ON CONFLICT DO NOTHING`,
+      const [newEnrollment] = await query(
+        sql`INSERT INTO enrollments(course_id,user_id) VALUES(${id},${student.id}) ON CONFLICT DO NOTHING RETURNING user_id`,
       );
       await record({
         userId: u.id,
         type: "STUDENT_ENROLLED",
         metadata: { courseId: id, studentId: student.id },
       });
-      return json({ ok: true });
+      const [course] = await query(
+        sql`SELECT code,name,section FROM courses WHERE id=${id}`,
+      );
+      const notification = newEnrollment
+        ? await sendEmailBatch([
+            {
+              to: student.email,
+              subject: `You are enrolled in ${course.code}`,
+              text: `Hello ${student.name},\n\nYou are enrolled in ${course.code} · ${course.name}${course.section ? ` · ${course.section}` : ""}. Sign in to SecureExam Pro to view course exams: ${appUrl("/login?role=student")}`,
+              html: `<p>Hello ${escapeEmailHtml(student.name)},</p><p>You are enrolled in <strong>${escapeEmailHtml(course.code)} · ${escapeEmailHtml(course.name)}${course.section ? ` · ${escapeEmailHtml(course.section)}` : ""}</strong>.</p><p><a href="${escapeEmailHtml(appUrl("/login?role=student"))}">Sign in to SecureExam Pro</a> to view course exams.</p>`,
+            },
+          ])
+        : { sent: 0, failed: 0, reason: "Student was already enrolled." };
+      return json({ ok: true, notification, alreadyEnrolled: !newEnrollment });
     }
     if (method === "GET")
       return json(
@@ -421,12 +470,16 @@ async function dispatch(req: Request, parts: string[]) {
   }
   if (resource === "students") {
     teacher(u);
-    if (method === "GET")
+    if (method === "GET") {
+      const courseId = url.searchParams.get("courseId");
+      if (!courseId) return json([]);
+      await courseAccess(courseId, u);
       return json(
         await query(
-          sql`SELECT DISTINCT u.id,u.name,u.email,u.student_id,u.section,u.active,u.last_login FROM users u LEFT JOIN enrollments n ON n.user_id=u.id LEFT JOIN courses c ON c.id=n.course_id WHERE u.role='STUDENT' AND (${u.role === "ADMIN"} OR u.created_by=${u.id} OR c.teacher_id=${u.id}) ORDER BY u.name`,
+          sql`SELECT u.id,u.name,u.email,u.student_id,u.section,u.active,u.last_login,n.eligible FROM enrollments n JOIN users u ON u.id=n.user_id WHERE n.course_id=${courseId} ORDER BY u.name`,
         ),
       );
+    }
     if (id && id !== "import") {
       uuid.parse(id);
       await studentAccess(id, u);
@@ -503,7 +556,29 @@ async function dispatch(req: Request, parts: string[]) {
         });
       }
     });
-    return json({ count: prepared.length });
+    const courseIds = [
+      ...new Set(prepared.map((student) => student.courseId).filter(Boolean)),
+    ] as string[];
+    const courseRows = courseIds.length
+      ? await query(
+          sql`SELECT id,code,name,section FROM courses WHERE id=ANY(${courseIds}::uuid[])`,
+        )
+      : [];
+    const courseById = new Map(courseRows.map((course) => [course.id, course]));
+    const notification = await sendEmailBatch(
+      prepared
+        .filter((student) => student.courseId)
+        .map((student) => {
+          const course = courseById.get(student.courseId!);
+          return {
+            to: student.email,
+            subject: `You are enrolled in ${course?.code ?? "your course"}`,
+            text: `Hello ${student.name},\n\nYou are enrolled in ${course?.code ?? "your course"} · ${course?.name ?? ""}${course?.section ? ` · ${course.section}` : ""}. Sign in to SecureExam Pro to view course exams: ${appUrl("/login?role=student")}`,
+            html: `<p>Hello ${escapeEmailHtml(student.name)},</p><p>You are enrolled in <strong>${escapeEmailHtml(course?.code ?? "your course")} · ${escapeEmailHtml(course?.name ?? "")}${course?.section ? ` · ${escapeEmailHtml(course.section)}` : ""}</strong>.</p><p><a href="${escapeEmailHtml(appUrl("/login?role=student"))}">Sign in to SecureExam Pro</a> to view course exams.</p>`,
+          };
+        }),
+    );
+    return json({ count: prepared.length, notification });
   }
   if (resource === "classrooms") {
     teacher(u);
@@ -1265,6 +1340,34 @@ async function dispatch(req: Request, parts: string[]) {
           metadata: v,
         });
       });
+      if (v.action === "publish" || v.action === "schedule") {
+        const [exam] = await query(
+          sql`SELECT e.title,e.starts_at,e.ends_at,c.code,c.name,c.section FROM exams e JOIN courses c ON c.id=e.course_id WHERE e.id=${id}`,
+        );
+        const recipients = await query(
+          sql`SELECT u.name,u.email FROM enrollments n JOIN users u ON u.id=n.user_id WHERE n.course_id=(SELECT course_id FROM exams WHERE id=${id}) AND n.eligible=true AND u.active=true ORDER BY u.email`,
+        );
+        const examLink = appUrl(`/exam/${id}`);
+        const startText = new Date(exam.starts_at).toLocaleString("en", {
+          dateStyle: "medium",
+          timeStyle: "short",
+          timeZone: "Asia/Bangkok",
+        });
+        const endText = new Date(exam.ends_at).toLocaleString("en", {
+          dateStyle: "medium",
+          timeStyle: "short",
+          timeZone: "Asia/Bangkok",
+        });
+        const notification = await sendEmailBatch(
+          recipients.map((student) => ({
+            to: student.email,
+            subject: `Exam available: ${exam.title}`,
+            text: `Hello ${student.name},\n\n${exam.title} for ${exam.code} · ${exam.name}${exam.section ? ` · ${exam.section}` : ""} is now available. Exam window: ${startText} to ${endText} (Asia/Bangkok). Open your exam here: ${examLink}`,
+            html: `<p>Hello ${escapeEmailHtml(student.name)},</p><p><strong>${escapeEmailHtml(exam.title)}</strong> for ${escapeEmailHtml(exam.code)} · ${escapeEmailHtml(exam.name)}${exam.section ? ` · ${escapeEmailHtml(exam.section)}` : ""} is now available.</p><p>Exam window: ${escapeEmailHtml(startText)} to ${escapeEmailHtml(endText)} (Asia/Bangkok).</p><p><a href="${escapeEmailHtml(examLink)}">Open your exam</a></p>`,
+          })),
+        );
+        return json({ ok: true, notification });
+      }
       return json({ ok: true });
     }
     if (action === "accommodations") {

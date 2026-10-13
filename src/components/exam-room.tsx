@@ -1130,6 +1130,82 @@ export default function ExamRoom({
       );
     if (!p.allowPaste)
       autoSubmitTriggers.push("attempting to paste into an answer");
+    const disclosedChecks = [
+      ["Internet connection", "Required to load questions and save answers."],
+      ["Supported device", "Only laptops and tablets can start this exam."],
+      [
+        "Student identity",
+        "Your name, student ID and account email are attached to your attempt.",
+      ],
+      [
+        "Camera and movement signals",
+        p.camera
+          ? "Camera permission is required; coarse movement signals may be logged for instructor review."
+          : "Camera monitoring is not enabled.",
+      ],
+      [
+        "Microphone sound level",
+        p.microphone
+          ? "Microphone permission is required; sustained sound levels may be logged. Audio is not recorded or transcribed."
+          : "Microphone monitoring is not enabled.",
+      ],
+      [
+        "Classroom location",
+        p.location
+          ? "Your device location is checked against the configured classroom radius."
+          : "Classroom location is not checked.",
+      ],
+      [
+        "Screen sharing",
+        p.screen
+          ? screenShareUnsupported
+            ? "Enabled by policy, but unsupported on this device/browser; instructor screen viewing will be unavailable."
+            : "You will be asked to share your screen with the instructor."
+          : "Screen sharing is not enabled.",
+      ],
+      [
+        "Fullscreen",
+        p.fullscreen
+          ? deviceClass === "tablet"
+            ? "Tablet typing mode is used; browser fullscreen is not required."
+            : "Fullscreen is required on this device."
+          : "Fullscreen is not required.",
+      ],
+      [
+        "Tab and window changes",
+        p.tabMonitoring
+          ? "Leaving or hiding the exam tab can create a security warning. The browser cannot block switching apps."
+          : "Tab and window changes are not monitored.",
+      ],
+      [
+        "Copy and paste",
+        !p.allowCopy || !p.allowPaste
+          ? `Copy is ${p.allowCopy ? "allowed" : "blocked"}; paste is ${p.allowPaste ? "allowed" : "blocked"}.`
+          : "Copying and pasting are allowed.",
+      ],
+      [
+        "Question navigation",
+        p.navigation
+          ? "You can move between questions."
+          : "You must answer questions in order; earlier questions cannot be reopened.",
+      ],
+      [
+        "Classroom code",
+        p.classroomCode
+          ? "A current classroom code is required before entry."
+          : "A classroom code is not required.",
+      ],
+      [
+        "Instructor approval",
+        p.teacherApproval
+          ? "Your instructor must approve your check-in before the exam starts."
+          : "Instructor approval is not required.",
+      ],
+      [
+        "Answer and event records",
+        `Answers, submission times and enabled security events are retained for ${p.retentionDays} days for authorized instructor review.`,
+      ],
+    ];
     const maximumLocationUncertainty = Math.max(
       100,
       Number(exam.classroom?.accuracy ?? 0),
@@ -1211,6 +1287,30 @@ export default function ExamRoom({
             Camera movement and microphone sound signals can be mistaken; they
             do not identify a person or prove misconduct. Your instructor must
             review the evidence.
+          </p>
+        </section>
+        <section
+          className="panel form-panel"
+          aria-labelledby="preflight-check-list-title"
+        >
+          <h2 id="preflight-check-list-title">Checks used for this exam</h2>
+          <p className="muted">
+            Review each enabled check and the information it uses before
+            continuing.
+          </p>
+          <ul className="preflight-check-list">
+            {disclosedChecks.map(([name, detail]) => (
+              <li key={name}>
+                <strong>{name}</strong>
+                <span>{detail}</span>
+              </li>
+            ))}
+          </ul>
+          <p className="small muted">
+            When automatic submission is enabled, reaching {p.maxWarnings}{" "}
+            security warnings can submit the exam. A warning is a signal for
+            review, not proof of misconduct. Your instructor can review recorded
+            events and should consider browser/device limitations.
           </p>
         </section>
         <section className="panel form-panel student-identity">
@@ -1384,10 +1484,10 @@ export default function ExamRoom({
             <p className="small muted" role="status">
               Screen capture could not start in this browser. You can continue
               with the other enabled checks, but your instructor will not be
-              able to view your screen for this attempt. Switching
-              browsers may not help because some device operating systems do
-              not expose screen capture to web pages. Use a laptop or desktop
-              browser if your instructor requires live screen sharing.
+              able to view your screen for this attempt. Switching browsers may
+              not help because some device operating systems do not expose
+              screen capture to web pages. Use a laptop or desktop browser if
+              your instructor requires live screen sharing.
             </p>
           )}
           {deviceClass !== "laptop" && deviceClass !== "tablet" && (

@@ -25,12 +25,15 @@ export default function CourseEnrollment({
   useEffect(() => {
     let active = true;
     void api(`courses/${courseId}/self-enroll`, { token })
-      .then(() => {
+      .then((result: any) => {
         if (active)
           setState({
             kind: "success",
-            message:
-              "You’re enrolled. This course is now in your student workspace.",
+            message: !result.enrolled
+              ? "You were already enrolled. This course is in your student workspace."
+              : result.notification?.sent
+                ? "You’re enrolled. A confirmation email was sent, and this course is now in your student workspace."
+                : `You’re enrolled. This course is in your student workspace, but confirmation email was not sent${result.notification?.reason ? `: ${result.notification.reason}` : "."}`,
           });
       })
       .catch((error: unknown) => {
