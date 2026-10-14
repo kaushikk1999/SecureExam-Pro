@@ -117,6 +117,7 @@ export default function ExamRoom({
     [point, setPoint] = useState<any>(null),
     [permissionReady, setPermissionReady] = useState(false),
     [screenShareUnsupported, setScreenShareUnsupported] = useState(false),
+    [screenSurface, setScreenSurface] = useState<string | undefined>(),
     [index, setIndex] = useState(0),
     [values, setValues] = useState<Record<string, any>>({}),
     [flagged, setFlagged] = useState<string[]>([]),
@@ -489,6 +490,11 @@ export default function ExamRoom({
   async function permissions() {
     setBusy(true);
     setError("");
+    let verifiedScreenSurface: string | undefined;
+    screenStream.current?.getTracks().forEach((track) => track.stop());
+    screenStream.current = null;
+    setScreenSurface(undefined);
+    setScreenShareUnsupported(false);
     try {
       const p = exam.policy;
       stream.current?.getTracks().forEach((t) => t.stop());
@@ -555,56 +561,65 @@ export default function ExamRoom({
       if (p.screen) {
         const getDisplayMedia = navigator.mediaDevices?.getDisplayMedia;
         if (typeof getDisplayMedia !== "function") {
-          if (deviceClass !== "tablet" && deviceClass !== "laptop")
-            throw new Error(
-              "This device cannot start the required screen-sharing check. Please use a supported laptop or tablet browser.",
-            );
           setScreenShareUnsupported(true);
+          throw new Error(
+            "This browser cannot share the entire screen. Use a browser/device that supports full-screen capture; this exam cannot start without it.",
+          );
         } else {
           try {
-            screenStream.current = await getDisplayMedia.call(
+            const capture = await getDisplayMedia.call(
               navigator.mediaDevices,
-              { video: true },
+              {
+                video: { displaySurface: "monitor" },
+                audio: false,
+                monitorTypeSurfaces: "include",
+                selfBrowserSurface: "exclude",
+                preferCurrentTab: false,
+              } as DisplayMediaStreamOptions,
             );
+            const captureTrack = capture.getVideoTracks()[0];
+            const selectedSurface = captureTrack?.getSettings()
+              .displaySurface;
+            if (!captureTrack || selectedSurface !== "monitor") {
+              capture.getTracks().forEach((track) => track.stop());
+              setScreenShareUnsupported(true);
+              setScreenSurface(selectedSurface);
+              throw new Error(
+                selectedSurface === "browser"
+                  ? "You shared a browser tab. Run the checks again and choose Entire screen in the browser's sharing dialog."
+                  : selectedSurface === "window"
+                    ? "You shared a window. Run the checks again and choose Entire screen in the browser's sharing dialog."
+                    : "The browser did not confirm that you shared the entire screen. Choose Entire screen, or use a browser that can verify full-screen sharing.",
+              );
+            }
+            screenStream.current = capture;
+            verifiedScreenSurface = selectedSurface;
+            setScreenSurface(selectedSurface);
+            setScreenShareUnsupported(false);
             const captureVideo = document.createElement("video");
             captureVideo.muted = true;
             captureVideo.playsInline = true;
             captureVideo.srcObject = screenStream.current;
             screenCaptureVideo.current = captureVideo;
             void captureVideo.play().catch(() => undefined);
-            screenStream.current
-              .getVideoTracks()
-              .forEach((t) => (t.onended = () => emit("SCREEN_SHARE_STOPPED")));
+            capture.getVideoTracks().forEach((t) => {
+              t.onended = () => {
+                setChecks((current) => ({ ...current, screen: false }));
+                emit("SCREEN_SHARE_STOPPED");
+              };
+            });
           } catch (error) {
-            const screenErrorName = (error as DOMException)?.name;
-            if (
-              (deviceClass === "tablet" || deviceClass === "laptop") &&
-              [
-                "NotSupportedError",
-                "NotFoundError",
-                "NotReadableError",
-                "TypeError",
-              ].includes(screenErrorName)
-            ) {
-              setScreenShareUnsupported(true);
-            } else if (
-              deviceClass === "tablet" &&
-              screenErrorName === "NotAllowedError"
-            ) {
-              // Some tablet OS/browser combinations expose getDisplayMedia but
-              // cannot complete its capture picker. Record no share and keep
-              // the exam usable; the student is told their screen is not seen.
-              setScreenShareUnsupported(true);
-            } else if (
-              deviceClass === "laptop" &&
-              screenErrorName === "NotAllowedError"
-            ) {
-              throw new Error(
-                "Screen sharing was blocked or cancelled by the browser. Try again and approve the screen-sharing prompt, or ask your instructor to turn off the screen-sharing check for this exam.",
-              );
-            } else {
+            setScreenShareUnsupported(true);
+            if ((error as Error)?.message?.includes("choose Entire screen") ||
+                (error as Error)?.message?.includes("did not confirm"))
               throw error;
-            }
+            if ((error as DOMException)?.name === "NotAllowedError")
+              throw new Error(
+                "Screen sharing was canceled or blocked. Run the checks again, choose Entire screen, and approve sharing. This exam cannot start until sharing succeeds.",
+              );
+            throw new Error(
+              "Full-screen sharing is unavailable in this browser/device. This exam cannot start without it; use a compatible browser and device.",
+            );
           }
         }
       }
@@ -625,8 +640,11 @@ export default function ExamRoom({
         microphone:
           stream.current?.getAudioTracks().some(captureTrackIsActive) ?? false,
         screen:
-          screenStream.current?.getVideoTracks().some(captureTrackIsActive) ??
-          false,
+          screenSharePreflightSatisfied(
+            true,
+            screenStream.current?.getVideoTracks().some(captureTrackIsActive) ?? false,
+            verifiedScreenSurface,
+          ),
       }));
       setPermissionReady(true);
     } catch (e) {
@@ -645,6 +663,7 @@ export default function ExamRoom({
         microphone: false,
         screen: false,
       }));
+      setScreenSurface(undefined);
       setPermissionReady(false);
       setError(
         (e as Error).message || "A required device permission was unavailable.",
@@ -1156,12 +1175,8 @@ export default function ExamRoom({
           : "Classroom location is not checked.",
       ],
       [
-        "Screen sharing",
-        p.screen
-          ? screenShareUnsupported
-            ? "Enabled by policy, but unsupported on this device/browser; instructor screen viewing will be unavailable."
-            : "You will be asked to share your screen with the instructor."
-          : "Screen sharing is not enabled.",
+        "Entire-screen sharing",
+        "Required for every exam. Choose Entire screen in the browser prompt; sharing a tab or window does not pass. If this browser cannot verify full-screen capture, you cannot start the exam.",
       ],
       [
         "Fullscreen",
@@ -1229,7 +1244,7 @@ export default function ExamRoom({
       screenSharePreflightSatisfied(
         p.screen,
         checks.screen,
-        screenShareUnsupported,
+        screenSurface,
       ) &&
       (!p.location || locationGood) &&
       examFullscreenSatisfied(p.fullscreen, deviceClass, checks.fullscreen) &&
@@ -1280,10 +1295,10 @@ export default function ExamRoom({
           <p>
             The audit records monitored events and answer save/submission times.
             {p.screen && screenShareUnsupported
-              ? " Screen sharing was unavailable or not approved on this device. You may continue, but your instructor cannot view your live screen or review screen-share screenshots for this attempt."
+              ? " Full-screen sharing has not passed. You cannot start until the browser confirms that Entire screen is being shared."
               : p.screen
-                ? " Because this exam requires screen sharing, a small screenshot may be saved with a monitored activity event while your screen is actively shared. Authorized instructors can review those private screenshots while the exam record is retained; deleting the exam also removes its stored files."
-                : " This exam does not enable screen sharing, so event screenshots will not be available."}{" "}
+                ? " This exam requires your entire screen to remain shared. A small screenshot may be saved with a monitored activity event while sharing is active. Authorized instructors can review those private screenshots while the exam record is retained; deleting the exam also removes its stored files."
+                : " Entire-screen sharing is required for all exams."}{" "}
             Camera movement and microphone sound signals can be mistaken; they
             do not identify a person or prove misconduct. Your instructor must
             review the evidence.
@@ -1410,10 +1425,10 @@ export default function ExamRoom({
               checked in this browser. Sound levels cannot identify speech or
               conversation. No audio, transcript or camera images are sent to
               AI.{" "}
-              {p.screen &&
-                (screenShareUnsupported
-                  ? "This browser or device does not provide screen sharing, so the instructor will not be able to view your screen."
-                  : "Your shared screen may be viewed live by your instructor, and a screenshot may be stored when a monitored activity event occurs, as explained above.")}{" "}
+              {"Entire-screen sharing is required. "}
+              {screenShareUnsupported
+                ? "This browser/device cannot currently provide verified full-screen sharing, so you cannot start this exam here."
+                : "Your shared entire screen may be viewed live by your instructor, and a screenshot may be stored when a monitored activity event occurs, as explained above."}{" "}
               A browser cannot prevent switching apps; if you leave this tab,
               the exam screen is held until you acknowledge the signal.
             </p>
@@ -1442,10 +1457,15 @@ export default function ExamRoom({
                 ? [
                     [
                       ShieldCheck,
-                      "Live screen sharing",
-                      !screenShareUnsupported && checks.screen,
+                      "Share entire screen (required)",
+                      !screenShareUnsupported &&
+                        screenSharePreflightSatisfied(
+                          true,
+                          checks.screen,
+                          screenSurface,
+                        ),
                       screenShareUnsupported
-                        ? "Unavailable on this device"
+                        ? "Required; sharing is not verified"
                         : undefined,
                     ],
                   ]
@@ -1481,13 +1501,13 @@ export default function ExamRoom({
             ))}
           </div>
           {p.screen && screenShareUnsupported && (
-            <p className="small muted" role="status">
-              Screen capture could not start in this browser. You can continue
-              with the other enabled checks, but your instructor will not be
-              able to view your screen for this attempt. Switching browsers may
-              not help because some device operating systems do not expose
-              screen capture to web pages. Use a laptop or desktop browser if
-              your instructor requires live screen sharing.
+            <p className="small error" role="alert">
+              Full-screen sharing is required. On the sharing prompt, select
+              <strong> Entire screen</strong>; tabs and individual windows do
+              not qualify. If that option is unavailable or the browser cannot
+              verify it, this device/browser cannot start the exam. Contact
+              your instructor before the exam if your device cannot share its
+              full screen.
             </p>
           )}
           {deviceClass !== "laptop" && deviceClass !== "tablet" && (

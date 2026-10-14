@@ -543,7 +543,7 @@ const standard = {
   camera: true,
   microphone: true,
   location: true,
-  screen: false,
+  screen: true,
   fullscreen: true,
   classroomCode: true,
   teacherApproval: false,
@@ -643,7 +643,11 @@ function ExamForm({ done, initial }: { done: () => void; initial?: any }) {
   const [formNow] = useState(() => Date.now());
   const { data: courses } = useData("courses"),
     { data: rooms } = useData("classrooms");
-  const [policy, setPolicy] = useState(initial?.policy ?? standard),
+  const [policy, setPolicy] = useState({
+    ...standard,
+    ...initial?.policy,
+    screen: true,
+  }),
     [preset, setPreset] = useState(initial ? "custom" : "standard"),
     [instructions, setInstructions] = useState(initial?.instructions ?? ""),
     [error, setError] = useState(""),
@@ -879,8 +883,8 @@ function ExamForm({ done, initial }: { done: () => void; initial?: any }) {
         <fieldset className="exam-checks">
           <legend>Choose student checks</legend>
           <p className="small muted">
-            Select the checks for this exam. Students will only be asked to
-            complete the checks you select here.
+            Select the additional checks for this exam. Entire-screen sharing
+            is required for every exam and cannot be turned off.
           </p>
           <div className="check-grid">
             {[
@@ -901,8 +905,8 @@ function ExamForm({ done, initial }: { done: () => void; initial?: any }) {
               ],
               [
                 "screen",
-                "Screen sharing",
-                "Allow a live instructor view where the browser supports screen capture. Some tablet browsers cannot provide it; those students can continue with screen sharing marked unavailable.",
+                "Entire-screen sharing (required)",
+                "Students must share the entire screen before entry. Tab or window sharing and browsers without verifiable full-screen capture cannot start the exam.",
               ],
               [
                 "fullscreen",
@@ -929,8 +933,10 @@ function ExamForm({ done, initial }: { done: () => void; initial?: any }) {
                 <span className="check">
                   <input
                     type="checkbox"
-                    checked={Boolean(policy[key])}
+                    checked={key === "screen" || Boolean(policy[key])}
+                    disabled={key === "screen"}
                     onChange={(event) => {
+                      if (key === "screen") return;
                       setPreset("custom");
                       setPolicy({ ...policy, [key]: event.target.checked });
                     }}

@@ -16,6 +16,32 @@ test.beforeEach(async () => {
   await client.end();
 });
 async function login(page: Page, email: string) {
+  if (email !== "teacher@example.test") {
+    await page.addInitScript(() => {
+      const mediaDevices = navigator.mediaDevices;
+      if (!mediaDevices) return;
+      Object.defineProperty(mediaDevices, "getDisplayMedia", {
+        configurable: true,
+        value: async () => {
+          const canvas = document.createElement("canvas");
+          canvas.width = 2;
+          canvas.height = 2;
+          const captured = canvas.captureStream(5);
+          for (const track of captured.getVideoTracks()) {
+            const originalGetSettings = track.getSettings.bind(track);
+            Object.defineProperty(track, "getSettings", {
+              configurable: true,
+              value: () => ({
+                ...originalGetSettings(),
+                displaySurface: "monitor",
+              }),
+            });
+          }
+          return captured;
+        },
+      });
+    });
+  }
   await page.goto("/login");
   const audience = email === "teacher@example.test" ? "teacher" : "student";
   await page

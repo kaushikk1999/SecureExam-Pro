@@ -27,13 +27,13 @@ export function examFullscreenSatisfied(
   );
 }
 
-/** Tablets remain eligible when their browser does not expose screen capture. */
+/** A required screen check passes only when an active entire-monitor capture exists. */
 export function screenSharePreflightSatisfied(
   required: boolean,
   isSharing: boolean,
-  screenShareUnavailable: boolean,
+  displaySurface?: string,
 ) {
-  return !required || isSharing || screenShareUnavailable;
+  return !required || (isSharing && displaySurface === "monitor");
 }
 
 const phoneUserAgent =

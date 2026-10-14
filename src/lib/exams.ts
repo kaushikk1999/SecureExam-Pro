@@ -2,10 +2,7 @@ import { randomUUID } from "node:crypto";
 import { sql } from "drizzle-orm";
 import { db, query, type Tx } from "./db";
 import { audit } from "./audit";
-import {
-  examFullscreenRequired,
-  screenSharePreflightSatisfied,
-} from "./exam-device";
+import { examFullscreenRequired } from "./exam-device";
 import { HttpError, type Actor } from "./auth";
 import {
   validClassroomCode,
@@ -127,6 +124,9 @@ export async function effectivePolicy(
     tx,
   );
   const p = policySchema.parse(e.policy);
+  // Full-screen sharing is a platform-wide exam entry requirement, including
+  // exams created before the requirement was introduced.
+  p.screen = true;
   if (acc?.camera_exempt) p.camera = false;
   if (acc?.microphone_exempt) p.microphone = false;
   return { policy: p, accommodation: acc };
@@ -184,15 +184,7 @@ export async function startAttempt(
         (k !== "fullscreen" ||
           examFullscreenRequired(p.fullscreen, input.deviceClass)) &&
         p[k] &&
-        !input.checks[k] &&
-        !(
-          k === "screen" &&
-          screenSharePreflightSatisfied(
-            p.screen,
-            input.checks.screen,
-            input.screenShareUnavailable,
-          )
-        )
+        !input.checks[k]
       )
         throw new HttpError(400, `Required ${k} check has not passed.`);
     if (!["laptop", "tablet"].includes(input.deviceClass))

@@ -15,11 +15,13 @@ describe("supported exam devices", () => {
     expect(examFullscreenSatisfied(true, "laptop", false)).toBe(false);
   });
 
-  it("lets eligible devices continue when browser screen capture is unavailable", () => {
-    expect(screenSharePreflightSatisfied(true, false, true)).toBe(true);
-    expect(screenSharePreflightSatisfied(true, false, false)).toBe(false);
-    expect(screenSharePreflightSatisfied(true, true, false)).toBe(true);
-    expect(screenSharePreflightSatisfied(false, false, false)).toBe(true);
+  it("requires a verified entire-screen share when the check is required", () => {
+    expect(screenSharePreflightSatisfied(true, false, "monitor")).toBe(false);
+    expect(screenSharePreflightSatisfied(true, true, "browser")).toBe(false);
+    expect(screenSharePreflightSatisfied(true, true, "window")).toBe(false);
+    expect(screenSharePreflightSatisfied(true, true, "monitor")).toBe(true);
+    expect(screenSharePreflightSatisfied(true, true, undefined)).toBe(false);
+    expect(screenSharePreflightSatisfied(false, false, undefined)).toBe(true);
   });
 
   it("allows laptops and common iPad and Android tablet identifiers", () => {

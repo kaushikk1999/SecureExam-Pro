@@ -112,7 +112,7 @@ const start = {
   checks: {
     camera: false,
     microphone: false,
-    screen: false,
+    screen: true,
     fullscreen: false,
   },
   code: "",
@@ -527,6 +527,18 @@ describe("server authorization and exam lifecycle", () => {
     await db.execute(
       sql`UPDATE exams SET ends_at=now()+interval '2 hours' WHERE id=${exam}`,
     );
+  });
+  it("rejects exam entry when full-screen sharing did not pass, even if unavailable is claimed", async () => {
+    login(student);
+    const response = await request("exams/" + exam + "/start", {
+      ...start,
+      checks: { ...start.checks, screen: false },
+      screenShareUnavailable: true,
+    });
+    expect(response.status).toBe(400);
+    expect(await response.json()).toMatchObject({
+      error: "Required screen check has not passed.",
+    });
   });
   it("rejects an accurate outside location", async () => {
     const p = policySchema.parse({
