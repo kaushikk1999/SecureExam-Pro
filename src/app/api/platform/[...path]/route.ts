@@ -46,10 +46,13 @@ import {
   syncSheets,
   storePrivateFile,
   archiveWarningEvidenceToDrive,
-  deleteWarningEvidenceArchiveFromDrive,
   readPrivateFile,
   deletePrivateFile,
 } from "@/lib/integrations";
+import {
+  pendingStorageCleanupCount,
+  processStorageCleanupJobs,
+} from "@/lib/storage-cleanup";
 import { examRequestDeviceAllowed } from "@/lib/exam-device";
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -855,14 +858,7 @@ async function dispatch(req: Request, parts: string[]) {
           "This exam has not ended yet. Close it or wait until its scheduled end before deleting it.",
         );
 
-      // Remove private uploads first. If storage rejects a deletion, keep the
-      // exam and its database records so the teacher can retry safely.
-      const examFiles = await query<{ id: string; url: string }>(
-        sql`SELECT id,url FROM files WHERE exam_id=${id}`,
-      );
-      for (const file of examFiles) await deletePrivateFile(file.url);
-      await deleteWarningEvidenceArchiveFromDrive(id, e.title);
-
+      let deletedFileCount = 0;
       await db.transaction(async (tx) => {
         const [lockedExam] = await query(
           sql`SELECT e.id,e.status,e.ends_at FROM exams e JOIN courses c ON c.id=e.course_id WHERE e.id=${id} AND e.deleted_at IS NULL AND (${u.role === "ADMIN"} OR c.teacher_id=${u.id}) FOR UPDATE OF e`,
@@ -890,6 +886,28 @@ async function dispatch(req: Request, parts: string[]) {
         await tx.execute(
           sql`SELECT set_config('secureexam.allow_exam_purge','on',true)`,
         );
+
+        const examFiles = await query<{ id: string; url: string }>(
+          sql`SELECT id,url FROM files WHERE exam_id=${id}`,
+          tx,
+        );
+        deletedFileCount = examFiles.length;
+
+        // Keep cloud cleanup work durable in the same transaction as the exam
+        // purge. A temporary provider failure must not block deleting a closed
+        // exam or its results from the application.
+        for (const file of examFiles) {
+          await tx.execute(sql`
+            INSERT INTO storage_cleanup_jobs(id,kind,reference,exam_id,exam_title)
+            VALUES(${randomUUID()},'PRIVATE_FILE',${file.url},${id},${e.title})
+          `);
+        }
+        if (process.env.GDRIVE_FOLDER_ID) {
+          await tx.execute(sql`
+            INSERT INTO storage_cleanup_jobs(id,kind,reference,exam_id,exam_title)
+            VALUES(${randomUUID()},'DRIVE_EXAM_ARCHIVE',NULL,${id},${e.title})
+          `);
+        }
 
         const affectedChains = await query<{ chain_key: string }>(
           sql`SELECT DISTINCT chain_key FROM audit_events WHERE exam_id=${id} OR attempt_id IN (SELECT id FROM attempts WHERE exam_id=${id})`,
@@ -959,7 +977,12 @@ async function dispatch(req: Request, parts: string[]) {
           }
         }
       });
-      return json({ ok: true, deletedFiles: examFiles.length });
+      await processStorageCleanupJobs(3);
+      return json({
+        ok: true,
+        deletedFiles: deletedFileCount,
+        pendingStorageCleanup: await pendingStorageCleanupCount(id),
+      });
     }
     if (action === "enrollment-invite") {
       if (method !== "GET") throw new HttpError(405, "GET required.");

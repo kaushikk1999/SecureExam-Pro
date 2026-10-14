@@ -4,6 +4,8 @@
   "regions": ["sin1"],
   "functions": {
     "src/app/api/platform/[...path]/route.ts": { "maxDuration": 60 },
-    "src/app/api/cron/route.ts": { "maxDuration": 60 }
-  }
+    "src/app/api/cron/route.ts": { "maxDuration": 60 },
+    "src/app/api/cron/storage-cleanup/route.ts": { "maxDuration": 60 }
+  },
+  "crons": [{ "path": "/api/cron/storage-cleanup", "schedule": "17 17 * * *" }]
 }

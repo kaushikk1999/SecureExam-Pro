@@ -565,9 +565,20 @@ const standard = {
 function ExamList() {
   const { data: exams, error, refresh } = useData("exams");
   const [creating, setCreating] = useState(false),
-    [search, setSearch] = useState("");
+    [search, setSearch] = useState(""),
+    [notice, setNotice] = useState("");
   useEffect(() => {
-    setCreating(new URLSearchParams(window.location.search).has("new"));
+    const params = new URLSearchParams(window.location.search);
+    setCreating(params.has("new"));
+    if (params.has("deleted")) {
+      const pending = Number(params.get("cleanupPending") ?? 0);
+      setNotice(
+        pending > 0
+          ? `Exam deleted. ${pending} cloud file cleanup item${pending === 1 ? " is" : "s are"} queued to retry.`
+          : "Exam and associated results deleted.",
+      );
+      window.history.replaceState(null, "", window.location.pathname);
+    }
   }, []);
   return (
     <>
@@ -580,6 +591,11 @@ function ExamList() {
           <Plus size={17} /> Create examination
         </button>
       </Heading>
+      {notice && (
+        <p role="status" className="notice">
+          {notice}
+        </p>
+      )}
       <ErrorBox message={error} />
       {creating && (
         <ExamForm
@@ -1065,8 +1081,10 @@ function ExamDetail({ id }: { id: string }) {
     setMessage("");
     try {
       if (a === "delete") {
-        await api(`exams/${id}`, {}, "DELETE");
-        router.replace("/workspace/exams");
+        const result = await api(`exams/${id}`, {}, "DELETE");
+        router.replace(
+          `/workspace/exams?deleted=1&cleanupPending=${Number(result.pendingStorageCleanup ?? 0)}`,
+        );
         return;
       }
       await api(`exams/${id}/control`, {

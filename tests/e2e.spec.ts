@@ -748,7 +748,7 @@ test("student appeal submission and instructor decision complete through the UI"
         checks: {
           camera: false,
           microphone: false,
-          screen: false,
+          screen: true,
           fullscreen: false,
         },
         code: "",
@@ -817,4 +817,38 @@ test("student appeal submission and instructor decision complete through the UI"
     .click();
   await expect(page.getByRole("status")).toContainText("Review recorded");
   await expect(review).toHaveCount(0);
+
+  // Submitted work must remain accessible to the teacher, including its
+  // printable student identity, before closing and permanently deleting it.
+  await page.goto("/workspace/analytics");
+  await page.getByPlaceholder("Name, student ID, subject or exam title").fill(title);
+  await page.getByRole("button", { name: "View submission", exact: true }).click();
+  await expect(page.getByRole("heading", { name: "Submitted paper and answers" })).toBeVisible();
+  await page.evaluate(() => {
+    window.print = () => {
+      document.documentElement.dataset.printedTitle = document.title;
+    };
+  });
+  await page.getByRole("button", { name: "Download submission as PDF", exact: true }).click();
+  await expect.poll(() => page.evaluate(() => document.documentElement.dataset.printedTitle))
+    .toContain("Appeals Test Student");
+  await expect.poll(() => page.evaluate(() => document.documentElement.dataset.printedTitle))
+    .toContain("APL" + suffix);
+  await page.evaluate(() => window.dispatchEvent(new Event("afterprint")));
+  await page.getByRole("button", { name: "Download all as PDF", exact: true }).click();
+  await expect.poll(() => page.evaluate(() => document.documentElement.dataset.printedTitle))
+    .toContain("All submissions");
+  await page.evaluate(() => window.dispatchEvent(new Event("afterprint")));
+
+  await page.goto(`/workspace/exams/${exam.id}`);
+  await page.getByRole("button", { name: "Close exam", exact: true }).click();
+  await page.getByRole("dialog").getByRole("button", { name: "Close exam", exact: true }).click();
+  await expect(page.locator(".page-heading .status")).toHaveText("closed");
+  await page.getByRole("button", { name: "Delete exam", exact: true }).click();
+  await page.getByRole("dialog").getByRole("button", { name: "Delete exam", exact: true }).click();
+  await expect(page).toHaveURL(/\/workspace\/exams$/);
+  expect((await page.request.get(`/api/platform/exams/${exam.id}`)).status()).toBe(404);
+  expect((await page.request.get(`/api/platform/attempts/${attempt.id}`)).status()).toBe(404);
+  const remaining = await (await page.request.get("/api/platform/growth/submissions")).json();
+  expect(remaining.some((row: { exam_id: string }) => row.exam_id === exam.id)).toBe(false);
 });

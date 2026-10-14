@@ -983,7 +983,12 @@ it("permanently removes an exam and every related result and private file", asyn
 
   const deletedExam = await deleteRequest(`exams/${exam}`);
   expect(deletedExam.status).toBe(200);
-  expect(await deletedExam.json()).toMatchObject({ ok: true, deletedFiles: 1 });
+  const deleteResult = await deletedExam.json();
+  expect(deleteResult).toMatchObject({
+    ok: true,
+    deletedFiles: 1,
+    pendingStorageCleanup: 0,
+  });
   expect(blob.del).toHaveBeenCalledWith("private-submission");
   expect((await request("exams")).status).toBe(200);
   expect(
@@ -1014,6 +1019,45 @@ it("permanently removes an exam and every related result and private file", asyn
   expect(
     await query(sql`SELECT id FROM questions WHERE id=${question}`),
   ).toHaveLength(1);
+
+  const retryExam = randomUUID();
+  await db.execute(
+    sql`INSERT INTO exams(id,course_id,title,status,starts_at,ends_at,duration_minutes,policy,code_secret) VALUES(${retryExam},${course},'Storage retry','CLOSED',now()-interval '2 hours',now()-interval '1 hour',60,${JSON.stringify(policySchema.parse({ camera: false, microphone: false, location: false, fullscreen: false, classroomCode: false }))}::jsonb,'secret')`,
+  );
+  const retryFile = randomUUID();
+  await db.execute(
+    sql`INSERT INTO files(id,exam_id,owner_id,name,mime,url,size) VALUES(${retryFile},${retryExam},${teacher},'Paper.docx','application/vnd.openxmlformats-officedocument.wordprocessingml.document','retryable-private-file',10)`,
+  );
+  blob.del.mockRejectedValueOnce(new Error("simulated storage outage"));
+  const failedStorageDelete = await deleteRequest(`exams/${retryExam}`);
+  expect(failedStorageDelete.status).toBe(200);
+  expect(await failedStorageDelete.json()).toMatchObject({
+    ok: true,
+    deletedFiles: 1,
+    pendingStorageCleanup: 1,
+  });
+  expect((await request(`exams/${retryExam}`)).status).toBe(404);
+  expect(
+    await query(
+      sql`SELECT id FROM storage_cleanup_jobs WHERE exam_id=${retryExam}`,
+    ),
+  ).toHaveLength(1);
+
+  await db.execute(
+    sql`UPDATE storage_cleanup_jobs SET next_attempt_at=now()-interval '1 second' WHERE exam_id=${retryExam}`,
+  );
+  const { processStorageCleanupJobs } =
+    await import("../src/lib/storage-cleanup");
+  expect(await processStorageCleanupJobs(10)).toMatchObject({
+    cleaned: 1,
+    failed: 0,
+  });
+  expect(blob.del).toHaveBeenCalledWith("retryable-private-file");
+  expect(
+    await query(
+      sql`SELECT id FROM storage_cleanup_jobs WHERE exam_id=${retryExam}`,
+    ),
+  ).toHaveLength(0);
 
   const legacyDeletedExam = randomUUID();
   const legacyAttempt = randomUUID();
