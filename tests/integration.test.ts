@@ -1203,3 +1203,32 @@ it("uses Ollama for answer suggestions while keeping a labeled source paper unch
     vi.unstubAllEnvs();
   }
 });
+
+it("keeps a source-faithful question draft when Ollama is unavailable", async () => {
+  login(teacher);
+  const paperExam = randomUUID();
+  await db.execute(
+    sql`INSERT INTO exams(id,course_id,title,status,starts_at,ends_at,duration_minutes,policy,code_secret) VALUES(${paperExam},${course},'AI offline fallback','DRAFT',now()+interval '1 hour',now()+interval '2 hours',60,${JSON.stringify(policySchema.parse({ camera: false, microphone: false, location: false, fullscreen: false, classroomCode: false }))}::jsonb,'secret')`,
+  );
+  vi.stubEnv("OLLAMA_ENABLED", "true");
+  vi.stubEnv("OLLAMA_API_KEY", "test-key");
+  vi.stubGlobal("fetch", vi.fn(async () => { throw new Error("Ollama unavailable"); }));
+  try {
+    const response = await request(`exams/${paperExam}/ai-paper-draft`, {
+      source: `PART A — MULTIPLE CHOICE (1 × 1 = 1 mark)\nType the letter of the best answer.\nA1. Which option was supplied?\nA) Original first\nB) Original second\n\nPART C — SHORT ANSWER (1 × 2 = 2 marks)\nC1. Explain the supplied idea.`,
+    });
+    expect(response.status).toBe(200);
+    const result = await response.json();
+    expect(result.questions).toHaveLength(2);
+    expect(result.questions[0].prompt).toContain("A1. Which option was supplied?");
+    expect(result.questions[0].options).toEqual([
+      "A) Original first",
+      "B) Original second",
+    ]);
+    expect(result.questions.every((question: { solution: unknown }) => question.solution === null)).toBe(true);
+    expect(result.notice).toContain("Ollama did not return");
+  } finally {
+    vi.unstubAllGlobals();
+    vi.unstubAllEnvs();
+  }
+});
