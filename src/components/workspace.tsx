@@ -615,13 +615,25 @@ function ExamList() {
                 <Status value={e.status} />
               </div>
               <h2>{e.title}</h2>
-              <p>
-                <Clock3 size={15} /> {e.duration_minutes} minutes <span>·</span>{" "}
-                {time(e.starts_at)}
-              </p>
+              <div className="exam-card-details">
+                <p>
+                  <Clock3 size={15} /> <strong>Starts</strong> {time(e.starts_at)}
+                </p>
+                <p>
+                  <Clock3 size={15} /> <strong>Ends</strong> {time(e.ends_at)}
+                </p>
+                <p>
+                  <Clock3 size={15} /> <strong>Duration</strong>{" "}
+                  {e.duration_minutes} minutes
+                </p>
+                <p>
+                  <CheckCircle2 size={15} /> <strong>Submissions</strong>{" "}
+                  {e.submitted ?? 0} students
+                </p>
+              </div>
               <div className="exam-card-bottom">
                 <span>
-                  <Users size={16} /> {e.enrolled} assigned · {e.attended}{" "}
+                  <Users size={16} /> {e.enrolled} assigned · {e.checked_in ?? 0}{" "}
                   checked in
                 </span>
                 <ArrowUpRight size={19} />

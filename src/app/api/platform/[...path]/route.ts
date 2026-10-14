@@ -648,7 +648,7 @@ async function dispatch(req: Request, parts: string[]) {
           );
         return json(
           await query(
-            sql`SELECT e.id,e.title,e.status,e.starts_at,e.ends_at,e.duration_minutes,c.code AS course_code,c.name AS course_name,c.section,(SELECT count(*)::int FROM enrollments WHERE course_id=e.course_id) AS enrolled,(SELECT count(*)::int FROM attempts WHERE exam_id=e.id) AS attended,(SELECT count(*)::int FROM attempts WHERE exam_id=e.id AND status='ACTIVE' AND deadline>now() AND last_heartbeat_at>now()-interval '45 seconds') AS active_now FROM exams e JOIN courses c ON c.id=e.course_id WHERE e.deleted_at IS NULL AND (${u.role === "ADMIN"} OR c.teacher_id=${u.id}) ORDER BY e.created_at DESC`,
+              sql`SELECT e.id,e.title,e.status,e.starts_at,e.ends_at,e.duration_minutes,c.code AS course_code,c.name AS course_name,c.section,(SELECT count(*)::int FROM enrollments WHERE course_id=e.course_id) AS enrolled,(SELECT count(*)::int FROM attempts WHERE exam_id=e.id) AS attended,(SELECT count(*)::int FROM checkins WHERE exam_id=e.id) AS checked_in,(SELECT count(*)::int FROM attempts WHERE exam_id=e.id AND submitted_at IS NOT NULL) AS submitted,(SELECT count(*)::int FROM attempts WHERE exam_id=e.id AND status='ACTIVE' AND deadline>now() AND last_heartbeat_at>now()-interval '45 seconds') AS active_now FROM exams e JOIN courses c ON c.id=e.course_id WHERE e.deleted_at IS NULL AND (${u.role === "ADMIN"} OR c.teacher_id=${u.id}) ORDER BY e.created_at DESC`,
           ),
         );
       }

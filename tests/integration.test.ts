@@ -322,6 +322,34 @@ describe("server authorization and exam lifecycle", () => {
     login(teacher);
     expect((await request("exams/" + exam)).status).toBe(200);
   });
+  it("lists exam schedule and completed submission totals for teachers", async () => {
+    login(teacher);
+    const listedExam = randomUUID();
+    const submittedUser = randomUUID();
+    await db.execute(
+      sql`INSERT INTO users(id,email,name,password_hash,role,student_id) VALUES(${submittedUser},${submittedUser + "@test.local"},'Submitted Student','unused','STUDENT','SUBMITTED-ID')`,
+    );
+    await db.execute(
+      sql`INSERT INTO enrollments(course_id,user_id) VALUES(${course},${submittedUser})`,
+    );
+    await db.execute(
+      sql`INSERT INTO exams(id,course_id,title,status,starts_at,ends_at,duration_minutes,policy,code_secret) VALUES(${listedExam},${course},'Schedule details','PUBLISHED',now()-interval '1 hour',now()+interval '2 hours',60,'{}'::jsonb,'secret')`,
+    );
+    await db.execute(
+      sql`INSERT INTO attempts(id,exam_id,user_id,device_session_id,deadline,status,submitted_at) VALUES(${randomUUID()},${listedExam},${submittedUser},${device},now(),'SUBMITTED',now())`,
+    );
+    const response = await request("exams");
+    const rows = await response.json();
+    const listed = rows.find((row: { id: string }) => row.id === listedExam);
+    expect(response.status).toBe(200);
+    expect(listed).toMatchObject({
+      submitted: 1,
+      checked_in: 0,
+      enrolled: 3,
+    });
+    expect(listed.starts_at).toBeTruthy();
+    expect(listed.ends_at).toBeTruthy();
+  });
   it("limits student exam visibility to enrolled courses and removes access after unenrollment", async () => {
     const previousAllowlist = process.env.STUDENT_LOGIN_EMAILS;
     const scopedStudent = randomUUID();

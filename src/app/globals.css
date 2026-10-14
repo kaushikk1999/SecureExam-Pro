@@ -1154,6 +1154,19 @@ input[type="radio"] {
   font-size: 19px;
   margin-top: 24px;
 }
+.exam-card-details {
+  display: grid;
+  gap: 5px;
+  margin-top: 14px;
+}
+.exam-card-details p {
+  margin: 0;
+  flex-wrap: wrap;
+}
+.exam-card-details strong {
+  color: var(--muted);
+  font-weight: 650;
+}
 .exam-card p {
   font-size: 11px;
   color: #8c9bab;
