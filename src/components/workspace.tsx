@@ -1051,27 +1051,12 @@ function ExamDetail({ id }: { id: string }) {
         router.replace("/workspace/exams");
         return;
       }
-      const result = await api(`exams/${id}/control`, {
+      await api(`exams/${id}/control`, {
         action: a,
         ...(a === "extend" ? { minutes: extraMinutes } : {}),
       });
       await refresh();
-      if (a === "publish" || a === "schedule") {
-        const notification = result.notification;
-        if (!notification) setMessage("Change saved.");
-        else if (notification.sent > 0 && notification.failed === 0)
-          setMessage(
-            `Exam ${a === "schedule" ? "scheduled" : "published"}. ${notification.sent} student email(s) sent.`,
-          );
-        else if (notification.failed > 0)
-          setMessage(
-            `Exam ${a === "schedule" ? "scheduled" : "published"}, but student email was not sent: ${notification.reason ?? "email delivery failed"}`,
-          );
-        else
-          setMessage(
-            "Exam published. No eligible students are enrolled in this course yet.",
-          );
-      } else setMessage("Change saved.");
+      setMessage("Change saved.");
       setControlDialog(null);
     } catch (err) {
       setMessage((err as Error).message);
@@ -2348,9 +2333,7 @@ function Students() {
       setMessage(
         result.alreadyEnrolled
           ? "This student is already enrolled in this course."
-          : result.notification?.sent
-            ? "Student enrolled. Confirmation email sent."
-            : `Student enrolled. Confirmation email was not sent${result.notification?.reason ? `: ${result.notification.reason}` : "."}`,
+          : "Student enrolled successfully.",
       );
       setRoster(await api(`courses/${selectedCourseId}/students`));
       await refreshCourses();
@@ -2373,16 +2356,11 @@ function Students() {
       setMode("");
       setCourseCode("");
       setCourseSection("");
-      setMessage("Saved successfully.");
-      if (result.notification?.failed) {
-        setMessage(
-          `Saved ${result.count} student record(s), but enrollment email was not sent: ${result.notification.reason ?? "email delivery failed"}`,
-        );
-      } else if (result.notification?.sent) {
-        setMessage(
-          `Saved successfully. ${result.notification.sent} enrollment email(s) sent.`,
-        );
-      }
+      setMessage(
+        result.count
+          ? `Saved successfully. ${result.count} student record(s) added.`
+          : "Saved successfully.",
+      );
       await refreshCourses();
     } catch (err) {
       setMessage((err as Error).message);

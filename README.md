@@ -166,7 +166,7 @@ See [docs/SECURITY.md](docs/SECURITY.md). Browser signals are untrusted observat
 
 Raw camera/microphone recordings are never uploaded. No facial identity, sensitive attribute, gaze, emotional, or personality inference is implemented. Face/person counting and audio conversation analysis are intentionally not enabled without a validated, accessible local model. Coding responses are manually graded; arbitrary student code is never executed.
 
-The retention setting is a policy/disclosure setting, not an automatic destructive deletion job. Immutable dispute evidence must be archived/deleted through an institution-approved privileged process, including backups. Do not promise automatic deletion at the configured day count. Course enrollment QR codes and course-scoped email notifications are implemented; email requires a configured Resend account and verified sender. Exam room-code check-in, automated code execution, image OCR, and AI-driven paper conversion are not enabled; rotating numeric codes, browser alerts, manual grading, document previews and editable AI drafts cover the corresponding core workflows.
+The retention setting is a policy/disclosure setting, not an automatic destructive deletion job. Immutable dispute evidence must be archived/deleted through an institution-approved privileged process, including backups. Do not promise automatic deletion at the configured day count. Course enrollment QR codes are implemented. Exam room-code check-in, automated code execution, image OCR, and AI-driven paper conversion are not enabled; rotating numeric codes, browser alerts, manual grading, document previews and editable AI drafts cover the corresponding core workflows.
 
 ## 12. Quality gate
 

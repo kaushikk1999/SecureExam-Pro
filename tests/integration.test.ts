@@ -390,26 +390,12 @@ describe("server authorization and exam lifecycle", () => {
       delete process.env.STUDENT_LOGIN_EMAILS;
     else process.env.STUDENT_LOGIN_EMAILS = previousAllowlist;
   });
-  it("sends enrollment confirmation and a published exam link only to eligible students in that course", async () => {
-    const previousApiKey = process.env.RESEND_API_KEY;
-    const previousFrom = process.env.EMAIL_FROM;
+  it("enrolls students and publishes exams without sending email", async () => {
     const mailCourse = randomUUID();
     const mailStudent = randomUUID();
     const mailExam = randomUUID();
-    const sentBatches: any[][] = [];
-    process.env.RESEND_API_KEY = "resend-test-key";
-    process.env.EMAIL_FROM = "SecureExam <noreply@example.test>";
-    vi.stubGlobal(
-      "fetch",
-      vi.fn(async (_url: string | URL | Request, init?: RequestInit) => {
-        const batch = JSON.parse(String(init?.body));
-        sentBatches.push(batch);
-        return new Response(
-          JSON.stringify({ data: batch.map(() => ({ id: "email-test-id" })) }),
-          { status: 200, headers: { "content-type": "application/json" } },
-        );
-      }),
-    );
+    const fetchMock = vi.fn();
+    vi.stubGlobal("fetch", fetchMock);
 
     try {
       await db.execute(
@@ -426,12 +412,7 @@ describe("server authorization and exam lifecycle", () => {
         },
       );
       expect(enrolled.status).toBe(200);
-      expect((await enrolled.json()).notification).toMatchObject({
-        sent: 1,
-        failed: 0,
-      });
-      expect(sentBatches[0][0].to).toBe("mail-student@test.local");
-      expect(sentBatches[0][0].subject).toContain("enrolled");
+      expect(await enrolled.json()).not.toHaveProperty("notification");
 
       const [sourceExam] = await query(
         sql`SELECT policy FROM exams WHERE id=${exam}`,
@@ -446,20 +427,10 @@ describe("server authorization and exam lifecycle", () => {
         action: "publish",
       });
       expect(published.status).toBe(200);
-      expect((await published.json()).notification).toMatchObject({
-        sent: 1,
-        failed: 0,
-      });
-      expect(sentBatches).toHaveLength(2);
-      expect(sentBatches[1]).toHaveLength(1);
-      expect(sentBatches[1][0].to).toBe("mail-student@test.local");
-      expect(sentBatches[1][0].text).toContain(`/exam/${mailExam}`);
+      expect(await published.json()).not.toHaveProperty("notification");
+      expect(fetchMock).not.toHaveBeenCalled();
     } finally {
       vi.unstubAllGlobals();
-      if (previousApiKey === undefined) delete process.env.RESEND_API_KEY;
-      else process.env.RESEND_API_KEY = previousApiKey;
-      if (previousFrom === undefined) delete process.env.EMAIL_FROM;
-      else process.env.EMAIL_FROM = previousFrom;
     }
   });
   it("lets a student save a unique ID for exam identity confirmation", async () => {

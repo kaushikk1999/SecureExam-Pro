@@ -55,7 +55,7 @@ These contain only locally generated demonstration data. No password fields or p
 - Deployed HTTPS/cookie behavior, real TOTP provisioning/recovery and production cron scheduling.
 - Physical webcam/microphone devices, browser permission revocation, campus indoor GPS, approved assistive technologies and full-cohort load.
 - Automatic retention purging is not implemented; the configurable retention period is an institutional policy/disclosure setting. See SECURITY.md and DEPLOYMENT.md.
-- Face/person detection, raw recording, exam room-code check-in, OCR and automated code execution are not enabled. Course enrollment QR codes and course-scoped enrollment/published-exam emails are implemented, but email delivery requires the production Resend configuration described in `docs/DEPLOYMENT.md`.
+- Face/person detection, raw recording, exam room-code check-in, OCR, automated code execution and outbound email are not enabled. Course enrollment QR codes remain available.
 
 The development-only lint dependency tree has five transitive high-severity entries for an upstream braces recursion advisory with no compatible patched version reported by the registry. This is separate from the clean production dependency audit and is documented in SECURITY.md.
 
@@ -83,7 +83,7 @@ Google and custom university OpenID Connect provider credentials are environment
 
 ## Verification update — 13 October 2026
 
-The current source adds explicit API coverage for course-scoped roster access and exam visibility, removal of a student's enrollment, enrollment confirmation email, and a published exam email whose recipient list and link are restricted to that course. The student browser scenario also asserts that the pre-exam checklist is shown before entry. The exam preflight now accepts a device where screen capture is unavailable when that check is disclosed as unsupported.
+The current source adds explicit API coverage for course-scoped roster access and exam visibility, removal of a student's enrollment, and that enrollment and exam publishing do not invoke outbound email. The student browser scenario also asserts that the pre-exam checklist is shown before entry. The exam preflight now accepts a device where screen capture is unavailable when that check is disclosed as unsupported.
 
 | Check | Result |
 | --- | --- |
@@ -92,5 +92,3 @@ The current source adds explicit API coverage for course-scoped roster access an
 | `npm run lint` | Passed |
 | `npm run build` | Passed |
 | Targeted Playwright student scenario | Not run: local PostgreSQL at `127.0.0.1:55432` was unavailable |
-
-Email tests mock the Resend API and prove the app's recipient selection and link content; they do not prove production delivery. Production email requires the Resend environment variables in `docs/DEPLOYMENT.md`.
