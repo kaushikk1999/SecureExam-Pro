@@ -1921,9 +1921,7 @@ export default function ExamRoom({
                         </p>
                       )}
                     </>
-                  ) : ["NUMERIC", "FILL_BLANK", "SHORT_ANSWER"].includes(
-                      q.type,
-                    ) ? (
+                  ) : ["NUMERIC", "FILL_BLANK"].includes(q.type) ? (
                     <label>
                       Your answer
                       <input
@@ -1938,10 +1936,12 @@ export default function ExamRoom({
                     <label>
                       {q.type === "MATCHING"
                         ? "Enter your matching pairs, one per line"
-                        : "Your response"}
+                        : q.type === "SHORT_ANSWER"
+                          ? "Your answer"
+                          : "Your response"}
                       <textarea
                         className="exam-answer-field"
-                        rows={12}
+                        rows={q.type === "SHORT_ANSWER" ? 4 : 12}
                         value={values[q.id] ?? ""}
                         onChange={(e) => change(q.id, e.target.value)}
                         placeholder="Write your answer here…"

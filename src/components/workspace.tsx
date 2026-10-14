@@ -1076,6 +1076,7 @@ function ExamDetail({ id }: { id: string }) {
   const [paperBusy, setPaperBusy] = useState(false);
   const [paperSaving, setPaperSaving] = useState(false);
   const [paperError, setPaperError] = useState("");
+  const [paperNotice, setPaperNotice] = useState("");
   async function action(a: string, extraMinutes?: number) {
     setBusy(true);
     setMessage("");
@@ -1367,15 +1368,18 @@ function ExamDetail({ id }: { id: string }) {
                 <div>
                   <h2>Make question paper with AI</h2>
                   <p className="muted">
-                    Paste question material or load text extracted from an
-                    uploaded DOCX. Review every question and suggested answer
-                    before adding it to this exam.
+                    Paste question material or load extracted text from an
+                    uploaded DOCX, searchable PDF, or TXT file. Clearly labeled
+                    papers keep their wording, numbering, sections, choices, and
+                    marks. Review every question and answer suggestion before
+                    adding it to this exam.
                   </p>
                 </div>
                 <button
                   onClick={() => {
                     setPaperOpen(!paperOpen);
                     setPaperError("");
+                    setPaperNotice("");
                   }}
                 >
                   <Sparkles size={17} />{" "}
@@ -1397,7 +1401,7 @@ function ExamDetail({ id }: { id: string }) {
                         event.target.value = "";
                       }}
                     >
-                      <option value="">Choose an uploaded DOCX…</option>
+                      <option value="">Choose an uploaded document…</option>
                       {e.files
                         .filter((f: any) => f.extracted_text)
                         .map((f: any) => (
@@ -1428,12 +1432,14 @@ function ExamDetail({ id }: { id: string }) {
                     onClick={async () => {
                       setPaperBusy(true);
                       setPaperError("");
+                      setPaperNotice("");
                       setPaperDrafts([]);
                       try {
                         const result = await api(`exams/${id}/ai-paper-draft`, {
                           source: paperSource,
                         });
                         setPaperDrafts(result.questions);
+                        setPaperNotice(result.notice ?? "");
                       } catch (err) {
                         setPaperError((err as Error).message);
                       } finally {
@@ -1447,6 +1453,11 @@ function ExamDetail({ id }: { id: string }) {
                       : "Format questions with AI"}
                   </button>
                   <ErrorBox message={paperError} />
+                  {paperNotice && (
+                    <p role="status" className="notice">
+                      {paperNotice}
+                    </p>
+                  )}
                   {paperDrafts.length > 0 && (
                     <div className="ai-question-results">
                       <div className="ai-question-results-heading">
@@ -1718,10 +1729,11 @@ function ExamDetail({ id }: { id: string }) {
               <section className="panel form-panel">
                 <h2>Supporting materials</h2>
                 <p className="muted">
-                  Upload a DOCX as the question paper. Students can download
+                  Upload a DOCX, searchable PDF, or TXT as the question paper. Students can download
                   their own copy, complete it in Word, and upload a personal
                   submission named with their student ID. DOCX, PDF, images and
-                  text up to 4 MB are supported.
+                  text up to 4 MB are supported. Image-only PDFs can be shared,
+                  but their text cannot be imported into the AI question builder.
                 </p>
                 {e.status === "DRAFT" && (
                   <Upload examId={id} done={() => void refresh()} />

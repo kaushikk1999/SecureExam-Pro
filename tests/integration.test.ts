@@ -4,6 +4,7 @@ import { readFile, readdir, rm } from "node:fs/promises";
 import { randomUUID } from "node:crypto";
 import { sql } from "drizzle-orm";
 import { strToU8, zipSync } from "fflate";
+import { searchablePdf } from "./helpers/searchable-pdf";
 const auth = vi.hoisted(() => ({ session: null as any }));
 const requestSession = new AsyncLocalStorage<string>();
 const blob = vi.hoisted(() => ({
@@ -1134,4 +1135,71 @@ it("adds a generated paper to only its draft exam and keeps it out of the bank",
       (q: { prompt: string }) => q.prompt === detail.questions[0].prompt,
     ),
   ).toBe(false);
+});
+
+it("uploads searchable PDF text so it can be loaded into the question builder", async () => {
+  login(teacher);
+  process.env.BLOB_READ_WRITE_TOKEN = "test-private-storage-token";
+  const paperExam = randomUUID();
+  await db.execute(
+    sql`INSERT INTO exams(id,course_id,title,status,starts_at,ends_at,duration_minutes,policy,code_secret) VALUES(${paperExam},${course},'Searchable PDF upload','DRAFT',now()+interval '1 hour',now()+interval '2 hours',60,${JSON.stringify(policySchema.parse({ camera: false, microphone: false, location: false, fullscreen: false, classroomCode: false }))}::jsonb,'secret')`,
+  );
+  const form = new FormData();
+  form.set(
+    "file",
+    new File([searchablePdf(["PART A - MULTIPLE CHOICE", "A1. Which answer is correct?"])], "paper.pdf", {
+      type: "application/pdf",
+    }),
+  );
+  form.set("examId", paperExam);
+  const response = await uploadRequest("files", form);
+  expect(response.status).toBe(200);
+  const detail = await (await request(`exams/${paperExam}`)).json();
+  expect(detail.files[0].name).toBe("paper.pdf");
+  expect(detail.files[0].extracted_text).toContain("A1. Which answer is correct?");
+});
+
+it("uses Ollama for answer suggestions while keeping a labeled source paper unchanged", async () => {
+  login(teacher);
+  const paperExam = randomUUID();
+  await db.execute(
+    sql`INSERT INTO exams(id,course_id,title,status,starts_at,ends_at,duration_minutes,policy,code_secret) VALUES(${paperExam},${course},'Source faithful AI paper','DRAFT',now()+interval '1 hour',now()+interval '2 hours',60,${JSON.stringify(policySchema.parse({ camera: false, microphone: false, location: false, fullscreen: false, classroomCode: false }))}::jsonb,'secret')`,
+  );
+  vi.stubEnv("OLLAMA_ENABLED", "true");
+  vi.stubEnv("OLLAMA_API_KEY", "test-key");
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async () =>
+      Response.json({
+        message: {
+          content: JSON.stringify({
+            answers: [
+              { sourceId: "A1", solution: "B", rubric: "Award one mark for B.", topic: "Business", difficulty: "Easy" },
+              { sourceId: "C1", solution: "Source answer", rubric: "Award for a correct explanation.", topic: "Business", difficulty: "Medium" },
+            ],
+          }),
+        },
+      }),
+    ),
+  );
+  try {
+    const response = await request(`exams/${paperExam}/ai-paper-draft`, {
+      source: `PART A — MULTIPLE CHOICE (1 × 1 = 1 mark)\nType the letter of the best answer.\nA1. Select the exact answer.\nA) First choice\nB) Second choice\nAnswer (A/B):\n\nPART C — SHORT ANSWER (1 × 2 = 2 marks)\nAnswer in one sentence.\nC1. Explain this source idea.\nAnswer (type here):`,
+    });
+    expect(response.status).toBe(200);
+    const result = await response.json();
+    expect(result.questions).toHaveLength(2);
+    expect(result.questions[0]).toMatchObject({
+      prompt: "Type the letter of the best answer.\n\nA1. Select the exact answer.",
+      options: ["A) First choice", "B) Second choice"],
+      solution: "B) Second choice",
+      marks: 1,
+    });
+    expect(result.questions[1].prompt).toContain("C1. Explain this source idea.");
+    expect(result.questions[1].prompt).toContain("Answer in one sentence.");
+    expect(result.notice).toBe("");
+  } finally {
+    vi.unstubAllGlobals();
+    vi.unstubAllEnvs();
+  }
 });
