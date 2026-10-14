@@ -2,7 +2,10 @@ import { randomUUID } from "node:crypto";
 import { sql } from "drizzle-orm";
 import { db, query, type Tx } from "./db";
 import { audit } from "./audit";
-import { examFullscreenRequired } from "./exam-device";
+import {
+  examFullscreenRequired,
+  examScreenSharingRequired,
+} from "./exam-device";
 import { HttpError, type Actor } from "./auth";
 import {
   validClassroomCode,
@@ -124,8 +127,8 @@ export async function effectivePolicy(
     tx,
   );
   const p = policySchema.parse(e.policy);
-  // Full-screen sharing is a platform-wide exam entry requirement, including
-  // exams created before the requirement was introduced.
+  // Require full-screen sharing on laptops, where browsers expose reliable
+  // display capture. Tablets use the browser's tablet typing mode instead.
   p.screen = true;
   if (acc?.camera_exempt) p.camera = false;
   if (acc?.microphone_exempt) p.microphone = false;
@@ -183,6 +186,8 @@ export async function startAttempt(
       if (
         (k !== "fullscreen" ||
           examFullscreenRequired(p.fullscreen, input.deviceClass)) &&
+        (k !== "screen" ||
+          examScreenSharingRequired(p.screen, input.deviceClass)) &&
         p[k] &&
         !input.checks[k]
       )
@@ -258,6 +263,7 @@ export async function startAttempt(
       microphone: !!input.checks.microphone,
       screen: !!input.checks.screen,
       screenShareUnavailable: !!input.screenShareUnavailable,
+      deviceClass: input.deviceClass,
       fullscreen: !!input.checks.fullscreen,
       online: true,
     };
@@ -296,6 +302,9 @@ export async function event(
   const [e] = await query(sql`SELECT * FROM exams WHERE id=${a.exam_id}`, tx);
   if (e.status === "PAUSED") return;
   const { policy, accommodation } = await effectivePolicy(e, u.id, tx);
+  // Tablet sessions do not use capture, so a stale or forged stop event must
+  // never count as a screen-sharing warning for those attempts.
+  if (a.device_state?.deviceClass === "tablet") policy.screen = false;
   let eventType = type;
   let meta = metadata;
   if (type === "LOCATION_CHECK") {

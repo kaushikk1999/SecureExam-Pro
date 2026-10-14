@@ -3,6 +3,7 @@ import {
   classifyExamDevice,
   examFullscreenRequired,
   examFullscreenSatisfied,
+  examScreenSharingRequired,
   screenSharePreflightSatisfied,
   examRequestDeviceAllowed,
 } from "../src/lib/exam-device";
@@ -22,6 +23,13 @@ describe("supported exam devices", () => {
     expect(screenSharePreflightSatisfied(true, true, "monitor")).toBe(true);
     expect(screenSharePreflightSatisfied(true, true, undefined)).toBe(false);
     expect(screenSharePreflightSatisfied(false, false, undefined)).toBe(true);
+  });
+
+  it("requires screen sharing only for laptops, not tablets", () => {
+    expect(examScreenSharingRequired(true, "laptop")).toBe(true);
+    expect(examScreenSharingRequired(true, "tablet")).toBe(false);
+    expect(examScreenSharingRequired(true, "phone")).toBe(false);
+    expect(examScreenSharingRequired(false, "laptop")).toBe(false);
   });
 
   it("allows laptops and common iPad and Android tablet identifiers", () => {

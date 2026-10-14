@@ -27,6 +27,14 @@ export function examFullscreenSatisfied(
   );
 }
 
+/** Full-screen capture is required only on laptops; tablets cannot reliably expose it. */
+export function examScreenSharingRequired(
+  policyRequiresScreenSharing: boolean,
+  deviceClass: ExamDeviceClass,
+) {
+  return policyRequiresScreenSharing && deviceClass === "laptop";
+}
+
 /** A required screen check passes only when an active entire-monitor capture exists. */
 export function screenSharePreflightSatisfied(
   required: boolean,
@@ -49,7 +57,9 @@ export function classifyExamDevice({
   mobileHint = false,
 }: ExamDeviceSignals): ExamDeviceClass {
   if (tabletUserAgent.test(userAgent)) return "tablet";
-  if (/iPhone|iPod|Windows Phone|BlackBerry|IEMobile|Opera Mini/i.test(userAgent))
+  if (
+    /iPhone|iPod|Windows Phone|BlackBerry|IEMobile|Opera Mini/i.test(userAgent)
+  )
     return "phone";
   if (/Android.*Mobile/i.test(userAgent)) return "phone";
   const largeTouchDevice = maxTouchPoints > 0 && minScreenDimension >= 600;
@@ -61,11 +71,7 @@ export function classifyExamDevice({
   // iPadOS desktop mode and some Android tablet browsers report a generic
   // desktop/mobile hint. Prefer the tablet hardware/UA signals over that hint.
   if (/Android/i.test(userAgent)) {
-    if (
-      minScreenDimension >= 600 &&
-      maxTouchPoints > 1
-    )
-      return "tablet";
+    if (minScreenDimension >= 600 && maxTouchPoints > 1) return "tablet";
     return /Mobile/i.test(userAgent) || mobileHint ? "phone" : "tablet";
   }
   if (phoneUserAgent.test(userAgent) || mobileHint) return "phone";

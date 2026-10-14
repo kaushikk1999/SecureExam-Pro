@@ -569,6 +569,70 @@ describe("server authorization and exam lifecycle", () => {
       error: "Required screen check has not passed.",
     });
   });
+  it("allows tablet exam entry without screen sharing and disables tablet screen view", async () => {
+    const tabletStudent = randomUUID();
+    const tabletDevice = randomUUID();
+    const previousAllowlist = process.env.STUDENT_LOGIN_EMAILS;
+    process.env.STUDENT_LOGIN_EMAILS = [
+      previousAllowlist,
+      `${tabletStudent}@test.local`,
+    ]
+      .filter(Boolean)
+      .join(",");
+    await db.execute(
+      sql`INSERT INTO users(id,email,name,password_hash,role,student_id) VALUES(${tabletStudent},${tabletStudent + "@test.local"},'Tablet Test','unused','STUDENT','TABLET-ID')`,
+    );
+    await db.execute(
+      sql`INSERT INTO exam_devices(id,user_id,session_version) VALUES(${tabletDevice},${tabletStudent},0)`,
+    );
+    await db.execute(
+      sql`INSERT INTO enrollments(course_id,user_id) VALUES(${course},${tabletStudent})`,
+    );
+    login(tabletStudent);
+    const started = await request(
+      `exams/${exam}/start`,
+      {
+        ...start,
+        deviceSessionId: tabletDevice,
+        deviceClass: "tablet",
+        checks: { ...start.checks, screen: false },
+      },
+      {
+        "user-agent":
+          "Mozilla/5.0 (Linux; Android 14; SM-X900) Chrome/130 Safari/537.36",
+        "sec-ch-ua-mobile": "?0",
+      },
+    );
+    expect(started.status).toBe(200);
+    const { id } = await started.json();
+    const attempt = (
+      await query(sql`SELECT device_state FROM attempts WHERE id=${id}`)
+    )[0];
+    expect(attempt.device_state).toMatchObject({
+      deviceClass: "tablet",
+      screen: false,
+    });
+    const tabletSync = await request(
+      `attempts/${id}/sync`,
+      { events: [{ id: randomUUID(), type: "SCREEN_SHARE_STOPPED" }] },
+      { "x-exam-device": tabletDevice },
+    );
+    expect(tabletSync.status).toBe(200);
+    expect(await tabletSync.json()).toMatchObject({ warnings: 0 });
+
+    login(teacher);
+    const screenStatus = await request(`attempts/${id}/screen`);
+    expect(screenStatus.status).toBe(200);
+    expect(await screenStatus.json()).toMatchObject({ supported: false });
+    expect(
+      (await request(`attempts/${id}/screen/request`, {}, {}, "POST")).status,
+    ).toBe(409);
+    await db.execute(
+      sql`UPDATE attempts SET status='SUBMITTED',submitted_at=now() WHERE id=${id}`,
+    );
+    process.env.STUDENT_LOGIN_EMAILS = previousAllowlist ?? "";
+    login(student);
+  });
   it("rejects an accurate outside location", async () => {
     const p = policySchema.parse({
       camera: false,
@@ -636,6 +700,9 @@ describe("server authorization and exam lifecycle", () => {
         })
       ).status,
     ).toBe(409);
+    login(teacher);
+    expect((await request(`attempts/${attempt}/screen`)).status).toBe(200);
+    login(student);
   });
   it("publishes and starts an exam that uses an uploaded Word paper instead of typed questions", async () => {
     const paperExam = randomUUID();
@@ -1147,16 +1214,27 @@ it("uploads searchable PDF text so it can be loaded into the question builder", 
   const form = new FormData();
   form.set(
     "file",
-    new File([searchablePdf(["PART A - MULTIPLE CHOICE", "A1. Which answer is correct?"])], "paper.pdf", {
-      type: "application/pdf",
-    }),
+    new File(
+      [
+        searchablePdf([
+          "PART A - MULTIPLE CHOICE",
+          "A1. Which answer is correct?",
+        ]),
+      ],
+      "paper.pdf",
+      {
+        type: "application/pdf",
+      },
+    ),
   );
   form.set("examId", paperExam);
   const response = await uploadRequest("files", form);
   expect(response.status).toBe(200);
   const detail = await (await request(`exams/${paperExam}`)).json();
   expect(detail.files[0].name).toBe("paper.pdf");
-  expect(detail.files[0].extracted_text).toContain("A1. Which answer is correct?");
+  expect(detail.files[0].extracted_text).toContain(
+    "A1. Which answer is correct?",
+  );
 });
 
 it("uses Ollama for answer suggestions while keeping a labeled source paper unchanged", async () => {
@@ -1174,8 +1252,20 @@ it("uses Ollama for answer suggestions while keeping a labeled source paper unch
         message: {
           content: JSON.stringify({
             answers: [
-              { sourceId: "A1", solution: "B", rubric: "Award one mark for B.", topic: "Business", difficulty: "Easy" },
-              { sourceId: "C1", solution: "Source answer", rubric: "Award for a correct explanation.", topic: "Business", difficulty: "Medium" },
+              {
+                sourceId: "A1",
+                solution: "B",
+                rubric: "Award one mark for B.",
+                topic: "Business",
+                difficulty: "Easy",
+              },
+              {
+                sourceId: "C1",
+                solution: "Source answer",
+                rubric: "Award for a correct explanation.",
+                topic: "Business",
+                difficulty: "Medium",
+              },
             ],
           }),
         },
@@ -1190,12 +1280,15 @@ it("uses Ollama for answer suggestions while keeping a labeled source paper unch
     const result = await response.json();
     expect(result.questions).toHaveLength(2);
     expect(result.questions[0]).toMatchObject({
-      prompt: "Type the letter of the best answer.\n\nA1. Select the exact answer.",
+      prompt:
+        "Type the letter of the best answer.\n\nA1. Select the exact answer.",
       options: ["A) First choice", "B) Second choice"],
       solution: "B) Second choice",
       marks: 1,
     });
-    expect(result.questions[1].prompt).toContain("C1. Explain this source idea.");
+    expect(result.questions[1].prompt).toContain(
+      "C1. Explain this source idea.",
+    );
     expect(result.questions[1].prompt).toContain("Answer in one sentence.");
     expect(result.notice).toBe("");
   } finally {
@@ -1212,7 +1305,12 @@ it("keeps a source-faithful question draft when Ollama is unavailable", async ()
   );
   vi.stubEnv("OLLAMA_ENABLED", "true");
   vi.stubEnv("OLLAMA_API_KEY", "test-key");
-  vi.stubGlobal("fetch", vi.fn(async () => { throw new Error("Ollama unavailable"); }));
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async () => {
+      throw new Error("Ollama unavailable");
+    }),
+  );
   try {
     const response = await request(`exams/${paperExam}/ai-paper-draft`, {
       source: `PART A — MULTIPLE CHOICE (1 × 1 = 1 mark)\nType the letter of the best answer.\nA1. Which option was supplied?\nA) Original first\nB) Original second\n\nPART C — SHORT ANSWER (1 × 2 = 2 marks)\nC1. Explain the supplied idea.`,
@@ -1220,12 +1318,18 @@ it("keeps a source-faithful question draft when Ollama is unavailable", async ()
     expect(response.status).toBe(200);
     const result = await response.json();
     expect(result.questions).toHaveLength(2);
-    expect(result.questions[0].prompt).toContain("A1. Which option was supplied?");
+    expect(result.questions[0].prompt).toContain(
+      "A1. Which option was supplied?",
+    );
     expect(result.questions[0].options).toEqual([
       "A) Original first",
       "B) Original second",
     ]);
-    expect(result.questions.every((question: { solution: unknown }) => question.solution === null)).toBe(true);
+    expect(
+      result.questions.every(
+        (question: { solution: unknown }) => question.solution === null,
+      ),
+    ).toBe(true);
     expect(result.notice).toContain("Ollama did not return");
   } finally {
     vi.unstubAllGlobals();

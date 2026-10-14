@@ -633,7 +633,8 @@ function ExamList() {
               <h2>{e.title}</h2>
               <div className="exam-card-details">
                 <p>
-                  <Clock3 size={15} /> <strong>Starts</strong> {time(e.starts_at)}
+                  <Clock3 size={15} /> <strong>Starts</strong>{" "}
+                  {time(e.starts_at)}
                 </p>
                 <p>
                   <Clock3 size={15} /> <strong>Ends</strong> {time(e.ends_at)}
@@ -649,8 +650,8 @@ function ExamList() {
               </div>
               <div className="exam-card-bottom">
                 <span>
-                  <Users size={16} /> {e.enrolled} assigned · {e.checked_in ?? 0}{" "}
-                  checked in
+                  <Users size={16} /> {e.enrolled} assigned ·{" "}
+                  {e.checked_in ?? 0} checked in
                 </span>
                 <ArrowUpRight size={19} />
               </div>
@@ -672,10 +673,10 @@ function ExamForm({ done, initial }: { done: () => void; initial?: any }) {
   const { data: courses } = useData("courses"),
     { data: rooms } = useData("classrooms");
   const [policy, setPolicy] = useState({
-    ...standard,
-    ...initial?.policy,
-    screen: true,
-  }),
+      ...standard,
+      ...initial?.policy,
+      screen: true,
+    }),
     [preset, setPreset] = useState(initial ? "custom" : "standard"),
     [instructions, setInstructions] = useState(initial?.instructions ?? ""),
     [error, setError] = useState(""),
@@ -911,8 +912,8 @@ function ExamForm({ done, initial }: { done: () => void; initial?: any }) {
         <fieldset className="exam-checks">
           <legend>Choose student checks</legend>
           <p className="small muted">
-            Select the additional checks for this exam. Entire-screen sharing
-            is required for every exam and cannot be turned off.
+            Select the additional checks for this exam. Entire-screen sharing is
+            required for every exam and cannot be turned off.
           </p>
           <div className="check-grid">
             {[
@@ -1729,11 +1730,12 @@ function ExamDetail({ id }: { id: string }) {
               <section className="panel form-panel">
                 <h2>Supporting materials</h2>
                 <p className="muted">
-                  Upload a DOCX, searchable PDF, or TXT as the question paper. Students can download
-                  their own copy, complete it in Word, and upload a personal
-                  submission named with their student ID. DOCX, PDF, images and
-                  text up to 4 MB are supported. Image-only PDFs can be shared,
-                  but their text cannot be imported into the AI question builder.
+                  Upload a DOCX, searchable PDF, or TXT as the question paper.
+                  Students can download their own copy, complete it in Word, and
+                  upload a personal submission named with their student ID.
+                  DOCX, PDF, images and text up to 4 MB are supported.
+                  Image-only PDFs can be shared, but their text cannot be
+                  imported into the AI question builder.
                 </p>
                 {e.status === "DRAFT" && (
                   <Upload examId={id} done={() => void refresh()} />
@@ -3425,11 +3427,13 @@ function Monitor({ id, policy }: { id: string; policy?: any }) {
                       <>
                         <br />
                         Screen{" "}
-                        {s.device_state?.screen
-                          ? "✓ Shared"
-                          : s.device_state?.screenShareUnavailable
-                            ? "Unavailable in tablet browser"
-                            : "Not shared"}
+                        {s.device_state?.deviceClass === "tablet"
+                          ? "Not required on tablet"
+                          : s.device_state?.screen
+                            ? "✓ Shared"
+                            : s.device_state?.screenShareUnavailable
+                              ? "Unavailable in browser"
+                              : "Not shared"}
                       </>
                     )}
                   </td>
@@ -3451,19 +3455,26 @@ function Monitor({ id, policy }: { id: string; policy?: any }) {
                         </button>
                         {data.policy?.screen && s.status === "ACTIVE" && (
                           <button
-                            disabled={!s.device_state?.screen}
+                            disabled={
+                              s.device_state?.deviceClass === "tablet" ||
+                              !s.device_state?.screen
+                            }
                             title={
-                              s.device_state?.screen
-                                ? "Request a temporary live view"
-                                : s.device_state?.screenShareUnavailable
-                                  ? "This tablet browser does not provide screen sharing"
-                                  : "Student screen share is unavailable"
+                              s.device_state?.deviceClass === "tablet"
+                                ? "Live screen sharing is only supported on laptops"
+                                : s.device_state?.screen
+                                  ? "Request a temporary live view"
+                                  : s.device_state?.screenShareUnavailable
+                                    ? "This browser does not provide screen sharing"
+                                    : "Student screen share is unavailable"
                             }
                             onClick={() => setScreenStudent(s)}
                           >
-                            {s.device_state?.screen
-                              ? "View screen"
-                              : "Screen unavailable"}
+                            {s.device_state?.deviceClass === "tablet"
+                              ? "Not available on tablet"
+                              : s.device_state?.screen
+                                ? "View screen"
+                                : "Screen unavailable"}
                           </button>
                         )}
                       </div>
