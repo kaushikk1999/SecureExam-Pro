@@ -1,6 +1,8 @@
 import { getVercelOidcToken } from "@vercel/oidc";
 import { ExternalAccountClient } from "google-auth-library";
 import { randomUUID } from "node:crypto";
+import { sql } from "drizzle-orm";
+import { query } from "./db";
 import { HttpError } from "./auth";
 
 function googleAuth(scopes: string[]) {
@@ -26,6 +28,386 @@ function googleAuth(scopes: string[]) {
   if (!auth)
     throw new HttpError(503, "Google Cloud federation is misconfigured.");
   return auth;
+}
+
+async function driveToken() {
+  const auth = googleAuth(["https://www.googleapis.com/auth/drive.file"]);
+  const { token } = await auth.getAccessToken();
+  if (!token) throw new HttpError(503, "Google Drive authorization failed.");
+  return token;
+}
+
+async function findDriveChild(
+  token: string,
+  parentId: string,
+  name: string,
+  mimeType?: string,
+) {
+  const escapedName = name.replaceAll("\\", "\\\\").replaceAll("'", "\\'");
+  const query = [
+    `name='${escapedName}'`,
+    `'${parentId}' in parents`,
+    "trashed=false",
+    ...(mimeType ? [`mimeType='${mimeType}'`] : []),
+  ].join(" and ");
+  const response = await fetch(
+    `https://www.googleapis.com/drive/v3/files?q=${encodeURIComponent(query)}&fields=files(id,name,mimeType,parents)&pageSize=100`,
+    { headers: { Authorization: `Bearer ${token}` }, cache: "no-store" },
+  );
+  if (!response.ok) throw new HttpError(502, "Google Drive search failed.");
+  const result = (await response.json()) as {
+    files?: {
+      id: string;
+      name: string;
+      mimeType: string;
+      parents?: string[];
+    }[];
+  };
+  return result.files?.[0] ?? null;
+}
+
+async function listDriveChildren(token: string, parentId: string) {
+  const query = `'${parentId}' in parents and trashed=false`;
+  const files: { id: string; name: string; mimeType: string }[] = [];
+  let pageToken: string | undefined;
+  do {
+    const params = new URLSearchParams({
+      q: query,
+      fields: "nextPageToken,files(id,name,mimeType)",
+      pageSize: "1000",
+    });
+    if (pageToken) params.set("pageToken", pageToken);
+    const response = await fetch(
+      `https://www.googleapis.com/drive/v3/files?${params}`,
+      { headers: { Authorization: `Bearer ${token}` }, cache: "no-store" },
+    );
+    if (!response.ok) throw new HttpError(502, "Google Drive listing failed.");
+    const result = (await response.json()) as {
+      nextPageToken?: string;
+      files?: { id: string; name: string; mimeType: string }[];
+    };
+    files.push(...(result.files ?? []));
+    pageToken = result.nextPageToken;
+  } while (pageToken);
+  return files;
+}
+
+async function deleteDriveItem(token: string, fileId: string) {
+  const response = await fetch(
+    `https://www.googleapis.com/drive/v3/files/${encodeURIComponent(fileId)}`,
+    {
+      method: "DELETE",
+      headers: { Authorization: `Bearer ${token}` },
+      signal: AbortSignal.timeout(30000),
+    },
+  );
+  if (!response.ok && response.status !== 404)
+    throw new HttpError(502, "Google Drive could not delete archived evidence.");
+}
+
+async function deleteDriveFolderTree(token: string, folderId: string) {
+  const children = await listDriveChildren(token, folderId);
+  for (const child of children) {
+    if (child.mimeType === "application/vnd.google-apps.folder")
+      await deleteDriveFolderTree(token, child.id);
+    else await deleteDriveItem(token, child.id);
+  }
+  await deleteDriveItem(token, folderId);
+}
+
+async function ensureDriveFolder(
+  token: string,
+  parentId: string,
+  name: string,
+) {
+  const existing = await findDriveChild(
+    token,
+    parentId,
+    name,
+    "application/vnd.google-apps.folder",
+  );
+  if (existing) return existing.id;
+  const response = await fetch(
+    "https://www.googleapis.com/drive/v3/files?fields=id",
+    {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${token}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        name,
+        mimeType: "application/vnd.google-apps.folder",
+        parents: [parentId],
+      }),
+      signal: AbortSignal.timeout(15000),
+    },
+  );
+  if (!response.ok)
+    throw new HttpError(502, "Google Drive folder creation failed.");
+  const result = (await response.json()) as { id?: string };
+  if (!result.id)
+    throw new HttpError(502, "Google Drive returned no folder ID.");
+  return result.id;
+}
+
+async function uploadDriveFile(
+  token: string,
+  parentId: string,
+  name: string,
+  mime: string,
+  bytes: Buffer,
+  existingId?: string,
+) {
+  const boundary = `secureexam_${randomUUID().replaceAll("-", "")}`;
+  const metadata = JSON.stringify({
+    name,
+    ...(existingId ? {} : { parents: [parentId] }),
+  });
+  const payload = Buffer.concat([
+    Buffer.from(
+      `--${boundary}\r\nContent-Type: application/json; charset=UTF-8\r\n\r\n${metadata}\r\n--${boundary}\r\nContent-Type: ${mime}\r\n\r\n`,
+    ),
+    bytes,
+    Buffer.from(`\r\n--${boundary}--`),
+  ]);
+  const endpoint = existingId
+    ? `https://www.googleapis.com/upload/drive/v3/files/${encodeURIComponent(existingId)}`
+    : "https://www.googleapis.com/upload/drive/v3/files";
+  const response = await fetch(`${endpoint}?uploadType=multipart&fields=id`, {
+    method: existingId ? "PATCH" : "POST",
+    headers: {
+      Authorization: `Bearer ${token}`,
+      "Content-Type": `multipart/related; boundary=${boundary}`,
+    },
+    body: payload,
+    signal: AbortSignal.timeout(30000),
+  });
+  if (!response.ok)
+    throw new HttpError(502, "Google Drive could not store evidence.");
+  const result = (await response.json()) as { id?: string };
+  const fileId = result.id ?? existingId;
+  if (!fileId) throw new HttpError(502, "Google Drive returned no file ID.");
+  return fileId;
+}
+
+async function moveDriveFile(token: string, fileId: string, folderId: string) {
+  const response = await fetch(
+    `https://www.googleapis.com/drive/v3/files/${encodeURIComponent(fileId)}?fields=id,parents`,
+    { headers: { Authorization: `Bearer ${token}` }, cache: "no-store" },
+  );
+  if (!response.ok)
+    throw new HttpError(502, "Google Drive file lookup failed.");
+  const file = (await response.json()) as { parents?: string[] };
+  if (file.parents?.includes(folderId)) return;
+  const params = new URLSearchParams({ addParents: folderId });
+  if (file.parents?.length) params.set("removeParents", file.parents.join(","));
+  const moved = await fetch(
+    `https://www.googleapis.com/drive/v3/files/${encodeURIComponent(fileId)}?${params}`,
+    {
+      method: "PATCH",
+      headers: { Authorization: `Bearer ${token}` },
+      signal: AbortSignal.timeout(15000),
+    },
+  );
+  if (!moved.ok)
+    throw new HttpError(502, "Google Drive could not organize evidence.");
+}
+
+const safeDriveName = (value: string, fallback: string) =>
+  value
+    .normalize("NFKD")
+    .replace(/[^\p{L}\p{N}._ -]+/gu, "")
+    .replace(/\s+/g, " ")
+    .replace(/^\.+|\.+$/g, "")
+    .trim()
+    .slice(0, 100) || fallback;
+
+function formatActivityTime(value: string | Date) {
+  return new Intl.DateTimeFormat("en-GB", {
+    dateStyle: "medium",
+    timeStyle: "medium",
+    timeZone: "Asia/Bangkok",
+  }).format(new Date(value));
+}
+
+/** Archive a warned student's screenshots and a readable activity report in Drive. */
+export async function archiveWarningEvidenceToDrive(input: {
+  examId: string;
+  examTitle: string;
+  courseName: string;
+  courseCode: string;
+  section: string;
+  studentName: string;
+  studentId: string | null;
+  email: string;
+  attemptStatus: string;
+  warnings: number;
+  startedAt: string | Date;
+  submittedAt: string | Date | null;
+  events: {
+    event_type: string;
+    severity: string;
+    created_at: string | Date;
+    metadata: Record<string, unknown>;
+  }[];
+  evidence: {
+    id: string;
+    name: string;
+    mime: string;
+    url: string;
+    created_at: string | Date;
+  }[];
+}) {
+  if (input.warnings <= 0) return { archived: false, evidenceCount: 0 };
+  const parentId = process.env.GDRIVE_FOLDER_ID;
+  if (!parentId)
+    throw new HttpError(
+      503,
+      "Google Drive evidence storage is not configured.",
+    );
+  const token = await driveToken();
+  const rootId = await ensureDriveFolder(token, parentId, "Secure Exam");
+  const examName = `${safeDriveName(input.examTitle, "Exam")} (${input.examId.slice(0, 8)})`;
+  const examFolderId = await ensureDriveFolder(token, rootId, examName);
+  const studentName = `${safeDriveName(input.studentName, "Student")} (${safeDriveName(input.studentId ?? input.email, "no-id")})`;
+  const studentFolderId = await ensureDriveFolder(
+    token,
+    examFolderId,
+    studentName,
+  );
+
+  let evidenceCount = 0;
+  const archivedEvidence: string[] = [];
+  for (let start = 0; start < input.evidence.length; start += 8) {
+    const archived = await Promise.all(
+      input.evidence.slice(start, start + 8).map(async (file) => {
+        let reference = file.url;
+        if (reference.startsWith("gdrive:")) {
+          await moveDriveFile(
+            token,
+            reference.slice("gdrive:".length),
+            studentFolderId,
+          );
+        } else {
+          const stream = await readPrivateFile(reference);
+          if (!stream) return null;
+          const bytes = Buffer.from(await new Response(stream).arrayBuffer());
+          const storedId = await uploadDriveFile(
+            token,
+            studentFolderId,
+            safeDriveName(file.name, `${file.id}.jpg`),
+            file.mime,
+            bytes,
+          );
+          reference = `gdrive:${storedId}`;
+          await query(
+            sql`UPDATE files SET url=${reference} WHERE id=${file.id}`,
+          );
+          await deletePrivateFile(file.url);
+        }
+        return `${formatActivityTime(file.created_at)} (Asia/Bangkok) | ${safeDriveName(file.name, `${file.id}.jpg`)}`;
+      }),
+    );
+    for (const entry of archived) {
+      if (entry) {
+        evidenceCount++;
+        archivedEvidence.push(entry);
+      }
+    }
+  }
+
+  const events = [...input.events].sort(
+    (a, b) =>
+      new Date(a.created_at).getTime() - new Date(b.created_at).getTime(),
+  );
+  const submitReason =
+    input.attemptStatus === "AUTO_SUBMITTED_SECURITY"
+      ? "Automatically submitted after the configured security-warning threshold was reached. Review the warning events below; signals are not a verdict."
+      : input.attemptStatus === "AUTO_SUBMITTED_TIME"
+        ? "Automatically submitted when the attempt deadline expired."
+        : input.attemptStatus === "SUBMITTED"
+          ? "Submitted by the student."
+          : input.attemptStatus;
+  const report = [
+    "SECURE EXAM — STUDENT ACTIVITY & WARNING RECORD",
+    "",
+    `Exam: ${input.examTitle}`,
+    `Course: ${input.courseCode} · ${input.courseName}${input.section ? ` · ${input.section}` : ""}`,
+    `Student: ${input.studentName}`,
+    `Student ID: ${input.studentId ?? "Not provided"}`,
+    `Email: ${input.email}`,
+    `Attempt started: ${formatActivityTime(input.startedAt)} (Asia/Bangkok)`,
+    `Attempt status: ${input.attemptStatus}`,
+    `Submitted: ${input.submittedAt ? formatActivityTime(input.submittedAt) + " (Asia/Bangkok)" : "Not submitted"}`,
+    `Warnings issued: ${input.warnings}`,
+    `Submission reason: ${submitReason}`,
+    `Screenshots archived: ${evidenceCount}`,
+    "",
+    "ACTIVITY TIMELINE",
+    ...events.map((event) => {
+      const reason = event.metadata.reason;
+      const metadata = Object.entries(event.metadata)
+        .filter(
+          ([key]) => !["evidenceFileId", "clientObservedAt"].includes(key),
+        )
+        .map(
+          ([key, value]) =>
+            `${key}: ${typeof value === "string" ? value : JSON.stringify(value)}`,
+        )
+        .join("; ");
+      return `${formatActivityTime(event.created_at)} (Asia/Bangkok) | ${event.severity} | ${event.event_type}${reason ? ` | reason: ${String(reason)}` : ""}${metadata ? ` | ${metadata}` : ""}`;
+    }),
+    "",
+    "SCREENSHOTS",
+    ...(archivedEvidence.length
+      ? archivedEvidence
+      : ["No activity screenshots were available for this attempt."]),
+    "",
+    "Evidence is a record of application signals and captured screen snapshots, not a determination of misconduct. Review it with the student and relevant context.",
+  ].join("\n");
+  const reportName = "Student activity and warning report.txt";
+  const existingReport = await findDriveChild(
+    token,
+    studentFolderId,
+    reportName,
+  );
+  const reportId = await uploadDriveFile(
+    token,
+    studentFolderId,
+    reportName,
+    "text/plain; charset=utf-8",
+    Buffer.from(report, "utf8"),
+    existingReport?.id,
+  );
+  return { archived: true, evidenceCount, folderId: studentFolderId, reportId };
+}
+
+/** Remove the exam-specific evidence archive when its exam is deleted. */
+export async function deleteWarningEvidenceArchiveFromDrive(
+  examId: string,
+  examTitle: string,
+) {
+  const parentId = process.env.GDRIVE_FOLDER_ID;
+  if (!parentId) return { deleted: false };
+  const token = await driveToken();
+  const root = await findDriveChild(
+    token,
+    parentId,
+    "Secure Exam",
+    "application/vnd.google-apps.folder",
+  );
+  if (!root) return { deleted: false };
+  const examName = `${safeDriveName(examTitle, "Exam")} (${examId.slice(0, 8)})`;
+  const examFolder = await findDriveChild(
+    token,
+    root.id,
+    examName,
+    "application/vnd.google-apps.folder",
+  );
+  if (!examFolder) return { deleted: false };
+  await deleteDriveFolderTree(token, examFolder.id);
+  return { deleted: true };
 }
 
 /** Store private exam material or attempt uploads in Vercel Blob, falling back to a shared Drive folder. */

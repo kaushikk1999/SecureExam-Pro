@@ -1985,6 +1985,48 @@ td .actions select {
   color: #91a0af;
   margin: 4px 0 0;
 }
+.monitor-student-row.has-warnings > td {
+  background: #fff5f4;
+}
+.monitor-student-row.has-warnings > td:first-child {
+  box-shadow: inset 4px 0 #c83b3b;
+}
+.monitor-student-row.no-warnings > td {
+  background: #f2fbf6;
+}
+.monitor-student-row.no-warnings > td:first-child {
+  box-shadow: inset 4px 0 #19845a;
+}
+.monitor-student-link {
+  padding: 0;
+  border: 0;
+  background: none;
+  color: #1b304b;
+  font: inherit;
+  font-weight: 700;
+  text-align: left;
+  text-decoration: underline;
+  text-decoration-color: #91a6bd;
+  text-underline-offset: 3px;
+  cursor: pointer;
+}
+.monitor-student-row.has-warnings .monitor-student-link {
+  color: #a83232;
+  text-decoration-color: #d78a8a;
+}
+.monitor-student-row.no-warnings .monitor-student-link {
+  color: #14704c;
+  text-decoration-color: #7eb99e;
+}
+.evidence-storage-note {
+  margin: 10px 0 16px;
+  font-size: 12px;
+}
+.monitor-student-link:focus-visible {
+  outline: 3px solid var(--blue);
+  outline-offset: 3px;
+  border-radius: 3px;
+}
 .review-panel {
   border: 2px solid #c9dff6;
   margin-top: 25px;

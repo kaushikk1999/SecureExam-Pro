@@ -1297,7 +1297,7 @@ export default function ExamRoom({
             {p.screen && screenShareUnsupported
               ? " Full-screen sharing has not passed. You cannot start until the browser confirms that Entire screen is being shared."
               : p.screen
-                ? " This exam requires your entire screen to remain shared. A small screenshot may be saved with a monitored activity event while sharing is active. Authorized instructors can review those private screenshots while the exam record is retained; deleting the exam also removes its stored files."
+                ? " This exam requires your entire screen to remain shared. A small screenshot may be saved with a monitored activity event while sharing is active. If evidence archiving is configured, warning screenshots and a timestamped activity report are stored in the instructor’s Secure Exam Google Drive folder. Authorized instructors can review them while the exam record is retained; deleting the exam also removes its stored files and archive."
                 : " Entire-screen sharing is required for all exams."}{" "}
             Camera movement and microphone sound signals can be mistaken; they
             do not identify a person or prove misconduct. Your instructor must

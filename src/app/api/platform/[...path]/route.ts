@@ -1,4 +1,4 @@
-import { NextResponse } from "next/server";
+import { after, NextResponse } from "next/server";
 import { randomUUID, randomBytes } from "node:crypto";
 import { hash } from "bcryptjs";
 import { sql } from "drizzle-orm";
@@ -45,6 +45,8 @@ import {
   ai,
   syncSheets,
   storePrivateFile,
+  archiveWarningEvidenceToDrive,
+  deleteWarningEvidenceArchiveFromDrive,
   readPrivateFile,
   deletePrivateFile,
 } from "@/lib/integrations";
@@ -85,6 +87,43 @@ async function studentAccess(id: string, u: Actor) {
     sql`SELECT id FROM users WHERE id=${id} AND role='STUDENT' AND (${u.role === "ADMIN"} OR created_by=${u.id} OR id IN(SELECT n.user_id FROM enrollments n JOIN courses c ON c.id=n.course_id WHERE c.teacher_id=${u.id}))`,
   );
   if (!s) throw new HttpError(403, "Student access denied.");
+}
+async function archiveAttemptWarningEvidence(id: string) {
+  const [student] = await query<any>(sql`
+    SELECT a.exam_id,a.status AS attempt_status,a.warnings,a.started_at,a.submitted_at,
+           u.name AS student_name,u.student_id,u.email,e.title AS exam_title,
+           c.name AS course_name,c.code AS course_code,c.section
+    FROM attempts a
+    JOIN users u ON u.id=a.user_id
+    JOIN exams e ON e.id=a.exam_id
+    JOIN courses c ON c.id=e.course_id
+    WHERE a.id=${id} AND a.warnings>0
+  `);
+  if (!student) return { archived: false, evidenceCount: 0 };
+  const [events, evidence] = await Promise.all([
+    query<any>(
+      sql`SELECT event_type,severity,created_at,metadata FROM audit_events WHERE attempt_id=${id} ORDER BY sequence`,
+    ),
+    query<any>(
+      sql`SELECT id,name,mime,url,created_at FROM files WHERE attempt_id=${id} AND name LIKE 'EVIDENCE::%' ORDER BY created_at`,
+    ),
+  ]);
+  return archiveWarningEvidenceToDrive({
+    examId: student.exam_id,
+    examTitle: student.exam_title,
+    courseName: student.course_name,
+    courseCode: student.course_code,
+    section: student.section,
+    studentName: student.student_name,
+    studentId: student.student_id,
+    email: student.email,
+    attemptStatus: student.attempt_status,
+    warnings: student.warnings,
+    startedAt: student.started_at,
+    submittedAt: student.submitted_at,
+    events,
+    evidence,
+  });
 }
 async function reportRows(id: string, u: Actor) {
   await ownedExam(id, u);
@@ -822,6 +861,7 @@ async function dispatch(req: Request, parts: string[]) {
         sql`SELECT id,url FROM files WHERE exam_id=${id}`,
       );
       for (const file of examFiles) await deletePrivateFile(file.url);
+      await deleteWarningEvidenceArchiveFromDrive(id, e.title);
 
       await db.transaction(async (tx) => {
         const [lockedExam] = await query(
@@ -1113,7 +1153,7 @@ async function dispatch(req: Request, parts: string[]) {
             await finish(tx, a, "AUTO_SUBMITTED_TIME", u.id);
       });
       const students = await query(
-        sql`SELECT u.id AS user_id,u.name,u.email,u.student_id,a.*,(SELECT count(*)::int FROM answers an WHERE an.attempt_id=a.id AND an.value NOT IN('null'::jsonb,'""'::jsonb)) AS answered,k.approved,k.created_at AS checkin_at FROM enrollments n JOIN users u ON u.id=n.user_id LEFT JOIN attempts a ON a.user_id=u.id AND a.exam_id=${id} LEFT JOIN checkins k ON k.user_id=u.id AND k.exam_id=${id} WHERE n.course_id=${e.course_id} ORDER BY u.name`,
+        sql`SELECT u.id AS user_id,u.name,u.email,u.student_id,a.*,(SELECT count(*)::int FROM answers an WHERE an.attempt_id=a.id AND an.value NOT IN('null'::jsonb,'""'::jsonb)) AS answered,(SELECT min(w.created_at) FROM audit_events w WHERE w.attempt_id=a.id AND w.event_type='WARNING_ISSUED') AS first_warning_at,k.approved,k.created_at AS checkin_at FROM enrollments n JOIN users u ON u.id=n.user_id LEFT JOIN attempts a ON a.user_id=u.id AND a.exam_id=${id} LEFT JOIN checkins k ON k.user_id=u.id AND k.exam_id=${id} WHERE n.course_id=${e.course_id} ORDER BY u.name`,
       );
       const events = await query(
         sql`SELECT ae.*,u.name FROM audit_events ae LEFT JOIN users u ON u.id=ae.user_id WHERE ae.exam_id=${id} ORDER BY sequence DESC LIMIT 100`,
@@ -1139,6 +1179,13 @@ async function dispatch(req: Request, parts: string[]) {
       return json({
         students,
         events,
+        driveEvidenceEnabled: Boolean(
+          process.env.GDRIVE_FOLDER_ID &&
+          process.env.GCP_PROJECT_NUMBER &&
+          process.env.GCP_WORKLOAD_IDENTITY_POOL_ID &&
+          process.env.GCP_WORKLOAD_IDENTITY_POOL_PROVIDER_ID &&
+          process.env.GCP_SERVICE_ACCOUNT_EMAIL,
+        ),
         stats,
         policy: e.policy,
         exam: { id: e.id, title: e.title, status: e.status },
@@ -1354,6 +1401,17 @@ async function dispatch(req: Request, parts: string[]) {
   if (resource === "attempts") {
     uuid.parse(id);
     const device = req.headers.get("x-exam-device") ?? undefined;
+    if (action === "archive-evidence") {
+      if (method !== "POST") throw new HttpError(405, "POST required.");
+      teacher(u);
+      const [attempt] = await query<{ exam_id: string }>(
+        sql`SELECT exam_id FROM attempts WHERE id=${id}`,
+      );
+      if (!attempt) throw new HttpError(404, "Attempt not found.");
+      await ownedExam(attempt.exam_id, u);
+      const result = await archiveAttemptWarningEvidence(id);
+      return json(result);
+    }
     if (action === "screen") {
       const operation = parts[3];
       if (method === "GET") {
@@ -1755,58 +1813,78 @@ async function dispatch(req: Request, parts: string[]) {
       .parse(b);
     if (!["sync", "submit"].includes(action))
       throw new HttpError(404, "Unknown operation.");
-    return json(
-      await db.transaction(async (tx) => {
-        const a = await lockedAttempt(id, u, tx, device);
-        const [e] = await query(
-          sql`SELECT status,paused_at FROM exams WHERE id=${a.exam_id}`,
-          tx,
-        );
-        const answersAccepted = a.status === "ACTIVE" && e.status !== "PAUSED";
-        if (answersAccepted) {
-          await saveAnswers(tx, a, v.answers);
-          for (const ev of v.events) {
-            if (typeof ev.metadata.evidenceFileId === "string") {
-              const evidenceFileId = uuid.parse(ev.metadata.evidenceFileId);
-              const [evidence] = await query(
-                sql`SELECT id FROM files WHERE id=${evidenceFileId} AND exam_id=${a.exam_id} AND attempt_id=${a.id} AND owner_id=${u.id} AND name=${`EVIDENCE::${ev.type}::${ev.id}.jpg`}`,
-                tx,
+    const syncResult = await db.transaction(async (tx) => {
+      const a = await lockedAttempt(id, u, tx, device);
+      const [e] = await query(
+        sql`SELECT status,paused_at FROM exams WHERE id=${a.exam_id}`,
+        tx,
+      );
+      const answersAccepted = a.status === "ACTIVE" && e.status !== "PAUSED";
+      if (answersAccepted) {
+        await saveAnswers(tx, a, v.answers);
+        for (const ev of v.events) {
+          if (typeof ev.metadata.evidenceFileId === "string") {
+            const evidenceFileId = uuid.parse(ev.metadata.evidenceFileId);
+            const [evidence] = await query(
+              sql`SELECT id FROM files WHERE id=${evidenceFileId} AND exam_id=${a.exam_id} AND attempt_id=${a.id} AND owner_id=${u.id} AND name=${`EVIDENCE::${ev.type}::${ev.id}.jpg`}`,
+              tx,
+            );
+            if (!evidence)
+              throw new HttpError(
+                400,
+                "Activity screenshot does not match this exam event.",
               );
-              if (!evidence)
-                throw new HttpError(
-                  400,
-                  "Activity screenshot does not match this exam event.",
-                );
-            }
-            await event(tx, a, u, ev.type, ev.metadata, ev.id);
           }
-          if (action === "submit" && a.status === "ACTIVE") {
-            await finish(tx, a, "SUBMITTED", u.id);
-            a.status = "SUBMITTED";
-          }
+          await event(tx, a, u, ev.type, ev.metadata, ev.id);
         }
-        if (v.deviceState)
-          await tx.execute(
-            sql`UPDATE attempts SET device_state=${JSON.stringify(v.deviceState)}::jsonb,last_heartbeat_at=now() WHERE id=${id}`,
-          );
-        return {
-          status: a.status,
-          warnings: a.warnings,
-          deadline: a.deadline,
-          examStatus: e.status,
-          serverTime: new Date().toISOString(),
-          saved: answersAccepted,
-          answersAccepted,
-          remainingMs: Math.max(
-            0,
-            new Date(a.deadline).getTime() -
-              (e.status === "PAUSED"
-                ? new Date(e.paused_at).getTime()
-                : Date.now()),
-          ),
-        };
-      }),
-    );
+        if (action === "submit" && a.status === "ACTIVE") {
+          await finish(tx, a, "SUBMITTED", u.id);
+          a.status = "SUBMITTED";
+        }
+      }
+      if (v.deviceState)
+        await tx.execute(
+          sql`UPDATE attempts SET device_state=${JSON.stringify(v.deviceState)}::jsonb,last_heartbeat_at=now() WHERE id=${id}`,
+        );
+      return {
+        status: a.status,
+        warnings: a.warnings,
+        deadline: a.deadline,
+        examStatus: e.status,
+        serverTime: new Date().toISOString(),
+        saved: answersAccepted,
+        answersAccepted,
+        remainingMs: Math.max(
+          0,
+          new Date(a.deadline).getTime() -
+            (e.status === "PAUSED"
+              ? new Date(e.paused_at).getTime()
+              : Date.now()),
+        ),
+      };
+    });
+    if (
+      (syncResult.answersAccepted && v.events.length > 0) ||
+      syncResult.status !== "ACTIVE"
+    ) {
+      try {
+        after(async () => {
+          try {
+            await archiveAttemptWarningEvidence(id);
+          } catch (error) {
+            console.error(
+              "Unable to archive warning evidence in Google Drive",
+              error,
+            );
+          }
+        });
+      } catch (error) {
+        // Direct handler tests may run outside Next's request context.
+        if (process.env.NODE_ENV === "production")
+          console.error("Unable to schedule warning evidence archive", error);
+      }
+    }
+    return json(syncResult);
   }
   if (resource === "audit") {
     teacher(u);
@@ -1964,10 +2042,10 @@ async function dispatch(req: Request, parts: string[]) {
             throw new HttpError(403, "Upload access denied.");
           if (eventEvidence) {
             const [exam] = await query(
-              sql`SELECT policy FROM exams WHERE id=${examId}`,
+              sql`SELECT * FROM exams WHERE id=${examId}`,
               tx,
             );
-            if (!exam?.policy?.screen)
+            if (!exam || !(await effectivePolicy(exam, u.id, tx)).policy.screen)
               throw new HttpError(
                 403,
                 "Screen evidence is not enabled for this exam.",

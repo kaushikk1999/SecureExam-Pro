@@ -3163,7 +3163,21 @@ function Monitor({ id, policy }: { id: string; policy?: any }) {
         <Loading />
       </>
     );
-  const students = data.students;
+  const students = [...data.students].sort((a: any, b: any) => {
+    const aWarned = Number(a.warnings ?? 0) > 0;
+    const bWarned = Number(b.warnings ?? 0) > 0;
+    if (aWarned !== bWarned) return aWarned ? -1 : 1;
+    if (aWarned && bWarned) {
+      const aTime = a.first_warning_at
+        ? new Date(a.first_warning_at).getTime()
+        : Number.MAX_SAFE_INTEGER;
+      const bTime = b.first_warning_at
+        ? new Date(b.first_warning_at).getTime()
+        : Number.MAX_SAFE_INTEGER;
+      if (aTime !== bTime) return aTime - bTime;
+    }
+    return String(a.name).localeCompare(String(b.name));
+  });
   async function reviewSupervision() {
     setAiBusy(true);
     setAiError("");
@@ -3248,6 +3262,15 @@ function Monitor({ id, policy }: { id: string; policy?: any }) {
         {data.policy?.screen &&
           " Screen views start only when you select a student's active shared screen."}
       </div>
+      <p className="muted evidence-storage-note">
+        Students with warnings appear first in red, ordered by their first
+        warning; students with no warnings appear in green. Select a student’s
+        name to review the timestamped activity log and any available
+        screenshots.{" "}
+        {data.driveEvidenceEnabled
+          ? "Warned students’ available screenshots and an activity report are archived in Google Drive; students without warnings get no folder."
+          : "Google Drive evidence archiving is not configured for this deployment; set GDRIVE_FOLDER_ID and the service-account access to enable it."}
+      </p>
       <ErrorBox message={error || message} />
       {liveSignal && (
         <div className="warning-banner" role="status">
@@ -3317,9 +3340,26 @@ function Monitor({ id, policy }: { id: string; policy?: any }) {
                   )
                 : 0;
               return (
-                <tr key={s.user_id}>
+                <tr
+                  key={s.user_id}
+                  className={
+                    Number(s.warnings ?? 0) > 0
+                      ? "monitor-student-row has-warnings"
+                      : "monitor-student-row no-warnings"
+                  }
+                >
                   <td>
-                    <strong>{s.name}</strong>
+                    {s.id ? (
+                      <button
+                        className="monitor-student-link"
+                        onClick={() => setSelected(s.id)}
+                        title={`Open ${s.name}'s attempt and activity log`}
+                      >
+                        {s.name}
+                      </button>
+                    ) : (
+                      <strong>{s.name}</strong>
+                    )}
                     <small>{s.student_id || "No student ID"}</small>
                     <small>{s.email}</small>
                   </td>
@@ -3342,6 +3382,9 @@ function Monitor({ id, policy }: { id: string; policy?: any }) {
                     <b className={s.warnings >= 3 ? "danger-text" : ""}>
                       {s.warnings ?? 0} / {policy?.maxWarnings ?? "—"}
                     </b>
+                    {Number(s.warnings ?? 0) > 0 && s.first_warning_at && (
+                      <small>First warning · {time(s.first_warning_at)}</small>
+                    )}
                   </td>
                   <td className="small">
                     Camera {s.device_state?.camera ? "✓" : "—"}
@@ -3613,7 +3656,9 @@ function LiveScreenViewer({
 }
 function AttemptReview({ id, close }: { id: string; close: () => void }) {
   const { data: a, error, refresh } = useData("attempts/" + id);
-  const [message, setMessage] = useState("");
+  const [message, setMessage] = useState(""),
+    [archiveBusy, setArchiveBusy] = useState(false),
+    [archiveMessage, setArchiveMessage] = useState("");
   if (!a) return <ErrorBox message={error} />;
   async function control(action: string, eventId?: string) {
     const note = prompt("Reason / review note (required)");
@@ -3627,6 +3672,22 @@ function AttemptReview({ id, close }: { id: string; close: () => void }) {
       setMessage("Action recorded in the audit trail.");
     } catch (e) {
       setMessage((e as Error).message);
+    }
+  }
+  async function archiveEvidence() {
+    setArchiveBusy(true);
+    setArchiveMessage("");
+    try {
+      const result = await api(`attempts/${id}/archive-evidence`, {});
+      setArchiveMessage(
+        result.archived
+          ? `Google Drive archive updated with ${result.evidenceCount} screenshot${result.evidenceCount === 1 ? "" : "s"} and the activity report.`
+          : "No warning evidence is available to archive.",
+      );
+    } catch (cause) {
+      setArchiveMessage((cause as Error).message);
+    } finally {
+      setArchiveBusy(false);
     }
   }
   return (
@@ -3759,6 +3820,16 @@ function AttemptReview({ id, close }: { id: string; close: () => void }) {
         </section>
       )}
       <h3>Incident evidence</h3>
+      {Number(a.warnings ?? 0) > 0 && (
+        <div className="actions evidence-archive-actions">
+          <button onClick={() => void archiveEvidence()} disabled={archiveBusy}>
+            {archiveBusy
+              ? "Saving evidence to Google Drive…"
+              : "Save / refresh warning evidence in Google Drive"}
+          </button>
+          {archiveMessage && <p role="status">{archiveMessage}</p>}
+        </div>
+      )}
       {a.events?.map((e: any) => (
         <details key={e.id}>
           <summary>
