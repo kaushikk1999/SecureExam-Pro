@@ -541,6 +541,7 @@ function Overview({ user }: { user: Actor }) {
 }
 const standard = {
   camera: true,
+  aiCameraMonitoring: false,
   microphone: true,
   location: true,
   screen: true,
@@ -671,7 +672,8 @@ function ExamForm({ done, initial }: { done: () => void; initial?: any }) {
   const router = useRouter();
   const [formNow] = useState(() => Date.now());
   const { data: courses } = useData("courses"),
-    { data: rooms } = useData("classrooms");
+    { data: rooms } = useData("classrooms"),
+    { data: settings } = useData("settings");
   const [policy, setPolicy] = useState({
       ...standard,
       ...initial?.policy,
@@ -923,6 +925,11 @@ function ExamForm({ done, initial }: { done: () => void; initial?: any }) {
                 "Request camera access and monitor the camera feed.",
               ],
               [
+                "aiCameraMonitoring",
+                "Ollama camera review (optional)",
+                "Periodically send small, temporary camera samples to Ollama to flag a missing face, multiple people, possible mouth movement, or a visible phone/extra screen. Signals are advisory and never add warning strikes or auto-submit.",
+              ],
+              [
                 "microphone",
                 "Microphone",
                 "Check sustained sound levels; audio is not recorded or transcribed.",
@@ -963,16 +970,31 @@ function ExamForm({ done, initial }: { done: () => void; initial?: any }) {
                   <input
                     type="checkbox"
                     checked={key === "screen" || Boolean(policy[key])}
-                    disabled={key === "screen"}
+                    disabled={
+                      key === "screen" ||
+                      (key === "aiCameraMonitoring" &&
+                        (!policy.camera || !settings?.integrations?.ai))
+                    }
                     onChange={(event) => {
                       if (key === "screen") return;
                       setPreset("custom");
-                      setPolicy({ ...policy, [key]: event.target.checked });
+                      setPolicy({
+                        ...policy,
+                        [key]: event.target.checked,
+                        ...(key === "camera" && !event.target.checked
+                          ? { aiCameraMonitoring: false }
+                          : {}),
+                      });
                     }}
                   />
                   {label}
                 </span>
-                <small>{description}</small>
+                <small>
+                  {key === "aiCameraMonitoring" && !settings?.integrations?.ai
+                    ? "Unavailable until the Ollama integration (OLLAMA_ENABLED and OLLAMA_API_KEY) is configured. " +
+                      description
+                    : description}
+                </small>
               </label>
             ))}
           </div>
@@ -993,6 +1015,7 @@ function ExamForm({ done, initial }: { done: () => void; initial?: any }) {
                   typeof value === "boolean" &&
                   ![
                     "camera",
+                    "aiCameraMonitoring",
                     "microphone",
                     "location",
                     "screen",
@@ -3104,7 +3127,7 @@ function Monitor({ id, policy }: { id: string; policy?: any }) {
     lastVisibleSignal = useRef(0);
   useEffect(() => {
     if (!data) return;
-    const alertTypes = ["SPEECH_ACTIVITY", "CAMERA_MOTION"];
+    const alertTypes = ["SPEECH_ACTIVITY", "CAMERA_MOTION", "AI_CAMERA_REVIEW"];
     const newest = data.events.find(
       (e: any) => e.severity === "HIGH" || alertTypes.includes(e.event_type),
     );
@@ -3126,7 +3149,9 @@ function Monitor({ id, policy }: { id: string; policy?: any }) {
   useEffect(() => {
     if (!data) return;
     const recentSignals = data.events.filter((event: any) =>
-      ["SPEECH_ACTIVITY", "CAMERA_MOTION"].includes(event.event_type),
+      ["SPEECH_ACTIVITY", "CAMERA_MOTION", "AI_CAMERA_REVIEW"].includes(
+        event.event_type,
+      ),
     );
     const newest = recentSignals[0];
     if (!aiSignalsInitialized.current) {
@@ -3143,7 +3168,9 @@ function Monitor({ id, policy }: { id: string; policy?: any }) {
       const label =
         newest.event_type === "SPEECH_ACTIVITY"
           ? "sustained voice activity"
-          : "repeated camera-frame movement";
+          : newest.event_type === "CAMERA_MOTION"
+            ? "repeated camera-frame movement"
+            : `Ollama camera review signal (${String(newest.metadata?.signals ?? "").replaceAll(",", ", ")})`;
       setLiveSignal(
         `${newest.name ?? "A student"}: ${label} signal. Review the event timeline; this signal alone does not establish misconduct.`,
       );

@@ -2,6 +2,7 @@ import { createHash, createHmac, timingSafeEqual } from "node:crypto";
 import { z } from "zod";
 export const policySchema = z.object({
   camera: z.boolean().default(true),
+  aiCameraMonitoring: z.boolean().default(false),
   microphone: z.boolean().default(true),
   location: z.boolean().default(true),
   screen: z.boolean().default(false),

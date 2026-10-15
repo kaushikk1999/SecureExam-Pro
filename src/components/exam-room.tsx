@@ -110,6 +110,7 @@ export default function ExamRoom({
     }),
     [deviceClass, setDeviceClass] = useState<ExamDeviceClass>("unsupported"),
     [accepted, setAccepted] = useState(false),
+    [aiCameraAccepted, setAiCameraAccepted] = useState(false),
     [studentId, setStudentId] = useState(user.student_id ?? ""),
     [identitySaved, setIdentitySaved] = useState(!!user.student_id),
     [identityConfirmed, setIdentityConfirmed] = useState(false),
@@ -684,6 +685,7 @@ export default function ExamRoom({
         deviceSessionId: device.current,
         deviceClass,
         accepted,
+        aiCameraAccepted,
         checks: {
           ...checks,
           fullscreen:
@@ -820,6 +822,10 @@ export default function ExamRoom({
     document.addEventListener("cut", copy);
     let speechTimer: ReturnType<typeof setInterval> | undefined;
     let motionTimer: ReturnType<typeof setInterval> | undefined;
+    let visionTimer: ReturnType<typeof setInterval> | undefined;
+    let visionStarted: ReturnType<typeof setTimeout> | undefined;
+    let visionBusy = false;
+    let lastVisionNotice = 0;
     const analyser = microphoneAudio.current?.analyser;
     if (attempt.policy.microphone && analyser) {
       const audioSamples = new Uint8Array(analyser.fftSize);
@@ -914,6 +920,80 @@ export default function ExamRoom({
         }, 1000);
       }
     }
+    if (attempt.policy.aiCameraMonitoring && attempt.policy.camera) {
+      const captureFrame = async () => {
+        const camera = video.current;
+        if (
+          !camera ||
+          camera.readyState < HTMLMediaElement.HAVE_CURRENT_DATA ||
+          active.current?.status !== "ACTIVE"
+        )
+          return null;
+        const canvas = document.createElement("canvas");
+        canvas.width = 256;
+        canvas.height = 192;
+        const context = canvas.getContext("2d");
+        if (!context) return null;
+        context.drawImage(camera, 0, 0, canvas.width, canvas.height);
+        const blob = await new Promise<Blob | null>((resolve) =>
+          canvas.toBlob(resolve, "image/jpeg", 0.45),
+        );
+        if (!blob || blob.size > 100_000) return null;
+        return await new Promise<string>((resolve, reject) => {
+          const reader = new FileReader();
+          reader.onerror = () =>
+            reject(new Error("Could not read camera sample."));
+          reader.onload = () =>
+            resolve(String(reader.result).split(",", 2)[1] ?? "");
+          reader.readAsDataURL(blob);
+        });
+      };
+      const reviewCamera = async () => {
+        if (visionBusy || active.current?.status !== "ACTIVE") return;
+        visionBusy = true;
+        try {
+          const first = await captureFrame();
+          if (!first) return;
+          await new Promise((resolve) => setTimeout(resolve, 1800));
+          const second = await captureFrame();
+          if (!second || active.current?.status !== "ACTIVE") return;
+          const result = await api(
+            `attempts/${attempt.id}/vision-review`,
+            { frames: [first, second] },
+            "POST",
+            { "x-exam-device": device.current },
+          );
+          const signals: string[] = result.signals ?? [];
+          if (!signals.length) return;
+          if (Date.now() - lastVisionNotice > 30000) {
+            lastVisionNotice = Date.now();
+            const labels: Record<string, string> = {
+              FACE_NOT_VISIBLE: "your face was not clearly visible",
+              MULTIPLE_PEOPLE_VISIBLE: "more than one person may be visible",
+              POSSIBLE_PHONE_OR_EXTRA_SCREEN:
+                "a phone or extra screen may be visible",
+              POSSIBLE_MOUTH_MOVEMENT: "possible mouth movement was noticed",
+            };
+            const reasons = signals
+              .map((signal) => labels[signal])
+              .filter(Boolean)
+              .join("; ");
+            alert(
+              `Camera review signal: ${reasons}. This automated signal may be mistaken and does not count toward your exam warning limit. Adjust your camera view if needed; your instructor can review the signal.`,
+            );
+          }
+        } catch {
+          // Camera review is advisory and must never interrupt exam progress.
+        } finally {
+          visionBusy = false;
+        }
+      };
+      visionStarted = setTimeout(
+        () => void reviewCamera(),
+        8000 + Math.floor(Math.random() * 37000),
+      );
+      visionTimer = setInterval(() => void reviewCamera(), 60000);
+    }
     let watch: number | undefined;
     let locationTimer: ReturnType<typeof setInterval> | undefined,
       checkpoint: ReturnType<typeof setInterval> | undefined;
@@ -954,6 +1034,8 @@ export default function ExamRoom({
       clearInterval(updates);
       if (speechTimer) clearInterval(speechTimer);
       if (motionTimer) clearInterval(motionTimer);
+      if (visionTimer) clearInterval(visionTimer);
+      if (visionStarted) clearTimeout(visionStarted);
       if (locationTimer) clearInterval(locationTimer);
       if (checkpoint) clearInterval(checkpoint);
       if (watch !== undefined) navigator.geolocation.clearWatch(watch);
@@ -972,6 +1054,7 @@ export default function ExamRoom({
     attempt?.id,
     attempt?.status,
     attempt?.policy.camera,
+    attempt?.policy.aiCameraMonitoring,
     attempt?.policy.location,
     attempt?.policy.microphone,
     deviceClass,
@@ -1166,6 +1249,14 @@ export default function ExamRoom({
           ? "Camera permission is required; coarse movement signals may be logged for instructor review."
           : "Camera monitoring is not enabled.",
       ],
+      ...(p.aiCameraMonitoring
+        ? [
+            [
+              "Ollama camera review",
+              "During the exam, two small, low-resolution camera samples are sent about once per minute to Ollama to look for a face out of view, multiple people, possible mouth movement, or a phone/extra screen. Samples are transient and are not stored by this app. Results can be wrong, do not prove speech or misconduct, and do not count toward auto-submission warnings; only the signal and time are recorded for instructor review.",
+            ],
+          ]
+        : []),
       [
         "Microphone sound level",
         p.microphone
@@ -1245,6 +1336,7 @@ export default function ExamRoom({
       identitySaved &&
       identityConfirmed &&
       accepted &&
+      (!p.aiCameraMonitoring || aiCameraAccepted) &&
       online &&
       permissionReady &&
       (!p.camera || checks.camera) &&
@@ -1434,8 +1526,10 @@ export default function ExamRoom({
               incomplete or inaccurate; your instructor reviews the evidence.
               Sustained microphone sound levels and coarse frame movement are
               checked in this browser. Sound levels cannot identify speech or
-              conversation. No audio, transcript or camera images are sent to
-              AI.{" "}
+              conversation. No audio or transcript is sent to AI.{" "}
+              {p.aiCameraMonitoring
+                ? "Two reduced camera samples are periodically sent to Ollama for the optional camera review described above; samples are not stored by this app."
+                : "No camera images are sent to AI."}{" "}
               {deviceClass === "tablet"
                 ? "Screen sharing is not used on tablets. "
                 : "Entire-screen sharing is required on laptops. "}
@@ -1611,6 +1705,19 @@ export default function ExamRoom({
             />{" "}
             I have read the monitoring notice and examination instructions.
           </label>
+          {p.aiCameraMonitoring && (
+            <label className="check consent">
+              <input
+                type="checkbox"
+                checked={aiCameraAccepted}
+                onChange={(event) => setAiCameraAccepted(event.target.checked)}
+              />{" "}
+              I understand and agree that two reduced camera samples are sent to
+              Ollama about once per minute for the disclosed advisory review.
+              The samples are not stored by this app, and the automated signals
+              may be wrong.
+            </label>
+          )}
           {!examOpen && (
             <div className="notice" role="status">
               <Clock3 size={19} />

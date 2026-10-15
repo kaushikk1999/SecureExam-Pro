@@ -168,6 +168,14 @@ describe("exam course enrollment invitations", () => {
   });
 });
 describe("objective policy", () => {
+  it("keeps Ollama camera review opt-in and informational", () => {
+    const policy = policySchema.parse({});
+    expect(policy.aiCameraMonitoring).toBe(false);
+    expect(warningDecision(4, "AI_CAMERA_REVIEW", policy)).toEqual({
+      warnings: 4,
+      terminate: false,
+    });
+  });
   it("auto submits at the fifth warning", () =>
     expect(warningDecision(4, "TAB_HIDDEN", policySchema.parse({}))).toEqual({
       warnings: 5,

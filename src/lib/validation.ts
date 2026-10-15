@@ -68,6 +68,7 @@ export const startSchema = z.object({
   deviceSessionId: uuid,
   deviceClass: z.enum(["laptop", "tablet", "phone", "unsupported"]),
   accepted: z.boolean(),
+  aiCameraAccepted: z.boolean().default(false),
   code: z.string().max(6).default(""),
   checks: z.object({
     camera: z.boolean(),

@@ -42,6 +42,7 @@ import {
 import { growthRequest } from "@/lib/growth";
 import {
   ai,
+  aiCameraReview,
   syncSheets,
   storePrivateFile,
   archiveWarningEvidenceToDrive,
@@ -60,6 +61,7 @@ import {
 } from "@/lib/document-text";
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
+export const maxDuration = 30;
 const json = (data: unknown) =>
   NextResponse.json(data, { headers: { "Cache-Control": "no-store" } });
 const teacher = (u: Actor) => {
@@ -253,7 +255,9 @@ async function dispatch(req: Request, parts: string[]) {
         retentionDays: 90,
         ...s?.value,
         integrations: {
-          ai: process.env.OLLAMA_ENABLED === "true",
+          ai:
+            process.env.OLLAMA_ENABLED === "true" &&
+            Boolean(process.env.OLLAMA_API_KEY),
           storage: !!process.env.BLOB_READ_WRITE_TOKEN,
           sheets: Boolean(
             process.env.GOOGLE_SHEET_ID &&
@@ -1529,6 +1533,96 @@ async function dispatch(req: Request, parts: string[]) {
   if (resource === "attempts") {
     uuid.parse(id);
     const device = req.headers.get("x-exam-device") ?? undefined;
+    if (action === "vision-review") {
+      if (method !== "POST") throw new HttpError(405, "POST required.");
+      if (u.role !== "STUDENT")
+        throw new HttpError(403, "Student attempt access required.");
+      if (!(await rateLimit(`vision:${id}`, 1, 45)))
+        throw new HttpError(429, "Camera review is running too frequently.");
+      const input = z
+        .object({
+          frames: z.tuple([
+            z
+              .string()
+              .regex(/^[A-Za-z0-9+/]+={0,2}$/)
+              .max(140000),
+            z
+              .string()
+              .regex(/^[A-Za-z0-9+/]+={0,2}$/)
+              .max(140000),
+          ]),
+        })
+        .parse(await body(req));
+      await db.transaction(async (tx) => {
+        const a = await lockedAttempt(id, u, tx, device);
+        const [exam] = await query(
+          sql`SELECT * FROM exams WHERE id=${a.exam_id}`,
+          tx,
+        );
+        const { policy } = await effectivePolicy(exam, u.id, tx);
+        if (!policy.aiCameraMonitoring || !policy.camera)
+          throw new HttpError(
+            403,
+            "Ollama camera review is not enabled for this exam.",
+          );
+        if (a.status !== "ACTIVE" || !a.device_state?.camera)
+          throw new HttpError(
+            409,
+            "The active camera is not available for review.",
+          );
+      });
+      const raw = await aiCameraReview(input.frames);
+      const text = raw.replace(/^```(?:json)?\s*/i, "").replace(/\s*```$/, "");
+      let parsed: unknown;
+      try {
+        parsed = JSON.parse(text);
+      } catch {
+        throw new HttpError(
+          502,
+          "Ollama returned an unreadable camera review.",
+        );
+      }
+      const review = z
+        .object({
+          faceVisible: z.boolean().nullable().optional(),
+          multiplePeople: z.boolean().optional(),
+          possiblePhoneOrExtraScreen: z.boolean().optional(),
+          possibleMouthMovement: z.boolean().optional(),
+        })
+        .parse(parsed);
+      const signals = [
+        ...(review.faceVisible === false ? ["FACE_NOT_VISIBLE"] : []),
+        ...(review.multiplePeople ? ["MULTIPLE_PEOPLE_VISIBLE"] : []),
+        ...(review.possiblePhoneOrExtraScreen
+          ? ["POSSIBLE_PHONE_OR_EXTRA_SCREEN"]
+          : []),
+        ...(review.possibleMouthMovement ? ["POSSIBLE_MOUTH_MOVEMENT"] : []),
+      ];
+      if (signals.length) {
+        await db.transaction(async (tx) => {
+          const a = await lockedAttempt(id, u, tx, device);
+          const [exam] = await query(
+            sql`SELECT * FROM exams WHERE id=${a.exam_id}`,
+            tx,
+          );
+          const { policy } = await effectivePolicy(exam, u.id, tx);
+          if (!policy.aiCameraMonitoring || a.status !== "ACTIVE") return;
+          await event(
+            tx,
+            a,
+            u,
+            "AI_CAMERA_REVIEW",
+            {
+              signals: signals.join(","),
+              measurement:
+                "Ollama review of two transient low-resolution camera frames; advisory only",
+            },
+            randomUUID(),
+          );
+        });
+      }
+      return json({ signals });
+    }
     if (action === "archive-evidence") {
       if (method !== "POST") throw new HttpError(405, "POST required.");
       teacher(u);
@@ -1931,6 +2025,7 @@ async function dispatch(req: Request, parts: string[]) {
                 "MICROPHONE_DISABLED",
                 "SPEECH_ACTIVITY",
                 "CAMERA_MOTION",
+                "AI_CAMERA_REVIEW",
                 "SCREEN_SHARE_STOPPED",
                 "LOCATION_CHECK",
                 "LOCATION_UNAVAILABLE",

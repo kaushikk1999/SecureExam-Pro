@@ -182,6 +182,8 @@ export async function startAttempt(
       );
     if (!input.accepted)
       throw new HttpError(400, "Accept the monitoring notice.");
+    if (p.aiCameraMonitoring && !input.aiCameraAccepted)
+      throw new HttpError(400, "Accept the Ollama camera-review notice.");
     for (const k of ["camera", "microphone", "screen", "fullscreen"] as const)
       if (
         (k !== "fullscreen" ||
@@ -277,6 +279,7 @@ export async function startAttempt(
       type: "EXAM_STARTED",
       metadata: {
         noticeAccepted: true,
+        aiCameraNoticeAccepted: p.aiCameraMonitoring && input.aiCameraAccepted,
         policy: p,
         deviceClass: input.deviceClass,
         location: input.location ?? null,
