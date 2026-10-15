@@ -27,6 +27,7 @@ const { db, query } = await import("../src/lib/db");
 const { GET, POST, PATCH, DELETE } =
   await import("../src/app/api/platform/[...path]/route");
 const { resolveGoogleIdentity } = await import("../src/lib/sso");
+const { readPrivateFile } = await import("../src/lib/integrations");
 const { authOptions } = await import("../src/lib/auth");
 const { auditHash, policySchema, createCourseEnrollmentInvite } =
   await import("../src/lib/domain");
@@ -157,6 +158,21 @@ afterAll(async () => {
   await rm(process.env.PGLITE_PATH!, { recursive: true, force: true });
 });
 describe("server authorization and exam lifecycle", () => {
+  it("reads privately retained warning evidence while Drive storage is unavailable", async () => {
+    const fileId = randomUUID();
+    const image = Buffer.from([0xff, 0xd8, 0xff, 0xd9]);
+    const name = `EVIDENCE::AI_FACE_NOT_VISIBLE::${fileId}.jpg`;
+    await db.execute(
+      sql`INSERT INTO files(id,exam_id,owner_id,name,mime,url,size,extracted_text) VALUES(${fileId},${exam},${student},${name},'image/jpeg',${`inline:${fileId}`},${image.length},${`base64:${image.toString("base64")}`})`,
+    );
+    const stream = await readPrivateFile(`inline:${fileId}`);
+    expect(stream).not.toBeNull();
+    expect(Buffer.from(await new Response(stream).arrayBuffer())).toEqual(
+      image,
+    );
+    await db.execute(sql`DELETE FROM files WHERE id=${fileId}`);
+  });
+
   it("handles 100 simultaneous QR enrollments and exam starts", async () => {
     const previousAllowlist = process.env.STUDENT_LOGIN_EMAILS;
     const previousSecret = process.env.AUTH_SECRET;

@@ -3670,6 +3670,12 @@ function Monitor({ id, policy }: { id: string; policy?: any }) {
                     View warning evidence image
                   </a>
                 )}
+                {e.metadata?.evidenceStorageFallback === true && (
+                  <p className="muted">
+                    Evidence is saved in the app and waiting for Google Drive
+                    archive access to be restored.
+                  </p>
+                )}
               </div>
             </div>
           ))}
@@ -4004,6 +4010,12 @@ function AttemptReview({ id, close }: { id: string; close: () => void }) {
               View warning evidence image
             </a>
           )}
+          {e.metadata?.evidenceStorageFallback === true && (
+            <p className="muted">
+              Evidence is saved in the app and waiting for Google Drive archive
+              access to be restored.
+            </p>
+          )}
           <small>Hash: {e.event_hash}</small>
           <div className="actions">
             <button onClick={() => control("review", e.id)}>
@@ -4258,6 +4270,13 @@ function Audit() {
                             >
                               View screenshot in app →
                             </a>
+                          )}
+                          {event.metadata?.evidenceStorageFallback === true && (
+                            <p className="muted">
+                              Screenshot is available in the app. Google Drive
+                              archive is pending until federation access is
+                              fixed.
+                            </p>
                           )}
                           <small>SHA-256: {event.event_hash}</small>
                         </details>

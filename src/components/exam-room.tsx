@@ -331,7 +331,12 @@ export default function ExamRoom({
       const result = await response.json();
       if (!response.ok)
         throw new Error(result.error ?? "Evidence upload failed.");
-      return { id: String(result.id), captureType, capturedAt };
+      return {
+        id: String(result.id),
+        captureType,
+        capturedAt,
+        storageFallback: result.storageFallback === true,
+      };
     },
     [deviceClass, examId],
   );
@@ -395,6 +400,7 @@ export default function ExamRoom({
                     evidenceFileId: evidence.id,
                     evidenceCapture: evidence.captureType,
                     evidenceCapturedAt: evidence.capturedAt,
+                    evidenceStorageFallback: evidence.storageFallback,
                   }
                 : {
                     evidenceCapture: "unavailable",

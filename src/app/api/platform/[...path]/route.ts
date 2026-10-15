@@ -2180,21 +2180,18 @@ async function dispatch(req: Request, parts: string[]) {
     ) {
       try {
         after(async () => {
-          let lastError: unknown;
           for (let attempt = 0; attempt < 2; attempt++) {
             try {
               const result = await archiveAttemptWarningEvidence(id);
               if (result.archived || result.evidenceCount === 0) return;
-              lastError = new Error("No warning evidence was archived.");
-            } catch (error) {
-              lastError = error;
-            }
+            } catch {}
             if (attempt === 0)
               await new Promise((resolve) => setTimeout(resolve, 750));
           }
+          // Do not serialize provider errors here: Google auth client errors
+          // may contain the short-lived Vercel OIDC subject token.
           console.error(
-            "Unable to archive warning evidence in Google Drive after retry",
-            lastError,
+            "Unable to archive warning evidence in Google Drive after retry.",
           );
         });
       } catch (error) {
@@ -2486,11 +2483,25 @@ async function dispatch(req: Request, parts: string[]) {
         }
       }
       const fid = randomUUID();
-      const storageReference = await storePrivateFile(
-        `exams/${examId}/${fid}.${ext}`,
-        bytes,
-        file.type,
-      );
+      let storageReference: string;
+      let storageFallback = false;
+      try {
+        storageReference = await storePrivateFile(
+          `exams/${examId}/${fid}.${ext}`,
+          bytes,
+          file.type,
+        );
+      } catch (error) {
+        if (!eventEvidence) throw error;
+        // Preserve warning stills in the database if Drive/Blob is temporarily
+        // unavailable, so teachers can still review them and retry Drive later.
+        storageReference = `inline:${fid}`;
+        extractedText = `base64:${bytes.toString("base64")}`;
+        storageFallback = true;
+        console.warn(
+          "Private object storage unavailable; retained event evidence for archive retry.",
+        );
+      }
       await query(
         sql`INSERT INTO files(id,exam_id,attempt_id,owner_id,name,mime,url,size,extracted_text) VALUES(${fid},${examId},${attemptId},${u.id},${storedName},${file.type},${storageReference},${file.size},${extractedText})`,
       );
@@ -2500,10 +2511,20 @@ async function dispatch(req: Request, parts: string[]) {
         attemptId: attemptId ?? undefined,
         type: "FILE_UPLOADED",
         metadata: eventEvidence
-          ? { fileId: fid, eventId, eventType, eventEvidence: true }
+          ? {
+              fileId: fid,
+              eventId,
+              eventType,
+              eventEvidence: true,
+              storageFallback,
+            }
           : { fileId: fid },
       });
-      return json({ id: fid, name: storedName.replace(/^SUBMISSION::/, "") });
+      return json({
+        id: fid,
+        name: storedName.replace(/^SUBMISSION::/, ""),
+        storageFallback,
+      });
     }
     uuid.parse(id);
     if (method === "DELETE") {

@@ -306,7 +306,7 @@ export async function archiveWarningEvidenceToDrive(input: {
           );
           reference = `gdrive:${storedId}`;
           await query(
-            sql`UPDATE files SET url=${reference} WHERE id=${file.id}`,
+            sql`UPDATE files SET url=${reference},extracted_text='' WHERE id=${file.id}`,
           );
           await deletePrivateFile(file.url);
         }
@@ -477,6 +477,20 @@ export async function storePrivateFile(
 }
 
 export async function readPrivateFile(reference: string) {
+  if (reference.startsWith("inline:")) {
+    const fileId = reference.slice("inline:".length);
+    if (!/^[0-9a-f-]{36}$/i.test(fileId))
+      throw new HttpError(404, "File not found.");
+    const [file] = await query<{ extracted_text: string }>(
+      sql`SELECT extracted_text FROM files WHERE id=${fileId}`,
+    );
+    const encoded = file?.extracted_text.startsWith("base64:")
+      ? file.extracted_text.slice("base64:".length)
+      : "";
+    if (!encoded || !/^[A-Za-z0-9+/]*={0,2}$/.test(encoded))
+      throw new HttpError(404, "File not found.");
+    return new Response(Buffer.from(encoded, "base64")).body;
+  }
   if (!reference.startsWith("gdrive:")) {
     const { get } = await import("@vercel/blob");
     const blob = await get(reference, { access: "private" });
@@ -500,6 +514,7 @@ export async function readPrivateFile(reference: string) {
 }
 
 export async function deletePrivateFile(reference: string) {
+  if (reference.startsWith("inline:")) return;
   if (!reference.startsWith("gdrive:")) {
     const { del } = await import("@vercel/blob");
     await del(reference);
