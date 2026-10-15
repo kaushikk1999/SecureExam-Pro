@@ -23,7 +23,7 @@ export async function audit(
      * is touched by many independent users in parallel. */
     chainKey?: string;
   },
-) {
+): Promise<string> {
   const chain = chainKey ?? attemptId ?? examId ?? userId ?? "authentication";
   await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtext(${chain}))`);
   const [last] = await query(
@@ -48,6 +48,7 @@ export async function audit(
   await tx.execute(
     sql`INSERT INTO audit_events(id,chain_key,exam_id,attempt_id,user_id,event_type,severity,metadata,created_at,previous_hash,event_hash) VALUES(${id},${chain},${examId ?? null},${attemptId ?? null},${userId ?? null},${type},${severity},${JSON.stringify(metadata)}::jsonb,${createdAt},${previous},${hash})`,
   );
+  return id;
 }
 export async function record(data: Parameters<typeof audit>[1]) {
   await db.transaction((tx) => audit(tx, data));

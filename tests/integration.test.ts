@@ -1671,3 +1671,114 @@ it("keeps a source-faithful question draft when Ollama is unavailable", async ()
     vi.unstubAllEnvs();
   }
 });
+
+it("gates answer saving behind an audited warning acknowledgment and lists live exams", async () => {
+  const liveStudent = randomUUID();
+  const liveDevice = randomUUID();
+  const liveAttempt = randomUUID();
+  const liveCourse = randomUUID();
+  const liveExam = randomUUID();
+  const liveQuestion = randomUUID();
+  const previousStudentAllowlist = process.env.STUDENT_LOGIN_EMAILS;
+  process.env.STUDENT_LOGIN_EMAILS = [
+    previousStudentAllowlist,
+    `${liveStudent}@test.local`,
+  ]
+    .filter(Boolean)
+    .join(",");
+  await db.execute(
+    sql`INSERT INTO courses(id,teacher_id,code,name) VALUES(${liveCourse},${teacher},'LIVE','Live sync test')`,
+  );
+  await db.execute(
+    sql`INSERT INTO exams(id,course_id,title,status,starts_at,ends_at,duration_minutes,policy,code_secret) VALUES(${liveExam},${liveCourse},'Live sync exam','PUBLISHED',now()-interval '1 hour',now()+interval '2 hours',60,${JSON.stringify(policySchema.parse({ camera: false, microphone: false, location: false, fullscreen: false, classroomCode: false }))}::jsonb,'secret')`,
+  );
+  await db.execute(
+    sql`INSERT INTO questions(id,teacher_id,type,prompt,marks,solution,options) VALUES(${liveQuestion},${teacher},'MCQ','Live sync question',1,'"A"','["A","B"]')`,
+  );
+  await db.execute(
+    sql`INSERT INTO exam_questions(exam_id,question_id,position) VALUES(${liveExam},${liveQuestion},0)`,
+  );
+  await db.execute(
+    sql`INSERT INTO users(id,email,name,password_hash,role,student_id) VALUES(${liveStudent},${liveStudent + "@test.local"},'Live test student','unused','STUDENT','LIVE-ID')`,
+  );
+  await db.execute(
+    sql`INSERT INTO exam_devices(id,user_id,session_version) VALUES(${liveDevice},${liveStudent},0)`,
+  );
+  await db.execute(
+    sql`INSERT INTO enrollments(course_id,user_id) VALUES(${liveCourse},${liveStudent})`,
+  );
+  await db.execute(
+    sql`INSERT INTO attempts(id,exam_id,user_id,device_session_id,deadline,question_order,status) VALUES(${liveAttempt},${liveExam},${liveStudent},${liveDevice},now()+interval '1 hour',${JSON.stringify([liveQuestion])}::jsonb,'ACTIVE')`,
+  );
+  login(liveStudent);
+  const warningSync = await request(
+    `attempts/${liveAttempt}/sync`,
+    {
+      answers: [{ questionId: liveQuestion, value: "A", version: 1 }],
+      events: [{ id: randomUUID(), type: "TAB_HIDDEN", metadata: {} }],
+    },
+    { "x-exam-device": liveDevice },
+  );
+  expect(warningSync.status).toBe(200);
+  const blocked = await warningSync.json();
+  expect(blocked).toMatchObject({ answersAccepted: false });
+  expect(blocked.pendingWarnings).toHaveLength(1);
+  expect(
+    await query(
+      sql`SELECT question_id FROM answers WHERE attempt_id=${liveAttempt}`,
+    ),
+  ).toHaveLength(0);
+  const ackId = randomUUID();
+  const acknowledged = await request(
+    `attempts/${liveAttempt}/sync`,
+    {
+      answers: [{ questionId: liveQuestion, value: "A", version: 1 }],
+      events: [
+        {
+          id: ackId,
+          type: "WARNING_ACKNOWLEDGED",
+          metadata: {
+            warningId: blocked.pendingWarnings[0].id,
+            warningCount: 1,
+          },
+        },
+      ],
+    },
+    { "x-exam-device": liveDevice },
+  );
+  expect(await acknowledged.json()).toMatchObject({
+    answersAccepted: true,
+    pendingWarnings: [],
+    processedEventIds: [ackId],
+  });
+  expect(
+    await query(
+      sql`SELECT question_id FROM answers WHERE attempt_id=${liveAttempt} AND question_id=${liveQuestion}`,
+    ),
+  ).toHaveLength(1);
+  expect(
+    await query(
+      sql`SELECT id FROM audit_events WHERE attempt_id=${liveAttempt} AND event_type='WARNING_ACKNOWLEDGED' AND metadata->>'warningId'=${blocked.pendingWarnings[0].id}`,
+    ),
+  ).toHaveLength(1);
+  login(teacher);
+  const liveFeed = await request("audit/live");
+  expect(liveFeed.status).toBe(200);
+  const liveData = await liveFeed.json();
+  expect(liveData.exams).toEqual(
+    expect.arrayContaining([expect.objectContaining({ id: liveExam })]),
+  );
+  expect(liveData.attempts).toEqual(
+    expect.arrayContaining([
+      expect.objectContaining({
+        attempt_id: liveAttempt,
+        name: "Live test student",
+      }),
+    ]),
+  );
+  await db.execute(
+    sql`UPDATE attempts SET status='SUBMITTED',submitted_at=now() WHERE id=${liveAttempt}`,
+  );
+  login(null);
+  process.env.STUDENT_LOGIN_EMAILS = previousStudentAllowlist ?? "";
+});

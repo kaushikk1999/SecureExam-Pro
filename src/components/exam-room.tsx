@@ -130,6 +130,7 @@ export default function ExamRoom({
     [saveStatus, setSaveStatus] = useState("All answers saved"),
     [online, setOnline] = useState(true),
     [warning, setWarning] = useState(""),
+    [pendingWarnings, setPendingWarnings] = useState<any[]>([]),
     [tabHold, setTabHold] = useState(false),
     [tabletWindowConstrained, setTabletWindowConstrained] = useState(false),
     [seconds, setSeconds] = useState(0),
@@ -224,10 +225,12 @@ export default function ExamRoom({
           for (const a of pending)
             if (answers.current[a.questionId]?.version === a.version)
               delete answers.current[a.questionId];
-          events.current = events.current.filter(
-            (e) => !queued.some((q) => q.id === e.id),
-          );
         }
+        const processedEventIds = new Set(result.processedEventIds ?? []);
+        events.current = events.current.filter(
+          (e) => !processedEventIds.has(e.id),
+        );
+        setPendingWarnings(result.pendingWarnings ?? []);
         if (result.warnings > active.current.warnings)
           alert(
             `Warning ${result.warnings} of ${active.current.policy.maxWarnings}. A monitored security rule was triggered. Restore the required examination conditions. Your instructor can review this event.`,
@@ -595,6 +598,7 @@ export default function ExamRoom({
     setValues(v);
     active.current = a;
     setAttempt(a);
+    setPendingWarnings(a.pendingWarnings ?? []);
     setSeconds(
       Math.ceil(
         (a.remainingMs ??
@@ -913,6 +917,7 @@ export default function ExamRoom({
             `Warning ${a.warnings} of ${a.policy.maxWarnings}. Please restore examination conditions.`,
           );
         active.current = { ...active.current, ...a };
+        setPendingWarnings(a.pendingWarnings ?? []);
         setAttempt(active.current);
         anchor.current = {
           remaining:
@@ -1340,6 +1345,7 @@ export default function ExamRoom({
     };
   }, [attempt?.id, attempt?.status, attempt?.policy?.screen]);
   function change(questionId: string, value: any) {
+    if (active.current?.pendingWarnings?.length) return;
     const version = (versions.current[questionId] ?? 0) + 1;
     versions.current[questionId] = version;
     answers.current[questionId] = { questionId, value, version };
@@ -2080,7 +2086,9 @@ export default function ExamRoom({
         </span>
         <button
           className="primary"
+          disabled={pendingWarnings.length > 0}
           onClick={async () => {
+            if (active.current?.pendingWarnings?.length) return;
             if (wordPaper && !attempt.documentSubmission) {
               setError(
                 "Upload your completed Word question paper before submitting the exam.",
@@ -2106,6 +2114,59 @@ export default function ExamRoom({
         </span>
         <span>{attempt.location_status.replaceAll("_", " ")}</span>
       </div>
+      {pendingWarnings.length > 0 && (
+        <div className="warning-ack-backdrop" role="presentation">
+          <section
+            className="warning-ack-dialog"
+            role="alertdialog"
+            aria-modal="true"
+            aria-labelledby="warning-ack-title"
+          >
+            <AlertTriangle size={30} aria-hidden="true" />
+            <h2 id="warning-ack-title">Acknowledge this exam warning</h2>
+            <p>
+              A monitoring warning was recorded at{" "}
+              {time(pendingWarnings[0].created_at)}
+              {pendingWarnings[0].reason
+                ? ` (${String(pendingWarnings[0].reason).replaceAll("_", " ")})`
+                : ""}
+              . You must acknowledge each warning before editing answers, moving
+              between questions, or submitting.
+            </p>
+            <p className="small muted">
+              Warning {pendingWarnings[0].count} · Acknowledgment actions are
+              recorded in your examination activity log.
+              {pendingWarnings.length > 1
+                ? ` ${pendingWarnings.length} warnings currently need acknowledgment.`
+                : ""}
+            </p>
+            <button
+              className="primary"
+              disabled={syncing.current}
+              onClick={async () => {
+                const item = pendingWarnings[0];
+                events.current.push({
+                  id: crypto.randomUUID(),
+                  type: "WARNING_ACKNOWLEDGED",
+                  metadata: {
+                    warningId: item.id,
+                    warningCount: item.count,
+                  },
+                });
+                await persist();
+                await synchronize();
+              }}
+            >
+              I acknowledge this warning
+            </button>
+            <p className="small" role="status">
+              {!online
+                ? "Connect to the internet to record your acknowledgment. Your answers remain saved locally."
+                : ""}
+            </p>
+          </section>
+        </div>
+      )}
       {deviceClass === "tablet" && tabletWindowConstrained && (
         <section
           className="tablet-window-blocker"
@@ -2143,7 +2204,7 @@ export default function ExamRoom({
               setTabHold(false);
             }}
           >
-            Acknowledge
+            Dismiss notice
           </button>
         </div>
       )}
@@ -2176,7 +2237,10 @@ export default function ExamRoom({
             {questions.map((q: any, i: number) => (
               <button
                 key={q.id}
-                disabled={!attempt.policy.navigation && i !== index}
+                disabled={
+                  pendingWarnings.length > 0 ||
+                  (!attempt.policy.navigation && i !== index)
+                }
                 onClick={() => setIndex(i)}
                 className={
                   (i === index ? "current " : "") +
@@ -2396,13 +2460,20 @@ export default function ExamRoom({
                 </div>
                 <div className="question-footer">
                   <button
-                    disabled={index === 0 || !attempt.policy.navigation}
+                    disabled={
+                      pendingWarnings.length > 0 ||
+                      index === 0 ||
+                      !attempt.policy.navigation
+                    }
                     onClick={() => setIndex(index - 1)}
                   >
                     <ChevronLeft size={16} /> Previous
                   </button>
                   <button
-                    disabled={index === questions.length - 1}
+                    disabled={
+                      pendingWarnings.length > 0 ||
+                      index === questions.length - 1
+                    }
                     onClick={() => setIndex(index + 1)}
                   >
                     Next question <ChevronRight size={16} />

@@ -2457,6 +2457,50 @@ fieldset {
 .warning-banner strong {
   font-size: 13px;
 }
+.warning-ack-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 1000;
+  display: grid;
+  place-items: center;
+  padding: 20px;
+  background: rgb(20 35 55 / 72%);
+}
+.warning-ack-dialog {
+  width: min(100%, 540px);
+  padding: 30px;
+  border: 2px solid #dc3f43;
+  border-radius: 18px;
+  background: #fff;
+  color: #172b46;
+  box-shadow: 0 24px 80px rgb(0 0 0 / 32%);
+}
+.warning-ack-dialog > svg {
+  color: #c83238;
+}
+.warning-ack-dialog h2 {
+  margin: 12px 0;
+}
+.warning-ack-dialog .primary {
+  margin-top: 8px;
+}
+.live-audit-students {
+  display: grid;
+  gap: 10px;
+  padding: 14px 20px;
+}
+.live-audit-student {
+  display: grid;
+  gap: 5px;
+  padding: 14px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--surface);
+}
+.live-audit-student > span,
+.live-audit-student > small {
+  color: var(--muted);
+}
 .skeleton {
   padding: 20px;
 }

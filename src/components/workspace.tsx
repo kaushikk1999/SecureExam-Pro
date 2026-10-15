@@ -4269,6 +4269,7 @@ function Accommodations({ examId }: { examId: string }) {
 }
 function Audit() {
   const { data, error, refresh } = useData("audit", 10000);
+  const live = useData("audit/live", 10000);
   const [search, setSearch] = useState("");
   const [archivingAttempt, setArchivingAttempt] = useState("");
   const [archiveMessages, setArchiveMessages] = useState<
@@ -4346,6 +4347,59 @@ function Audit() {
         />
         <small>Latest 1,000 events</small>
       </div>
+      <section className="panel live-audit-panel">
+        <h2>Live exam activity</h2>
+        <p className="muted">
+          Active attempts and currently open exams update every 10 seconds.
+        </p>
+        <ErrorBox message={live.error} />
+        {live.data?.exams?.length
+          ? live.data.exams.map((exam: any) => {
+              const students = (live.data.attempts ?? []).filter(
+                (attempt: any) => attempt.exam_id === exam.id,
+              );
+              return (
+                <details key={exam.id} className="audit-folder" open>
+                  <summary>
+                    {exam.course_code} · {exam.title} ·{" "}
+                    {exam.status.replaceAll("_", " ")} · {exam.active_students}{" "}
+                    active · {exam.submitted_students} submitted ·{" "}
+                    {exam.assigned_students} assigned
+                  </summary>
+                  {students.length ? (
+                    <div className="live-audit-students">
+                      {students.map((student: any) => (
+                        <div
+                          key={student.attempt_id}
+                          className="live-audit-student"
+                        >
+                          <strong>
+                            {student.name} ·{" "}
+                            {student.student_id ?? "No student ID"}
+                          </strong>
+                          <span>
+                            {student.answered}/{student.total_questions}{" "}
+                            answered · {student.warnings} warnings
+                          </span>
+                          <small>
+                            Started {time(student.started_at)} · last signal{" "}
+                            {student.last_heartbeat_at
+                              ? time(student.last_heartbeat_at)
+                              : "waiting"}
+                          </small>
+                        </div>
+                      ))}
+                    </div>
+                  ) : (
+                    <p className="muted">
+                      Exam is open; no student attempt is active yet.
+                    </p>
+                  )}
+                </details>
+              );
+            })
+          : !live.error && <p>No exams are currently open or in progress.</p>}
+      </section>
       <section className="panel">
         <h2>Warnings by exam</h2>
         <p className="muted">
@@ -4465,6 +4519,7 @@ function Audit() {
                           <summary>
                             {time(event.created_at)} · {event.event_type} ·{" "}
                             {event.severity}
+                            {` · acknowledged ${event.acknowledgement_count ?? 0} times`}
                           </summary>
                           <pre>{JSON.stringify(event.metadata, null, 2)}</pre>
                           {typeof event.evidence_url === "string" &&

@@ -362,7 +362,7 @@ export async function event(
     await tx.execute(
       sql`UPDATE attempts SET warnings=${decision.warnings},last_warning_at=now() WHERE id=${a.id}`,
     );
-    await audit(tx, {
+    const warningId = await audit(tx, {
       userId: u.id,
       examId: a.exam_id,
       attemptId: a.id,
@@ -383,6 +383,11 @@ export async function event(
             .map((key) => [key, meta[key]]),
         ),
       },
+    });
+    (a.newWarnings ??= []).push({
+      id: warningId,
+      count: decision.warnings,
+      reason: eventType,
     });
     a.warnings = decision.warnings;
     a.last_warning_at = new Date();

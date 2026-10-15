@@ -1890,7 +1890,16 @@ async function dispatch(req: Request, parts: string[]) {
               tx,
             ),
             ...(u.role === "STUDENT"
-              ? {}
+              ? {
+                  pendingWarnings: await query(
+                    sql`SELECT w.id,w.created_at,COALESCE((w.metadata->>'count')::int,0) AS count,w.metadata->>'reason' AS reason
+                        FROM audit_events w
+                        WHERE w.attempt_id=${id} AND w.event_type='WARNING_ISSUED'
+                          AND NOT EXISTS(SELECT 1 FROM audit_events ack WHERE ack.attempt_id=w.attempt_id AND ack.event_type='WARNING_ACKNOWLEDGED' AND ack.metadata->>'warningId'=w.id::text)
+                        ORDER BY w.sequence`,
+                    tx,
+                  ),
+                }
               : {
                   events: await query(
                     sql`SELECT * FROM audit_events WHERE attempt_id=${id} ORDER BY sequence`,
@@ -2089,6 +2098,7 @@ async function dispatch(req: Request, parts: string[]) {
                 "PASTE_ATTEMPT",
                 "AI_FACE_NOT_VISIBLE",
                 "AI_MULTIPLE_FACES_VISIBLE",
+                "WARNING_ACKNOWLEDGED",
               ]),
               metadata: z
                 .record(
@@ -2129,10 +2139,46 @@ async function dispatch(req: Request, parts: string[]) {
         tx,
       );
       const { policy } = await effectivePolicy(e, u.id, tx);
-      const answersAccepted = a.status === "ACTIVE" && e.status !== "PAUSED";
-      if (answersAccepted) {
-        await saveAnswers(tx, a, v.answers);
-        for (const ev of v.events) {
+      const canProcess = a.status === "ACTIVE" && e.status !== "PAUSED";
+      const processedEventIds: string[] = [];
+      a.newWarnings = [];
+      if (canProcess) {
+        const orderedEvents = [
+          ...v.events.filter((ev) => ev.type !== "WARNING_ACKNOWLEDGED"),
+          ...v.events.filter((ev) => ev.type === "WARNING_ACKNOWLEDGED"),
+        ];
+        for (const ev of orderedEvents) {
+          if (ev.type === "WARNING_ACKNOWLEDGED") {
+            const warningId = uuid.parse(String(ev.metadata.warningId ?? ""));
+            const [warning] = await query(
+              sql`SELECT id,metadata FROM audit_events WHERE id=${warningId} AND attempt_id=${a.id} AND user_id=${u.id} AND event_type='WARNING_ISSUED'`,
+              tx,
+            );
+            if (!warning)
+              throw new HttpError(
+                400,
+                "The warning to acknowledge was not found.",
+              );
+            const receipt = await query(
+              sql`INSERT INTO event_receipts(attempt_id,client_event_id) VALUES(${a.id},${ev.id}) ON CONFLICT DO NOTHING RETURNING client_event_id`,
+              tx,
+            );
+            if (receipt.length) {
+              await audit(tx, {
+                userId: u.id,
+                examId: a.exam_id,
+                attemptId: a.id,
+                type: "WARNING_ACKNOWLEDGED",
+                metadata: {
+                  warningId,
+                  warningCount: Number(warning.metadata?.count ?? 0),
+                  acknowledgedByStudent: true,
+                },
+              });
+            }
+            processedEventIds.push(ev.id);
+            continue;
+          }
           if (
             ev.type === "AI_FACE_NOT_VISIBLE" &&
             (!policy.aiCameraMonitoring ||
@@ -2156,7 +2202,22 @@ async function dispatch(req: Request, parts: string[]) {
               );
           }
           await event(tx, a, u, ev.type, ev.metadata, ev.id);
+          processedEventIds.push(ev.id);
         }
+      }
+      const pendingWarnings = canProcess
+        ? await query(
+            sql`SELECT w.id,w.created_at,COALESCE((w.metadata->>'count')::int,0) AS count,w.metadata->>'reason' AS reason
+                FROM audit_events w
+                WHERE w.attempt_id=${a.id} AND w.event_type='WARNING_ISSUED'
+                  AND NOT EXISTS(SELECT 1 FROM audit_events ack WHERE ack.attempt_id=w.attempt_id AND ack.event_type='WARNING_ACKNOWLEDGED' AND ack.metadata->>'warningId'=w.id::text)
+                ORDER BY w.sequence`,
+            tx,
+          )
+        : [];
+      const answersAccepted = canProcess && pendingWarnings.length === 0;
+      if (answersAccepted) {
+        await saveAnswers(tx, a, v.answers);
         if (action === "submit" && a.status === "ACTIVE") {
           await finish(tx, a, "SUBMITTED", u.id);
           a.status = "SUBMITTED";
@@ -2174,6 +2235,9 @@ async function dispatch(req: Request, parts: string[]) {
         serverTime: new Date().toISOString(),
         saved: answersAccepted,
         answersAccepted,
+        pendingWarnings,
+        processedEventIds,
+        newWarnings: a.newWarnings,
         remainingMs: Math.max(
           0,
           new Date(a.deadline).getTime() -
@@ -2184,7 +2248,7 @@ async function dispatch(req: Request, parts: string[]) {
       };
     });
     if (
-      (syncResult.answersAccepted && v.events.length > 0) ||
+      (syncResult.newWarnings?.length ?? 0) > 0 ||
       syncResult.status !== "ACTIVE"
     ) {
       try {
@@ -2213,6 +2277,32 @@ async function dispatch(req: Request, parts: string[]) {
   }
   if (resource === "audit") {
     teacher(u);
+    if (id === "live") {
+      if (method !== "GET") throw new HttpError(405, "GET required.");
+      const [exams, attempts] = await Promise.all([
+        query(
+          sql`SELECT e.id,e.title,e.status,e.starts_at,e.ends_at,c.code AS course_code,c.name AS course_name,c.section,
+                     (SELECT count(*)::int FROM attempts a WHERE a.exam_id=e.id AND a.status='ACTIVE') AS active_students,
+                     (SELECT count(*)::int FROM attempts a WHERE a.exam_id=e.id AND a.status IN('SUBMITTED','AUTO_SUBMITTED_TIME','AUTO_SUBMITTED_SECURITY')) AS submitted_students,
+                     (SELECT count(*)::int FROM enrollments n WHERE n.course_id=e.course_id AND n.eligible=true) AS assigned_students
+              FROM exams e JOIN courses c ON c.id=e.course_id
+              WHERE e.deleted_at IS NULL AND (${u.role === "ADMIN"} OR c.teacher_id=${u.id})
+                AND ((e.starts_at<=now() AND e.ends_at>now() AND e.status IN('LIVE','PUBLISHED'))
+                  OR EXISTS(SELECT 1 FROM attempts a WHERE a.exam_id=e.id AND a.status='ACTIVE'))
+              ORDER BY e.starts_at DESC LIMIT 100`,
+        ),
+        query(
+          sql`SELECT a.id AS attempt_id,a.exam_id,a.status,a.warnings,a.started_at,a.last_heartbeat_at,
+                     u.name,u.student_id,e.title AS exam_title,c.code AS course_code,
+                     (SELECT count(*)::int FROM answers an WHERE an.attempt_id=a.id AND an.value NOT IN('null'::jsonb,'\"\"'::jsonb)) AS answered,
+                     jsonb_array_length(a.question_order) AS total_questions
+              FROM attempts a JOIN exams e ON e.id=a.exam_id JOIN courses c ON c.id=e.course_id JOIN users u ON u.id=a.user_id
+              WHERE a.status='ACTIVE' AND (${u.role === "ADMIN"} OR c.teacher_id=${u.id})
+              ORDER BY a.started_at DESC LIMIT 500`,
+        ),
+      ]);
+      return json({ exams, attempts, serverTime: new Date().toISOString() });
+    }
     if (id === "archive") {
       if (method !== "POST") throw new HttpError(405, "POST required.");
       const v = z.object({ attemptId: uuid }).parse(await body(req));
@@ -2227,6 +2317,7 @@ async function dispatch(req: Request, parts: string[]) {
     const rows = await query(
       sql`SELECT a.*,u.name,u.student_id,u.role,e.title AS exam_title,
                  c.code AS course_code,c.section,
+                 CASE WHEN a.event_type='WARNING_ISSUED' THEN (SELECT count(*)::int FROM audit_events ack WHERE ack.attempt_id=a.attempt_id AND ack.event_type='WARNING_ACKNOWLEDGED' AND ack.metadata->>'warningId'=a.id::text) ELSE 0 END AS acknowledgement_count,
                  wea.folder_id AS drive_folder_id,wea.report_id AS drive_report_id,
                  evidence.url AS evidence_url,
                  COALESCE(a.metadata->>'evidenceFileId',warning_source.evidence_file_id) AS evidence_file_id
