@@ -2164,6 +2164,39 @@ fieldset {
   min-height: 100vh;
   min-height: 100dvh;
 }
+.request-course {
+  margin-top: 20px;
+}
+.student-request-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 20px;
+  border-top: 1px solid var(--line, #dce4ee);
+  padding: 18px 0;
+}
+.student-request-row > div:first-child {
+  display: grid;
+  gap: 5px;
+}
+.student-request-row span,
+.student-request-row small {
+  color: var(--muted, #60758f);
+}
+.student-request-row p {
+  margin: 4px 0 0;
+}
+.reentry-request-control {
+  display: flex;
+  justify-content: flex-start;
+  margin-top: 12px;
+}
+@media (max-width: 700px) {
+  .student-request-row {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+}
 .tablet-window-blocker {
   position: fixed;
   inset: 0;

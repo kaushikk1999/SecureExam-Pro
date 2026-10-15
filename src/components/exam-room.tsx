@@ -122,6 +122,8 @@ export default function ExamRoom({
     [permissionReady, setPermissionReady] = useState(false),
     [screenShareUnsupported, setScreenShareUnsupported] = useState(false),
     [screenSurface, setScreenSurface] = useState<string | undefined>(),
+    [reentryRequestStatus, setReentryRequestStatus] = useState(""),
+    [reentryNotice, setReentryNotice] = useState(""),
     [index, setIndex] = useState(0),
     [values, setValues] = useState<Record<string, any>>({}),
     [flagged, setFlagged] = useState<string[]>([]),
@@ -583,6 +585,25 @@ export default function ExamRoom({
       void loadAttempt(existing.attempt_id).catch((e) => setError(e.message)); // Results never need device permissions.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [existing]);
+  useEffect(() => {
+    if (!existing?.attempt_id || existing.attempt_status !== "ACTIVE") return;
+    let mounted = true;
+    const refreshRequestStatus = async () => {
+      try {
+        const result = await api(`growth/requests/${existing.attempt_id}`);
+        if (mounted)
+          setReentryRequestStatus(result.reentryRequest?.status ?? "");
+      } catch {
+        /* The student can still submit a new request if status lookup fails. */
+      }
+    };
+    void refreshRequestStatus();
+    const timer = setInterval(() => void refreshRequestStatus(), 5000);
+    return () => {
+      mounted = false;
+      clearInterval(timer);
+    };
+  }, [existing?.attempt_id, existing?.attempt_status]);
   async function permissions() {
     setBusy(true);
     setError("");
@@ -822,6 +843,7 @@ export default function ExamRoom({
         location: point,
       });
       await loadAttempt(result.id);
+      setReentryNotice("");
       active.current = {
         ...active.current,
         cameraEvidenceAccepted,
@@ -1924,23 +1946,57 @@ export default function ExamRoom({
           >
             Begin secure exam <ChevronRight size={18} />
           </button>
-          {existing && (
-            <button
-              onClick={async () => {
-                try {
-                  await api(`attempts/${existing.attempt_id}/recover`, {
-                    deviceSessionId: device.current,
-                  });
-                  setError(
-                    "Re-entry approved. Complete the checks and begin to resume.",
-                  );
-                } catch (e) {
-                  setError((e as Error).message);
-                }
-              }}
-            >
-              Recover after teacher allows re-entry
-            </button>
+          {existing?.attempt_status === "ACTIVE" && (
+            <div className="reentry-request-control">
+              {reentryNotice && (
+                <p className="notice" role="status">
+                  {reentryNotice}
+                </p>
+              )}
+              {reentryRequestStatus === "APPROVED" ? (
+                <button
+                  onClick={async () => {
+                    try {
+                      await api(`attempts/${existing.attempt_id}/recover`, {
+                        deviceSessionId: device.current,
+                      });
+                      setReentryNotice(
+                        "Re-entry approved. Complete the checks and begin to resume.",
+                      );
+                    } catch (e) {
+                      setReentryNotice((e as Error).message);
+                    }
+                  }}
+                >
+                  Recover exam after approval
+                </button>
+              ) : (
+                <button
+                  disabled={reentryRequestStatus === "PENDING" || busy}
+                  onClick={async () => {
+                    try {
+                      const result = await api("growth/requests", {
+                        attemptId: existing.attempt_id,
+                      });
+                      setReentryRequestStatus(
+                        result.reentryRequest?.status ?? "PENDING",
+                      );
+                      setReentryNotice(
+                        "Re-entry request sent. Wait for your instructor to review it.",
+                      );
+                    } catch (e) {
+                      setReentryNotice((e as Error).message);
+                    }
+                  }}
+                >
+                  {reentryRequestStatus === "PENDING"
+                    ? "Re-entry request sent · awaiting instructor"
+                    : reentryRequestStatus === "DECLINED"
+                      ? "Request re-entry again"
+                      : "Request to rejoin exam"}
+                </button>
+              )}
+            </div>
           )}
         </div>
       </main>

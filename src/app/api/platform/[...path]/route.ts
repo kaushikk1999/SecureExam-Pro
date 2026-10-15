@@ -2006,6 +2006,9 @@ async function dispatch(req: Request, parts: string[]) {
           attemptId: id,
           type: "SESSION_RECOVERED",
         });
+        await tx.execute(
+          sql`UPDATE reentry_requests SET status='COMPLETED' WHERE id=(SELECT id FROM reentry_requests WHERE attempt_id=${id} AND user_id=${u.id} AND status='APPROVED' ORDER BY reviewed_at DESC LIMIT 1)`,
+        );
       });
       return json({ ok: true });
     }

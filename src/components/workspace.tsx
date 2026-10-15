@@ -180,6 +180,7 @@ function applyDetectedClassroomLocation(
 const nav = [
   ["", "Overview", LayoutDashboard],
   ["exams", "Examinations", FileText],
+  ["requests", "Student requests", ClipboardList],
   ["students", "Students & courses", Users],
   ["questions", "Question bank", Library],
   ["classrooms", "Classrooms", MapPin],
@@ -324,6 +325,8 @@ export default function Workspace({
             <GrowthWorkspace key={page} page={page} user={user} />
           ) : user.role === "STUDENT" ? (
             <StudentHome user={user} />
+          ) : page === "requests" ? (
+            <RequestsInbox />
           ) : page === "exams" ? (
             view[1] ? (
               <ExamDetail id={view[1]} />
@@ -664,6 +667,125 @@ function ExamList() {
           title="Build your first examination"
           description="Start with a course and a classroom, then add questions from your question bank."
         />
+      )}
+    </>
+  );
+}
+
+function RequestsInbox() {
+  const { data, error, refresh } = useData("growth/requests", 5000);
+  const [busy, setBusy] = useState("");
+  const [message, setMessage] = useState("");
+  const requests = [
+    ...(data?.entryRequests ?? []),
+    ...(data?.reentryRequests ?? []),
+  ];
+  const courses = new Map<string, any[]>();
+  for (const request of requests) {
+    const key = request.course_id;
+    courses.set(key, [...(courses.get(key) ?? []), request]);
+  }
+  async function review(request: any, action: "approve" | "decline") {
+    const key = `${request.request_type}:${request.id ?? request.exam_id + request.user_id}`;
+    setBusy(key);
+    setMessage("");
+    try {
+      if (request.request_type === "ENTRY") {
+        await api(`exams/${request.exam_id}/checkin`, {
+          studentId: request.user_id,
+        });
+      } else {
+        await api(`growth/requests/${request.id}/${action}`, {});
+      }
+      setMessage(
+        action === "approve"
+          ? `${request.name}’s ${request.request_type === "ENTRY" ? "entry" : "re-entry"} request was approved.`
+          : `${request.name}’s re-entry request was declined.`,
+      );
+      await refresh();
+    } catch (cause) {
+      setMessage((cause as Error).message);
+    } finally {
+      setBusy("");
+    }
+  }
+  return (
+    <>
+      <Heading
+        eyebrow="COURSE INBOX"
+        title="Student requests"
+        description="Review exam entry and re-entry requests from students, grouped by course."
+      />
+      <ErrorBox message={error} />
+      {message && <p className="notice">{message}</p>}
+      {!data ? (
+        <Loading />
+      ) : requests.length === 0 ? (
+        <Empty
+          title="No pending student requests"
+          description="Entry and re-entry requests will appear here when students ask to join an examination."
+        />
+      ) : (
+        [...courses.entries()].map(([courseId, items]) => {
+          const course = items[0];
+          return (
+            <section className="panel form-panel request-course" key={courseId}>
+              <div className="panel-heading">
+                <div>
+                  <h2>
+                    {course.course_code} · {course.course_name}
+                    {course.section ? ` · ${course.section}` : ""}
+                  </h2>
+                  <p>
+                    {items.length} pending request
+                    {items.length === 1 ? "" : "s"}
+                  </p>
+                </div>
+              </div>
+              {items.map((request: any) => {
+                const key = `${request.request_type}:${request.id ?? request.exam_id + request.user_id}`;
+                const entry = request.request_type === "ENTRY";
+                return (
+                  <article className="student-request-row" key={key}>
+                    <div>
+                      <strong>{request.name}</strong>
+                      <span>
+                        {request.student_id || request.email} ·{" "}
+                        {request.exam_title}
+                      </span>
+                      <small>
+                        {entry ? "Exam entry" : "Re-entry"} requested ·{" "}
+                        {time(request.requested_at)}
+                      </small>
+                      {request.message && <p>{request.message}</p>}
+                    </div>
+                    <div className="actions">
+                      <button
+                        className="primary"
+                        disabled={!!busy}
+                        onClick={() => void review(request, "approve")}
+                      >
+                        {busy === key
+                          ? "Saving…"
+                          : entry
+                            ? "Approve entry"
+                            : "Approve re-entry"}
+                      </button>
+                      {!entry && (
+                        <button
+                          disabled={!!busy}
+                          onClick={() => void review(request, "decline")}
+                        >
+                          Decline
+                        </button>
+                      )}
+                    </div>
+                  </article>
+                );
+              })}
+            </section>
+          );
+        })
       )}
     </>
   );

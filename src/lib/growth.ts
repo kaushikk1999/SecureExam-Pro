@@ -54,6 +54,128 @@ export async function growthRequest(
       );
     return { saved };
   }
+  if (resource === "requests") {
+    if (read) {
+      if (u.role === "STUDENT") {
+        if (!id) throw new HttpError(400, "Attempt ID required.");
+        const attemptId = uuid.parse(id);
+        const [request] = await query(
+          sql`SELECT id,status,message,created_at,reviewed_at FROM reentry_requests WHERE attempt_id=${attemptId} AND user_id=${u.id} ORDER BY created_at DESC LIMIT 1`,
+        );
+        if (request) return { reentryRequest: request };
+        const [lastReentry] = await query(
+          sql`SELECT ev.event_type,ev.created_at FROM audit_events ev JOIN attempts a ON a.id=ev.attempt_id WHERE ev.attempt_id=${attemptId} AND a.user_id=${u.id} AND ev.event_type IN('ADMIN_reentry','SESSION_RECOVERED') ORDER BY ev.sequence DESC LIMIT 1`,
+        );
+        return {
+          reentryRequest:
+            lastReentry?.event_type === "ADMIN_reentry"
+              ? {
+                  id: null,
+                  status: "APPROVED",
+                  message: "",
+                  created_at: lastReentry.created_at,
+                  reviewed_at: lastReentry.created_at,
+                }
+              : null,
+        };
+      }
+      if (id) throw new HttpError(404, "Request endpoint not found.");
+      const [entryRequests, reentryRequests] = await Promise.all([
+        query(
+          sql`SELECT k.exam_id,u.id AS user_id,u.name,u.student_id,u.email,k.created_at AS requested_at,e.title AS exam_title,c.id AS course_id,c.code AS course_code,c.name AS course_name,c.section,'ENTRY' AS request_type FROM checkins k JOIN users u ON u.id=k.user_id JOIN exams e ON e.id=k.exam_id JOIN courses c ON c.id=e.course_id WHERE k.approved=false AND e.deleted_at IS NULL AND e.ends_at>now() AND e.status IN('PUBLISHED','LIVE','PAUSED','SCHEDULED') AND (${u.role === "ADMIN"} OR c.teacher_id=${u.id}) ORDER BY k.created_at`,
+        ),
+        query(
+          sql`SELECT r.id,r.attempt_id,r.exam_id,r.user_id,r.message,r.created_at AS requested_at,u.name,u.student_id,u.email,e.title AS exam_title,c.id AS course_id,c.code AS course_code,c.name AS course_name,c.section,'REENTRY' AS request_type FROM reentry_requests r JOIN users u ON u.id=r.user_id JOIN exams e ON e.id=r.exam_id JOIN courses c ON c.id=r.course_id JOIN attempts a ON a.id=r.attempt_id WHERE r.status='PENDING' AND a.status='ACTIVE' AND e.deleted_at IS NULL AND e.ends_at>now() AND (${u.role === "ADMIN"} OR c.teacher_id=${u.id}) ORDER BY r.created_at`,
+        ),
+      ]);
+      return { entryRequests, reentryRequests };
+    }
+
+    if (!id) {
+      if (u.role !== "STUDENT")
+        throw new HttpError(403, "Student access required.");
+      const v = z
+        .object({
+          attemptId: uuid,
+          message: z.string().trim().max(500).default(""),
+        })
+        .parse(await body());
+      return db.transaction(async (tx) => {
+        const [attempt] = await query(
+          sql`SELECT a.id,a.exam_id,a.status,e.course_id,e.status AS exam_status,e.ends_at FROM attempts a JOIN exams e ON e.id=a.exam_id JOIN enrollments n ON n.course_id=e.course_id AND n.user_id=a.user_id WHERE a.id=${v.attemptId} AND a.user_id=${u.id} FOR UPDATE OF a`,
+          tx,
+        );
+        if (!attempt)
+          throw new HttpError(404, "Active exam attempt not found.");
+        if (
+          attempt.status !== "ACTIVE" ||
+          !["PUBLISHED", "LIVE", "PAUSED"].includes(attempt.exam_status) ||
+          new Date(attempt.ends_at).getTime() <= Date.now()
+        )
+          throw new HttpError(
+            409,
+            "This exam is no longer open for a re-entry request.",
+          );
+        const [pending] = await query(
+          sql`SELECT id,status,message,created_at,reviewed_at FROM reentry_requests WHERE attempt_id=${attempt.id} AND status='PENDING'`,
+          tx,
+        );
+        if (pending) return { reentryRequest: pending };
+        const requestId = randomUUID();
+        await tx.execute(
+          sql`INSERT INTO reentry_requests(id,attempt_id,exam_id,course_id,user_id,message) VALUES(${requestId},${attempt.id},${attempt.exam_id},${attempt.course_id},${u.id},${v.message})`,
+        );
+        await audit(tx, {
+          userId: u.id,
+          examId: attempt.exam_id,
+          attemptId: attempt.id,
+          type: "REENTRY_REQUESTED",
+          metadata: { requestId, message: v.message },
+        });
+        const [request] = await query(
+          sql`SELECT id,status,message,created_at,reviewed_at FROM reentry_requests WHERE id=${requestId}`,
+          tx,
+        );
+        return { reentryRequest: request };
+      });
+    }
+
+    staff(u);
+    const requestId = uuid.parse(id);
+    if (action !== "approve" && action !== "decline")
+      throw new HttpError(404, "Request action not found.");
+    return db.transaction(async (tx) => {
+      const [request] = await query(
+        sql`SELECT r.*,a.status AS attempt_status FROM reentry_requests r JOIN attempts a ON a.id=r.attempt_id WHERE r.id=${requestId} FOR UPDATE OF r,a`,
+        tx,
+      );
+      if (!request) throw new HttpError(404, "Re-entry request not found.");
+      await ownedExam(request.exam_id, u, tx);
+      if (request.status !== "PENDING")
+        throw new HttpError(409, "This request has already been reviewed.");
+      const status = action === "approve" ? "APPROVED" : "DECLINED";
+      if (action === "approve" && request.attempt_status !== "ACTIVE")
+        throw new HttpError(
+          409,
+          "The student’s exam attempt is no longer active.",
+        );
+      await tx.execute(
+        sql`UPDATE reentry_requests SET status=${status},reviewed_at=now(),reviewed_by=${u.id} WHERE id=${requestId}`,
+      );
+      if (action === "approve")
+        await tx.execute(
+          sql`UPDATE attempts SET device_session_id=${randomUUID()} WHERE id=${request.attempt_id}`,
+        );
+      await audit(tx, {
+        userId: u.id,
+        examId: request.exam_id,
+        attemptId: request.attempt_id,
+        type: action === "approve" ? "ADMIN_reentry" : "REENTRY_DECLINED",
+        metadata: { requestId },
+      });
+      return { ok: true, status };
+    });
+  }
   if (resource === "learning" && read) {
     if (u.role !== "STUDENT")
       throw new HttpError(403, "Student access required.");
