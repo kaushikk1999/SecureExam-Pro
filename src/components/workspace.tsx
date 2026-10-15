@@ -4483,13 +4483,16 @@ function Audit() {
                                 Open screenshot in Google Drive →
                               </a>
                             )}
-                          {typeof event.metadata?.evidenceFileId ===
-                            "string" && (
+                          {typeof (
+                            event.metadata?.evidenceFileId ??
+                            event.evidence_file_id
+                          ) === "string" && (
                             <a
                               href={
                                 "/api/platform/files/" +
                                 encodeURIComponent(
-                                  event.metadata.evidenceFileId,
+                                  event.metadata?.evidenceFileId ??
+                                    event.evidence_file_id,
                                 )
                               }
                               target="_blank"

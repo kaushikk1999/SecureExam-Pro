@@ -55,6 +55,11 @@ describe("private exam file storage", () => {
     const stream = await readPrivateFile(reference);
 
     expect(reference).toBe("gdrive:stored-file-id");
+    expect(mocks.fromJSON).toHaveBeenCalledWith(
+      expect.objectContaining({
+        scopes: ["https://www.googleapis.com/auth/drive"],
+      }),
+    );
     expect(fetchMock).toHaveBeenCalledTimes(2);
     expect(fetchMock.mock.calls[0][0]).toContain("upload/drive/v3/files");
     expect(String(fetchMock.mock.calls[0][1]?.body)).toContain(

@@ -1491,6 +1491,11 @@ it("counts Ollama missing-face and multiple-face results as warning strikes", as
       )[0].warnings,
     ).toBe(0);
     const faceEventId = randomUUID();
+    const faceEvidenceId = randomUUID();
+    const faceImage = Buffer.from([0xff, 0xd8, 0xff, 0xd9]);
+    await db.execute(
+      sql`INSERT INTO files(id,exam_id,attempt_id,owner_id,name,mime,url,size,extracted_text) VALUES(${faceEvidenceId},${faceExam},${faceAttempt},${student},${`EVIDENCE::AI_FACE_NOT_VISIBLE::${faceEventId}.jpg`},'image/jpeg',${`inline:${faceEvidenceId}`},${faceImage.length},${`base64:${faceImage.toString("base64")}`})`,
+    );
     const faceSync = await request(`attempts/${faceAttempt}/sync`, {
       events: [
         {
@@ -1502,6 +1507,8 @@ it("counts Ollama missing-face and multiple-face results as warning strikes", as
               "Ollama review of two transient low-resolution camera frames; no face clearly visible in either sample",
             evidenceCapture: "tablet camera still",
             evidenceCapturedAt: new Date().toISOString(),
+            evidenceFileId: faceEvidenceId,
+            evidenceStorageFallback: true,
           },
         },
       ],
@@ -1519,6 +1526,23 @@ it("counts Ollama missing-face and multiple-face results as warning strikes", as
       ["AI_FACE_NOT_VISIBLE", "HIGH"],
       ["WARNING_ISSUED", "HIGH"],
     ]);
+    expect(events[1].metadata).toMatchObject({
+      count: 1,
+      reason: "AI_FACE_NOT_VISIBLE",
+      sourceEventId: faceEventId,
+      evidenceFileId: faceEvidenceId,
+      evidenceCapture: "tablet camera still",
+      evidenceStorageFallback: true,
+    });
+    const auditResponse = await requestAs(teacher, "audit");
+    expect(auditResponse.status).toBe(200);
+    const auditRows = await auditResponse.json();
+    expect(
+      auditRows.find(
+        (row: any) =>
+          row.attempt_id === faceAttempt && row.event_type === "WARNING_ISSUED",
+      ),
+    ).toMatchObject({ evidence_file_id: faceEvidenceId });
 
     const multipleAttempt = randomUUID();
     const multipleDevice = randomUUID();
@@ -1556,9 +1580,40 @@ it("counts Ollama missing-face and multiple-face results as warning strikes", as
           sql`SELECT warnings FROM attempts WHERE id=${multipleAttempt}`,
         )
       )[0].warnings,
+    ).toBe(0);
+    const multipleEventId = randomUUID();
+    const multipleEvidenceId = randomUUID();
+    await db.execute(
+      sql`INSERT INTO files(id,exam_id,attempt_id,owner_id,name,mime,url,size,extracted_text) VALUES(${multipleEvidenceId},${faceExam},${multipleAttempt},${other},${`EVIDENCE::AI_MULTIPLE_FACES_VISIBLE::${multipleEventId}.jpg`},'image/jpeg',${`inline:${multipleEvidenceId}`},${faceImage.length},${`base64:${faceImage.toString("base64")}`})`,
+    );
+    const multipleSync = await request(
+      `attempts/${multipleAttempt}/sync`,
+      {
+        events: [
+          {
+            id: multipleEventId,
+            type: "AI_MULTIPLE_FACES_VISIBLE",
+            metadata: {
+              signals: "MULTIPLE_PEOPLE_VISIBLE",
+              evidenceCapture: "shared screen snapshot",
+              evidenceCapturedAt: new Date().toISOString(),
+              evidenceFileId: multipleEvidenceId,
+            },
+          },
+        ],
+      },
+      { "x-exam-device": multipleDevice },
+    );
+    expect(multipleSync.status).toBe(200);
+    expect(
+      (
+        await query(
+          sql`SELECT warnings FROM attempts WHERE id=${multipleAttempt}`,
+        )
+      )[0].warnings,
     ).toBe(1);
     const multipleEvents = await query(
-      sql`SELECT event_type,severity FROM audit_events WHERE attempt_id=${multipleAttempt} ORDER BY sequence`,
+      sql`SELECT event_type,severity,metadata FROM audit_events WHERE attempt_id=${multipleAttempt} ORDER BY sequence`,
     );
     expect(
       multipleEvents.map((event) => [event.event_type, event.severity]),
@@ -1566,6 +1621,10 @@ it("counts Ollama missing-face and multiple-face results as warning strikes", as
       ["AI_MULTIPLE_FACES_VISIBLE", "HIGH"],
       ["WARNING_ISSUED", "HIGH"],
     ]);
+    expect(multipleEvents[1].metadata).toMatchObject({
+      evidenceFileId: multipleEvidenceId,
+      reason: "AI_MULTIPLE_FACES_VISIBLE",
+    });
   } finally {
     vi.unstubAllGlobals();
     vi.unstubAllEnvs();

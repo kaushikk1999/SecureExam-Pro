@@ -5,6 +5,8 @@ import { sql } from "drizzle-orm";
 import { query } from "./db";
 import { HttpError } from "./auth";
 
+const DRIVE_SCOPE = "https://www.googleapis.com/auth/drive";
+
 function googleAuth(scopes: string[]) {
   const projectNumber = process.env.GCP_PROJECT_NUMBER;
   const poolId = process.env.GCP_WORKLOAD_IDENTITY_POOL_ID;
@@ -31,8 +33,21 @@ function googleAuth(scopes: string[]) {
 }
 
 async function driveToken() {
-  const auth = googleAuth(["https://www.googleapis.com/auth/drive.file"]);
-  const { token } = await auth.getAccessToken();
+  const auth = googleAuth([DRIVE_SCOPE]);
+  let token: string | null | undefined;
+  try {
+    ({ token } = await auth.getAccessToken());
+  } catch (error) {
+    const code = (error as { code?: string })?.code;
+    console.error("Google Drive token exchange failed", {
+      name: error instanceof Error ? error.name : "Error",
+      code,
+    });
+    throw new HttpError(
+      503,
+      "Google Drive authorization failed. Check the Vercel Workload Identity Federation and service-account access settings.",
+    );
+  }
   if (!token) throw new HttpError(503, "Google Drive authorization failed.");
   return token;
 }
@@ -54,7 +69,11 @@ async function findDriveChild(
     `https://www.googleapis.com/drive/v3/files?q=${encodeURIComponent(query)}&fields=files(id,name,mimeType,parents)&pageSize=100`,
     { headers: { Authorization: `Bearer ${token}` }, cache: "no-store" },
   );
-  if (!response.ok) throw new HttpError(502, "Google Drive search failed.");
+  if (!response.ok)
+    throw new HttpError(
+      502,
+      "Google Drive could not access the evidence folder. Confirm the configured parent folder is shared with the service account as Editor and the Drive API is enabled.",
+    );
   const result = (await response.json()) as {
     files?: {
       id: string;
@@ -454,9 +473,7 @@ export async function storePrivateFile(
       503,
       "Private storage is not configured. Set GDRIVE_FOLDER_ID and share that Drive folder with the configured service account, or set BLOB_READ_WRITE_TOKEN.",
     );
-  const auth = googleAuth(["https://www.googleapis.com/auth/drive.file"]);
-  const { token } = await auth.getAccessToken();
-  if (!token) throw new HttpError(503, "Google Drive authorization failed.");
+  const token = await driveToken();
 
   const boundary = `secureexam_${randomUUID().replaceAll("-", "")}`;
   const filename = path.split("/").at(-1) ?? "exam-file";
@@ -510,9 +527,7 @@ export async function readPrivateFile(reference: string) {
 
   const fileId = reference.slice("gdrive:".length);
   if (!/^[\w-]+$/.test(fileId)) throw new HttpError(404, "File not found.");
-  const auth = googleAuth(["https://www.googleapis.com/auth/drive.file"]);
-  const { token } = await auth.getAccessToken();
-  if (!token) throw new HttpError(503, "Google Drive authorization failed.");
+  const token = await driveToken();
   const response = await fetch(
     `https://www.googleapis.com/drive/v3/files/${encodeURIComponent(fileId)}?alt=media`,
     {
@@ -534,9 +549,7 @@ export async function deletePrivateFile(reference: string) {
 
   const fileId = reference.slice("gdrive:".length);
   if (!/^[\w-]+$/.test(fileId)) throw new HttpError(404, "File not found.");
-  const auth = googleAuth(["https://www.googleapis.com/auth/drive.file"]);
-  const { token } = await auth.getAccessToken();
-  if (!token) throw new HttpError(503, "Google Drive authorization failed.");
+  const token = await driveToken();
   const response = await fetch(
     `https://www.googleapis.com/drive/v3/files/${encodeURIComponent(fileId)}`,
     {

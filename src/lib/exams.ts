@@ -368,7 +368,21 @@ export async function event(
       attemptId: a.id,
       type: "WARNING_ISSUED",
       severity: "HIGH",
-      metadata: { count: decision.warnings, reason: eventType },
+      metadata: {
+        count: decision.warnings,
+        reason: eventType,
+        sourceEventId: clientEventId ?? null,
+        ...Object.fromEntries(
+          [
+            "evidenceFileId",
+            "evidenceCapture",
+            "evidenceCapturedAt",
+            "evidenceStorageFallback",
+          ]
+            .filter((key) => Object.hasOwn(meta, key))
+            .map((key) => [key, meta[key]]),
+        ),
+      },
     });
     a.warnings = decision.warnings;
     a.last_warning_at = new Date();

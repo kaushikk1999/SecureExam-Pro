@@ -404,6 +404,19 @@ export default function ExamRoom({
         "SPEECH_ACTIVITY",
         "CAMERA_MOTION",
         "AI_FACE_NOT_VISIBLE",
+        "AI_MULTIPLE_FACES_VISIBLE",
+      ];
+      const warningEvidenceTypes = [
+        "TAB_HIDDEN",
+        "WINDOW_BLUR",
+        "FULLSCREEN_EXIT",
+        "CAMERA_DISABLED",
+        "MICROPHONE_DISABLED",
+        "SCREEN_SHARE_STOPPED",
+        "LOCATION_OUTSIDE_GEOFENCE",
+        "PASTE_ATTEMPT",
+        "AI_FACE_NOT_VISIBLE",
+        "AI_MULTIPLE_FACES_VISIBLE",
       ];
       const nowMs = Date.now();
       const tabletCameraEvidenceEnabled =
@@ -413,7 +426,7 @@ export default function ExamRoom({
       if (
         (active.current.policy.screen || tabletCameraEvidenceEnabled) &&
         evidenceTypes.includes(type) &&
-        (type === "AI_FACE_NOT_VISIBLE" ||
+        (warningEvidenceTypes.includes(type) ||
           nowMs - lastEvidenceCapture.current >= 5000)
       ) {
         lastEvidenceCapture.current = nowMs;
@@ -1140,6 +1153,12 @@ export default function ExamRoom({
               signals: "FACE_NOT_VISIBLE",
               measurement:
                 "Ollama review of two transient low-resolution camera frames; no face clearly visible in either sample",
+            });
+          if (signals.includes("MULTIPLE_PEOPLE_VISIBLE"))
+            emit("AI_MULTIPLE_FACES_VISIBLE", {
+              signals: "MULTIPLE_PEOPLE_VISIBLE",
+              measurement:
+                "Ollama review of two transient low-resolution camera frames; two or more distinct faces clearly visible",
             });
           if (Date.now() - lastVisionNotice > 30000) {
             lastVisionNotice = Date.now();

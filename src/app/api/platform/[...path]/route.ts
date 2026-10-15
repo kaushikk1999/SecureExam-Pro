@@ -1634,11 +1634,16 @@ async function dispatch(req: Request, parts: string[]) {
         ...(review.possibleMouthMovement ? ["POSSIBLE_MOUTH_MOVEMENT"] : []),
       ];
       if (signals.length) {
-        // Missing-face warnings are recorded by the client's normal sync path
-        // after it uploads the matching camera still. That keeps the immutable
-        // audit event linked to the evidence file in its original metadata.
-        // Other camera signals retain their existing server-side audit path.
-        if (!signals.includes("FACE_NOT_VISIBLE"))
+        // Warning signals are recorded by the client after uploading a
+        // matching camera still. Keep only advisory signals on this server
+        // path so the warning audit event can retain its evidence file ID.
+        const advisorySignals = signals.filter((signal) =>
+          [
+            "POSSIBLE_PHONE_OR_EXTRA_SCREEN",
+            "POSSIBLE_MOUTH_MOVEMENT",
+          ].includes(signal),
+        );
+        if (advisorySignals.length)
           await db.transaction(async (tx) => {
             const a = await lockedAttempt(id, u, tx, device);
             const [exam] = await query(
@@ -1652,17 +1657,15 @@ async function dispatch(req: Request, parts: string[]) {
               a.status !== "ACTIVE"
             )
               return;
-            const multipleFaces = signals.includes("MULTIPLE_PEOPLE_VISIBLE");
             await event(
               tx,
               a,
               u,
-              multipleFaces ? "AI_MULTIPLE_FACES_VISIBLE" : "AI_CAMERA_REVIEW",
+              "AI_CAMERA_REVIEW",
               {
-                signals: signals.join(","),
-                measurement: multipleFaces
-                  ? "Ollama review of two transient low-resolution camera frames; two or more distinct faces clearly visible"
-                  : "Ollama review of two transient low-resolution camera frames; advisory only",
+                signals: advisorySignals.join(","),
+                measurement:
+                  "Ollama review of two transient low-resolution camera frames; advisory only",
               },
               randomUUID(),
             );
@@ -2085,6 +2088,7 @@ async function dispatch(req: Request, parts: string[]) {
                 "NETWORK_RECONNECTED",
                 "PASTE_ATTEMPT",
                 "AI_FACE_NOT_VISIBLE",
+                "AI_MULTIPLE_FACES_VISIBLE",
               ]),
               metadata: z
                 .record(
@@ -2224,13 +2228,25 @@ async function dispatch(req: Request, parts: string[]) {
       sql`SELECT a.*,u.name,u.student_id,u.role,e.title AS exam_title,
                  c.code AS course_code,c.section,
                  wea.folder_id AS drive_folder_id,wea.report_id AS drive_report_id,
-                 evidence.url AS evidence_url
+                 evidence.url AS evidence_url,
+                 COALESCE(a.metadata->>'evidenceFileId',warning_source.evidence_file_id) AS evidence_file_id
           FROM audit_events a
           LEFT JOIN users u ON u.id=a.user_id
           LEFT JOIN exams e ON e.id=a.exam_id
           LEFT JOIN courses c ON c.id=e.course_id
           LEFT JOIN warning_evidence_archives wea ON wea.attempt_id=a.attempt_id
-          LEFT JOIN files evidence ON evidence.id::text=a.metadata->>'evidenceFileId' AND evidence.attempt_id=a.attempt_id
+          LEFT JOIN LATERAL (
+            SELECT source.metadata->>'evidenceFileId' AS evidence_file_id
+            FROM audit_events source
+            WHERE a.event_type='WARNING_ISSUED'
+              AND source.attempt_id=a.attempt_id
+              AND source.sequence<a.sequence
+              AND source.event_type=a.metadata->>'reason'
+              AND source.metadata ? 'evidenceFileId'
+            ORDER BY source.sequence DESC
+            LIMIT 1
+          ) warning_source ON true
+          LEFT JOIN files evidence ON evidence.id::text=COALESCE(a.metadata->>'evidenceFileId',warning_source.evidence_file_id) AND evidence.attempt_id=a.attempt_id
           WHERE ${u.role === "ADMIN"} OR c.teacher_id=${u.id} OR a.user_id=${u.id}
              OR (a.exam_id IS NULL AND u.id IN(SELECT n.user_id FROM enrollments n JOIN courses co ON co.id=n.course_id WHERE co.teacher_id=${u.id}))
           ORDER BY a.sequence DESC LIMIT 1000`,
@@ -2347,6 +2363,7 @@ async function dispatch(req: Request, parts: string[]) {
               "SPEECH_ACTIVITY",
               "CAMERA_MOTION",
               "AI_FACE_NOT_VISIBLE",
+              "AI_MULTIPLE_FACES_VISIBLE",
             ])
             .parse(form.get("eventType"))
         : null;
