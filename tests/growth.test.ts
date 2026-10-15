@@ -116,6 +116,9 @@ beforeAll(async () => {
   // Keep the generated audit hash valid; use the real event ID below.
   Object.assign(ids, { event: ev.id });
   await db.execute(
+    sql`INSERT INTO warning_evidence_archives(attempt_id,exam_id,folder_id,report_id,evidence_count) VALUES(${attempt},${exam},'drive-student-folder','drive-report',1)`,
+  );
+  await db.execute(
     sql`INSERT INTO checkins(exam_id,user_id) VALUES(${exam},${student})`,
   );
 });
@@ -242,6 +245,11 @@ it("scopes the action queue and durably reviews incidents", async () => {
   let r = await ok("actions");
   expect(r.pending).toHaveLength(1);
   expect(r.incidents).toHaveLength(1);
+  expect(r.incidents[0]).toMatchObject({
+    reviewed: false,
+    drive_folder_id: "drive-student-folder",
+    drive_report_id: "drive-report",
+  });
   await ok("actions", {
     eventId: ids.event,
     note: "Reviewed this warning in context.",

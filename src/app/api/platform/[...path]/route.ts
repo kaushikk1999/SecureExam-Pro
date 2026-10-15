@@ -118,6 +118,7 @@ async function archiveAttemptWarningEvidence(id: string) {
     ),
   ]);
   return archiveWarningEvidenceToDrive({
+    attemptId: id,
     examId: student.exam_id,
     examTitle: student.exam_title,
     courseName: student.course_name,
@@ -2197,7 +2198,19 @@ async function dispatch(req: Request, parts: string[]) {
   if (resource === "audit") {
     teacher(u);
     const rows = await query(
-      sql`SELECT a.*,u.name,u.student_id,u.role FROM audit_events a LEFT JOIN users u ON u.id=a.user_id LEFT JOIN exams e ON e.id=a.exam_id LEFT JOIN courses c ON c.id=e.course_id WHERE ${u.role === "ADMIN"} OR c.teacher_id=${u.id} OR a.user_id=${u.id} OR (a.exam_id IS NULL AND u.id IN(SELECT n.user_id FROM enrollments n JOIN courses co ON co.id=n.course_id WHERE co.teacher_id=${u.id})) ORDER BY sequence DESC LIMIT 1000`,
+      sql`SELECT a.*,u.name,u.student_id,u.role,e.title AS exam_title,
+                 c.code AS course_code,c.section,
+                 wea.folder_id AS drive_folder_id,wea.report_id AS drive_report_id,
+                 evidence.url AS evidence_url
+          FROM audit_events a
+          LEFT JOIN users u ON u.id=a.user_id
+          LEFT JOIN exams e ON e.id=a.exam_id
+          LEFT JOIN courses c ON c.id=e.course_id
+          LEFT JOIN warning_evidence_archives wea ON wea.attempt_id=a.attempt_id
+          LEFT JOIN files evidence ON evidence.id::text=a.metadata->>'evidenceFileId' AND evidence.attempt_id=a.attempt_id
+          WHERE ${u.role === "ADMIN"} OR c.teacher_id=${u.id} OR a.user_id=${u.id}
+             OR (a.exam_id IS NULL AND u.id IN(SELECT n.user_id FROM enrollments n JOIN courses co ON co.id=n.course_id WHERE co.teacher_id=${u.id}))
+          ORDER BY a.sequence DESC LIMIT 1000`,
     );
     if (url.searchParams.get("format") === "csv")
       return new Response(

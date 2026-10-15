@@ -1171,6 +1171,9 @@ it("permanently removes an exam and every related result and private file", asyn
   await db.execute(
     sql`INSERT INTO files(id,exam_id,attempt_id,owner_id,name,mime,url,size) VALUES(${submissionFileId},${exam},${submittedAttempt.id},${student},'SUBMISSION::Test.docx','application/vnd.openxmlformats-officedocument.wordprocessingml.document','private-submission',20)`,
   );
+  await db.execute(
+    sql`INSERT INTO warning_evidence_archives(attempt_id,exam_id,folder_id,report_id,evidence_count) VALUES(${submittedAttempt.id},${exam},'deleted-drive-folder','deleted-drive-report',1)`,
+  );
 
   const deletedExam = await deleteRequest(`exams/${exam}`);
   expect(deletedExam.status).toBe(200);
@@ -1198,6 +1201,11 @@ it("permanently removes an exam and every related result and private file", asyn
   ).toHaveLength(0);
   expect(
     await query(sql`SELECT id FROM files WHERE exam_id=${exam}`),
+  ).toHaveLength(0);
+  expect(
+    await query(
+      sql`SELECT attempt_id FROM warning_evidence_archives WHERE exam_id=${exam}`,
+    ),
   ).toHaveLength(0);
   expect(
     await query(

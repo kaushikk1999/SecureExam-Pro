@@ -304,6 +304,52 @@ function Actions() {
   const { data, error, refresh } = useData("growth/actions", 15000);
   const task = useTask();
   const [notes, setNotes] = useState<Record<string, string>>({});
+  const warningExams = (() => {
+    const exams = new Map<string, any>();
+    for (const warning of data?.incidents ?? []) {
+      let exam = exams.get(warning.exam_id);
+      if (!exam) {
+        exam = {
+          id: warning.exam_id,
+          title: warning.title,
+          course: warning.course_code,
+          students: new Map(),
+        };
+        exams.set(warning.exam_id, exam);
+      }
+      let student = exam.students.get(warning.attempt_id);
+      if (!student) {
+        student = { ...warning, warnings: [] };
+        exam.students.set(warning.attempt_id, student);
+      }
+      student.warnings.push(warning);
+    }
+    return [...exams.values()].map((exam) => ({
+      ...exam,
+      students: [...exam.students.values()]
+        .map((student: any) => ({
+          ...student,
+          warnings: student.warnings.sort(
+            (a: any, b: any) =>
+              new Date(a.created_at).getTime() -
+              new Date(b.created_at).getTime(),
+          ),
+        }))
+        .sort(
+          (a: any, b: any) =>
+            new Date(a.warnings[0].created_at).getTime() -
+            new Date(b.warnings[0].created_at).getTime(),
+        ),
+    }));
+  })();
+  const pendingWarningCount = (data?.incidents ?? []).filter(
+    (r: any) => !r.reviewed,
+  ).length;
+  const warningDate = (value: string) =>
+    new Intl.DateTimeFormat("en-GB", {
+      dateStyle: "medium",
+      timeZone: "Asia/Bangkok",
+    }).format(new Date(value));
   return (
     <>
       <Intro
@@ -323,7 +369,7 @@ function Actions() {
             {[
               ["Awaiting entry", data.pending.length],
               ["Connection attention", data.disconnected.length],
-              ["Warnings to review", data.incidents.length],
+              ["Warnings to review", pendingWarningCount],
               ["Open appeals", data.appeals],
             ].map(([label, value]) => (
               <div className={styles.card} key={label}>
@@ -387,57 +433,187 @@ function Actions() {
           <section className={styles.card}>
             <h2>Warning reviews</h2>
             <p>
-              Showing up to 100 unreviewed warnings. Review the exam evidence
-              before recording your note. This does not waive a warning.
+              Warning records are grouped by exam and student. Open a student to
+              see their complete warning history and Drive evidence. Review each
+              unreviewed warning before recording your note.
             </p>
-            {!data.incidents.length && (
-              <p>All warning events have been reviewed.</p>
+            {!warningExams.length && (
+              <p>No students are awaiting warning review.</p>
             )}
-            {data.incidents.map((r: any) => (
-              <details key={r.id} className={styles.details}>
+            {warningExams.map((exam: any) => (
+              <details key={exam.id} className={styles.details}>
                 <summary>
-                  {r.name} · {r.title} · {time(r.created_at)} — review warning
+                  {exam.course ? exam.course + " · " : ""}
+                  {exam.title} · {exam.students.length} students with warnings
                 </summary>
-                <form
-                  className={styles.case}
-                  onSubmit={(e) => {
-                    e.preventDefault();
-                    void task.run(async () => {
-                      await api("growth/actions", {
-                        eventId: r.id,
-                        note: notes[r.id],
-                      });
-                      await refresh();
-                    }, "Review recorded.");
-                  }}
-                >
-                  <div className={styles.row}>
-                    <span>
-                      <strong>
-                        {r.name} · {r.title}
-                      </strong>
-                      <small>
-                        {time(r.created_at)} · {r.severity}
-                      </small>
-                    </span>
-                    <Link href={"/workspace/exams/" + r.exam_id}>
-                      View examination →
-                    </Link>
-                  </div>
-                  <label>
-                    Review note
-                    <textarea
-                      required
-                      minLength={10}
-                      maxLength={4000}
-                      value={notes[r.id] ?? ""}
-                      onChange={(e) =>
-                        setNotes({ ...notes, [r.id]: e.target.value })
-                      }
-                    />
-                  </label>
-                  <button disabled={task.busy}>Mark reviewed</button>
-                </form>
+                <div className={styles.case}>
+                  {[
+                    ...exam.students.reduce(
+                      (groups: Map<string, any[]>, student: any) => {
+                        const date = warningDate(
+                          student.warnings[0].created_at,
+                        );
+                        groups.set(date, [
+                          ...(groups.get(date) ?? []),
+                          student,
+                        ]);
+                        return groups;
+                      },
+                      new Map<string, any[]>(),
+                    ),
+                  ].map(([date, students]: [string, any[]]) => (
+                    <details key={date} className={styles.details}>
+                      <summary>
+                        {date} · {students.length} students with warnings
+                      </summary>
+                      {students.map((student: any) => (
+                        <details
+                          key={student.attempt_id}
+                          className={styles.details}
+                        >
+                          <summary>
+                            {student.name} ·{" "}
+                            {student.student_id ?? "No student ID"} ·{" "}
+                            {student.warnings.length} warnings · first{" "}
+                            {time(student.warnings[0].created_at)}
+                          </summary>
+                          <div className={styles.row}>
+                            <span>
+                              {student.drive_folder_id ? (
+                                <a
+                                  href={
+                                    "https://drive.google.com/drive/folders/" +
+                                    encodeURIComponent(student.drive_folder_id)
+                                  }
+                                  target="_blank"
+                                  rel="noreferrer"
+                                >
+                                  Open warning evidence folder in Google Drive →
+                                </a>
+                              ) : (
+                                <small>
+                                  Evidence folder is not archived in Drive yet.
+                                </small>
+                              )}
+                              {student.drive_report_id && (
+                                <a
+                                  href={
+                                    "https://drive.google.com/file/d/" +
+                                    encodeURIComponent(
+                                      student.drive_report_id,
+                                    ) +
+                                    "/view"
+                                  }
+                                  target="_blank"
+                                  rel="noreferrer"
+                                >
+                                  Open activity report →
+                                </a>
+                              )}
+                            </span>
+                            <button
+                              disabled={task.busy}
+                              onClick={() =>
+                                void task.run(async () => {
+                                  await api(
+                                    "attempts/" +
+                                      student.attempt_id +
+                                      "/archive-evidence",
+                                    {},
+                                  );
+                                  await refresh();
+                                }, "Warning evidence saved to Google Drive.")
+                              }
+                            >
+                              Save / refresh Drive evidence
+                            </button>
+                          </div>
+                          {student.warnings.map((r: any) => (
+                            <div key={r.id} className={styles.case}>
+                              <div className={styles.row}>
+                                <span>
+                                  <strong>
+                                    {time(r.created_at)} · {r.severity}
+                                  </strong>
+                                  <small>
+                                    {r.reviewed ? "Reviewed" : "Review needed"}
+                                    {r.metadata?.reason
+                                      ? " · " + r.metadata.reason
+                                      : ""}
+                                  </small>
+                                </span>
+                                {typeof r.evidence_url === "string" &&
+                                  r.evidence_url.startsWith("gdrive:") && (
+                                    <a
+                                      href={
+                                        "https://drive.google.com/file/d/" +
+                                        encodeURIComponent(
+                                          r.evidence_url.slice(7),
+                                        ) +
+                                        "/view"
+                                      }
+                                      target="_blank"
+                                      rel="noreferrer"
+                                    >
+                                      Open screenshot →
+                                    </a>
+                                  )}
+                              </div>
+                              {typeof r.metadata?.evidenceFileId ===
+                                "string" && (
+                                <a
+                                  href={
+                                    "/api/platform/files/" +
+                                    encodeURIComponent(
+                                      r.metadata.evidenceFileId,
+                                    )
+                                  }
+                                  target="_blank"
+                                  rel="noreferrer"
+                                >
+                                  View screenshot in app →
+                                </a>
+                              )}
+                              {!r.reviewed && (
+                                <form
+                                  onSubmit={(e) => {
+                                    e.preventDefault();
+                                    void task.run(async () => {
+                                      await api("growth/actions", {
+                                        eventId: r.id,
+                                        note: notes[r.id],
+                                      });
+                                      await refresh();
+                                    }, "Review recorded.");
+                                  }}
+                                >
+                                  <label>
+                                    Review note
+                                    <textarea
+                                      required
+                                      minLength={10}
+                                      maxLength={4000}
+                                      value={notes[r.id] ?? ""}
+                                      onChange={(e) =>
+                                        setNotes({
+                                          ...notes,
+                                          [r.id]: e.target.value,
+                                        })
+                                      }
+                                    />
+                                  </label>
+                                  <button disabled={task.busy}>
+                                    Mark reviewed
+                                  </button>
+                                </form>
+                              )}
+                            </div>
+                          ))}
+                        </details>
+                      ))}
+                    </details>
+                  ))}
+                </div>
               </details>
             ))}
           </section>

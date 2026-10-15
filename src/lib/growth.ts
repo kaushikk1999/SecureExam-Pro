@@ -163,7 +163,26 @@ export async function growthRequest(
       sql`SELECT a.id,a.exam_id,a.last_heartbeat_at,u.name,e.title FROM attempts a JOIN users u ON u.id=a.user_id JOIN exams e ON e.id=a.exam_id JOIN courses c ON c.id=e.course_id WHERE a.status='ACTIVE' AND a.deadline>now() AND a.last_heartbeat_at<now()-interval '90 seconds' AND (${u.role === "ADMIN"} OR c.teacher_id=${u.id}) ORDER BY a.last_heartbeat_at`,
     );
     const incidents = await query(
-      sql`SELECT ev.id,ev.attempt_id,ev.exam_id,ev.created_at,ev.severity,u.name,e.title FROM audit_events ev JOIN attempts a ON a.id=ev.attempt_id JOIN users u ON u.id=a.user_id JOIN exams e ON e.id=ev.exam_id JOIN courses c ON c.id=e.course_id LEFT JOIN incident_reviews r ON r.event_id=ev.id WHERE ev.event_type='WARNING_ISSUED' AND r.event_id IS NULL AND (${u.role === "ADMIN"} OR c.teacher_id=${u.id}) ORDER BY ev.created_at DESC LIMIT 100`,
+      sql`SELECT ev.id,ev.attempt_id,ev.exam_id,ev.created_at,ev.severity,ev.metadata,
+                 a.user_id,u.name,u.student_id,e.title,c.code AS course_code,c.section,
+                 (r.event_id IS NOT NULL) AS reviewed,
+                 wea.folder_id AS drive_folder_id,wea.report_id AS drive_report_id,
+                 evidence.url AS evidence_url
+          FROM audit_events ev
+          JOIN attempts a ON a.id=ev.attempt_id
+          JOIN users u ON u.id=a.user_id
+          JOIN exams e ON e.id=ev.exam_id
+          JOIN courses c ON c.id=e.course_id
+          LEFT JOIN incident_reviews r ON r.event_id=ev.id
+          LEFT JOIN warning_evidence_archives wea ON wea.attempt_id=a.id
+          LEFT JOIN files evidence ON evidence.id::text=ev.metadata->>'evidenceFileId' AND evidence.attempt_id=a.id
+          WHERE ev.event_type='WARNING_ISSUED'
+            AND EXISTS(SELECT 1 FROM audit_events pending
+              LEFT JOIN incident_reviews pending_review ON pending_review.event_id=pending.id
+              WHERE pending.attempt_id=a.id AND pending.event_type='WARNING_ISSUED'
+                AND pending_review.event_id IS NULL)
+            AND (${u.role === "ADMIN"} OR c.teacher_id=${u.id})
+          ORDER BY ev.created_at DESC LIMIT 500`,
     );
     const [appeals] = await query(
       sql`SELECT count(*)::int AS count FROM appeals p JOIN attempts a ON a.id=p.attempt_id JOIN exams e ON e.id=a.exam_id JOIN courses c ON c.id=e.course_id WHERE p.status IN('OPEN','UNDER_REVIEW') AND (${u.role === "ADMIN"} OR c.teacher_id=${u.id})`,

@@ -4080,6 +4080,56 @@ function Accommodations({ examId }: { examId: string }) {
 function Audit() {
   const { data, error } = useData("audit", 10000);
   const [search, setSearch] = useState("");
+  const filtered = (data ?? []).filter((e: any) =>
+    JSON.stringify(e).toLowerCase().includes(search.toLowerCase()),
+  );
+  const warningExams = (() => {
+    const exams = new Map<string, any>();
+    for (const event of filtered.filter(
+      (e: any) => e.event_type === "WARNING_ISSUED",
+    )) {
+      const examId = event.exam_id ?? "unassigned";
+      let exam = exams.get(examId);
+      if (!exam) {
+        exam = {
+          id: examId,
+          title: event.exam_title ?? "Unassigned activity",
+          course: event.course_code,
+          students: new Map(),
+        };
+        exams.set(examId, exam);
+      }
+      const studentId = event.attempt_id ?? event.user_id ?? "unknown";
+      let student = exam.students.get(studentId);
+      if (!student) {
+        student = { ...event, warnings: [] };
+        exam.students.set(studentId, student);
+      }
+      student.warnings.push(event);
+    }
+    return [...exams.values()].map((exam) => ({
+      ...exam,
+      students: [...exam.students.values()]
+        .map((student: any) => ({
+          ...student,
+          warnings: student.warnings.sort(
+            (a: any, b: any) =>
+              new Date(a.created_at).getTime() -
+              new Date(b.created_at).getTime(),
+          ),
+        }))
+        .sort(
+          (a: any, b: any) =>
+            new Date(a.warnings[0].created_at).getTime() -
+            new Date(b.warnings[0].created_at).getTime(),
+        ),
+    }));
+  })();
+  const dateLabel = (value: string) =>
+    new Intl.DateTimeFormat("en-GB", {
+      dateStyle: "medium",
+      timeZone: "Asia/Bangkok",
+    }).format(new Date(value));
   return (
     <>
       <Heading
@@ -4102,28 +4152,146 @@ function Audit() {
         />
         <small>Latest 1,000 events</small>
       </div>
-      <section className="panel table-wrap">
-        <table>
-          <thead>
-            <tr>
-              <th>Server time</th>
-              <th>Person</th>
-              <th>Event</th>
-              <th>Evidence</th>
-            </tr>
-          </thead>
-          <tbody>
-            {data
-              ?.filter((e: any) =>
-                JSON.stringify(e).toLowerCase().includes(search.toLowerCase()),
-              )
-              .map((e: any) => (
+      <section className="panel">
+        <h2>Warnings by exam</h2>
+        <p className="muted">
+          Open an exam, date, then a student to review the full warning history
+          and its Drive evidence.
+        </p>
+        {!warningExams.length && <p>No warning records match this search.</p>}
+        {warningExams.map((exam: any) => {
+          const dates = new Map<string, any[]>();
+          for (const student of exam.students) {
+            const date = dateLabel(student.warnings[0].created_at);
+            dates.set(date, [...(dates.get(date) ?? []), student]);
+          }
+          return (
+            <details key={exam.id} className="audit-folder">
+              <summary>
+                {exam.course ? exam.course + " · " : ""}
+                {exam.title} · {exam.students.length} students with warnings
+              </summary>
+              {[...dates.entries()].map(([date, students]) => (
+                <details key={date} className="audit-folder audit-date">
+                  <summary>
+                    {date} · {students.length} students
+                  </summary>
+                  {students.map((student: any) => (
+                    <details
+                      key={student.attempt_id ?? student.user_id}
+                      className="audit-student"
+                    >
+                      <summary>
+                        {student.name ?? "Unknown account"} ·{" "}
+                        {student.student_id ?? "No student ID"} ·{" "}
+                        {student.warnings.length} warnings · first{" "}
+                        {time(student.warnings[0].created_at)}
+                      </summary>
+                      <div className="audit-evidence-links">
+                        {student.drive_folder_id && (
+                          <a
+                            className="button small"
+                            href={
+                              "https://drive.google.com/drive/folders/" +
+                              encodeURIComponent(student.drive_folder_id)
+                            }
+                            target="_blank"
+                            rel="noreferrer"
+                          >
+                            Open evidence folder in Google Drive
+                          </a>
+                        )}
+                        {student.drive_report_id && (
+                          <a
+                            className="button small"
+                            href={
+                              "https://drive.google.com/file/d/" +
+                              encodeURIComponent(student.drive_report_id) +
+                              "/view"
+                            }
+                            target="_blank"
+                            rel="noreferrer"
+                          >
+                            Open activity report
+                          </a>
+                        )}
+                        {!student.drive_folder_id && (
+                          <span className="muted">
+                            No Drive archive link is available yet.
+                          </span>
+                        )}
+                      </div>
+                      {student.warnings.map((event: any) => (
+                        <details key={event.id} className="audit-warning">
+                          <summary>
+                            {time(event.created_at)} · {event.event_type} ·{" "}
+                            {event.severity}
+                          </summary>
+                          <pre>{JSON.stringify(event.metadata, null, 2)}</pre>
+                          {typeof event.evidence_url === "string" &&
+                            event.evidence_url.startsWith("gdrive:") && (
+                              <a
+                                href={
+                                  "https://drive.google.com/file/d/" +
+                                  encodeURIComponent(
+                                    event.evidence_url.slice(7),
+                                  ) +
+                                  "/view"
+                                }
+                                target="_blank"
+                                rel="noreferrer"
+                              >
+                                Open screenshot in Google Drive →
+                              </a>
+                            )}
+                          {typeof event.metadata?.evidenceFileId ===
+                            "string" && (
+                            <a
+                              href={
+                                "/api/platform/files/" +
+                                encodeURIComponent(
+                                  event.metadata.evidenceFileId,
+                                )
+                              }
+                              target="_blank"
+                              rel="noreferrer"
+                            >
+                              View screenshot in app →
+                            </a>
+                          )}
+                          <small>SHA-256: {event.event_hash}</small>
+                        </details>
+                      ))}
+                    </details>
+                  ))}
+                </details>
+              ))}
+            </details>
+          );
+        })}
+      </section>
+      <details className="panel audit-all">
+        <summary>All audit activity · latest 1,000 events</summary>
+        <div className="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Server time</th>
+                <th>Person</th>
+                <th>Exam</th>
+                <th>Event</th>
+                <th>Evidence</th>
+              </tr>
+            </thead>
+            <tbody>
+              {filtered.map((e: any) => (
                 <tr key={e.id}>
                   <td>{time(e.created_at)}</td>
                   <td>
                     {e.name ?? "Unknown account"}
                     <small>{e.student_id ?? e.role}</small>
                   </td>
+                  <td>{e.exam_title ?? "—"}</td>
                   <td>
                     <Status value={e.event_type} />
                   </td>
@@ -4131,14 +4299,43 @@ function Audit() {
                     <details>
                       <summary>Inspect details</summary>
                       <pre>{JSON.stringify(e.metadata, null, 2)}</pre>
+                      {typeof e.evidence_url === "string" &&
+                        e.evidence_url.startsWith("gdrive:") && (
+                          <a
+                            href={
+                              "https://drive.google.com/file/d/" +
+                              encodeURIComponent(e.evidence_url.slice(7)) +
+                              "/view"
+                            }
+                            target="_blank"
+                            rel="noreferrer"
+                          >
+                            Open screenshot in Drive
+                          </a>
+                        )}
                       {typeof e.metadata?.evidenceFileId === "string" && (
                         <a
                           className="button small"
-                          href={`/api/platform/files/${encodeURIComponent(e.metadata.evidenceFileId)}`}
+                          href={
+                            "/api/platform/files/" +
+                            encodeURIComponent(e.metadata.evidenceFileId)
+                          }
                           target="_blank"
                           rel="noreferrer"
                         >
                           View warning evidence image
+                        </a>
+                      )}
+                      {e.drive_folder_id && (
+                        <a
+                          href={
+                            "https://drive.google.com/drive/folders/" +
+                            encodeURIComponent(e.drive_folder_id)
+                          }
+                          target="_blank"
+                          rel="noreferrer"
+                        >
+                          Open student evidence folder
                         </a>
                       )}
                       <small>SHA-256: {e.event_hash}</small>
@@ -4146,9 +4343,10 @@ function Audit() {
                   </td>
                 </tr>
               ))}
-          </tbody>
-        </table>
-      </section>
+            </tbody>
+          </table>
+        </div>
+      </details>
     </>
   );
 }

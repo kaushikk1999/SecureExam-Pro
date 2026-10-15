@@ -236,6 +236,7 @@ function formatActivityTime(value: string | Date) {
 
 /** Archive a warned student's captured evidence images and activity report in Drive. */
 export async function archiveWarningEvidenceToDrive(input: {
+  attemptId: string;
   examId: string;
   examTitle: string;
   courseName: string;
@@ -383,6 +384,13 @@ export async function archiveWarningEvidenceToDrive(input: {
     Buffer.from(report, "utf8"),
     existingReport?.id,
   );
+  await query(sql`
+    INSERT INTO warning_evidence_archives(attempt_id,exam_id,folder_id,report_id,evidence_count,archived_at)
+    VALUES(${input.attemptId},${input.examId},${studentFolderId},${reportId},${evidenceCount},now())
+    ON CONFLICT(attempt_id) DO UPDATE SET
+      exam_id=EXCLUDED.exam_id,folder_id=EXCLUDED.folder_id,report_id=EXCLUDED.report_id,
+      evidence_count=EXCLUDED.evidence_count,archived_at=EXCLUDED.archived_at
+  `);
   return { archived: true, evidenceCount, folderId: studentFolderId, reportId };
 }
 

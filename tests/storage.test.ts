@@ -5,6 +5,7 @@ const mocks = vi.hoisted(() => ({
   fromJSON: vi.fn(() => mocks.auth),
   put: vi.fn(),
   get: vi.fn(),
+  query: vi.fn(async () => []),
 }));
 
 vi.mock("@vercel/oidc", () => ({
@@ -14,6 +15,7 @@ vi.mock("google-auth-library", () => ({
   ExternalAccountClient: { fromJSON: mocks.fromJSON },
 }));
 vi.mock("@vercel/blob", () => ({ put: mocks.put, get: mocks.get }));
+vi.mock("../src/lib/db", () => ({ query: mocks.query }));
 
 const {
   archiveWarningEvidenceToDrive,
@@ -97,6 +99,7 @@ describe("private exam file storage", () => {
     globalThis.fetch = fetchMock as typeof fetch;
 
     const result = await archiveWarningEvidenceToDrive({
+      attemptId: "11234567-89ab-cdef-0123-456789abcdef",
       examId: "01234567-89ab-cdef-0123-456789abcdef",
       examTitle: "Data Structures Midterm",
       courseName: "Data Structures and Algorithms",
@@ -140,6 +143,7 @@ describe("private exam file storage", () => {
       folderId: "student-folder",
       reportId: "report-file",
     });
+    expect(mocks.query).toHaveBeenCalledOnce();
     expect(String(fetchMock.mock.calls[1][1]?.body)).toContain(
       '"name":"Secure Exam"',
     );
@@ -161,6 +165,7 @@ describe("private exam file storage", () => {
 
   it("does not create any Drive folders for students without warnings", async () => {
     const result = await archiveWarningEvidenceToDrive({
+      attemptId: "11234567-89ab-cdef-0123-456789abcdef",
       examId: "01234567-89ab-cdef-0123-456789abcdef",
       examTitle: "Exam",
       courseName: "Course",
