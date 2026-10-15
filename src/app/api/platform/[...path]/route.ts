@@ -1647,16 +1647,23 @@ async function dispatch(req: Request, parts: string[]) {
           )
             return;
           const faceMissing = signals.includes("FACE_NOT_VISIBLE");
+          const multipleFaces = signals.includes("MULTIPLE_PEOPLE_VISIBLE");
           await event(
             tx,
             a,
             u,
-            faceMissing ? "AI_FACE_NOT_VISIBLE" : "AI_CAMERA_REVIEW",
+            faceMissing
+              ? "AI_FACE_NOT_VISIBLE"
+              : multipleFaces
+                ? "AI_MULTIPLE_FACES_VISIBLE"
+                : "AI_CAMERA_REVIEW",
             {
               signals: signals.join(","),
               measurement: faceMissing
                 ? "Ollama review of two transient low-resolution camera frames; no face clearly visible in either sample"
-                : "Ollama review of two transient low-resolution camera frames; advisory only",
+                : multipleFaces
+                  ? "Ollama review of two transient low-resolution camera frames; two or more distinct faces clearly visible"
+                  : "Ollama review of two transient low-resolution camera frames; advisory only",
             },
             randomUUID(),
           );

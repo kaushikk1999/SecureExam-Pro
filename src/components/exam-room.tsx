@@ -299,9 +299,10 @@ export default function ExamRoom({
             ? cameraSource
             : null;
       if (!source) return null;
-      const captureType = useCameraStill && source === cameraSource
-        ? "tablet camera still"
-        : "shared screen snapshot";
+      const captureType =
+        useCameraStill && source === cameraSource
+          ? "tablet camera still"
+          : "shared screen snapshot";
       const canvas = document.createElement("canvas");
       canvas.width = 640;
       canvas.height = captureType === "tablet camera still" ? 480 : 360;
@@ -995,7 +996,7 @@ export default function ExamRoom({
             lastVisionNotice = Date.now();
             const labels: Record<string, string> = {
               FACE_NOT_VISIBLE: "your face was not clearly visible",
-              MULTIPLE_PEOPLE_VISIBLE: "more than one person may be visible",
+              MULTIPLE_PEOPLE_VISIBLE: "two or more faces may be visible",
               POSSIBLE_PHONE_OR_EXTRA_SCREEN:
                 "a phone or extra screen may be visible",
               POSSIBLE_MOUTH_MOVEMENT: "possible mouth movement was noticed",
@@ -1005,9 +1006,10 @@ export default function ExamRoom({
               .filter(Boolean)
               .join("; ");
             const faceMissing = signals.includes("FACE_NOT_VISIBLE");
+            const multipleFaces = signals.includes("MULTIPLE_PEOPLE_VISIBLE");
             alert(
-              faceMissing
-                ? `Warning: ${reasons}. This missing-face detection counts as a security warning and may lead to automatic submission when the exam's warning limit is reached. Automated signals can be mistaken; adjust your camera view. Your instructor can review the event.`
+              faceMissing || multipleFaces
+                ? `Warning: ${reasons}. This camera detection counts as a security warning and may lead to automatic submission when the exam's warning limit is reached. Automated signals can be mistaken; adjust your camera view. Your instructor can review the event.`
                 : `Camera review signal: ${reasons}. This signal is advisory only and does not count as a warning strike. Automated signals can be mistaken; adjust your camera view and your instructor can review the event.`,
             );
           }
@@ -1247,6 +1249,10 @@ export default function ExamRoom({
       autoSubmitTriggers.push(
         "Ollama detects no face clearly visible in either camera sample",
       );
+    if (p.aiCameraMonitoring && p.camera)
+      autoSubmitTriggers.push(
+        "Ollama detects two or more faces clearly visible in a camera sample",
+      );
     if (p.microphone)
       autoSubmitTriggers.push(
         "turning off or disconnecting the required microphone",
@@ -1281,7 +1287,7 @@ export default function ExamRoom({
         ? [
             [
               "Ollama camera review",
-              "During the exam, two small, low-resolution camera samples are sent to Ollama about once every 20 seconds. If no face is clearly visible in either sample, that detection counts as a security warning and can contribute to automatic submission at the exam's warning limit. Multiple people, possible mouth movement, or a phone/extra screen produce advisory signals only. Samples are transient and are not stored by this app. Automated results can be mistaken and do not prove misconduct; instructors can review the signal and time.",
+              "During the exam, two small, low-resolution camera samples are sent to Ollama about once every 20 seconds. If no face is clearly visible in either sample, or two or more distinct faces are clearly visible, that detection counts as a security warning and can contribute to automatic submission at the exam's warning limit. Possible mouth movement or a phone/extra screen produce advisory signals only. Samples are transient and are not stored by this app. Automated results can be mistaken and do not prove misconduct; instructors can review the signal and time.",
             ],
           ]
         : []),
@@ -1741,11 +1747,14 @@ export default function ExamRoom({
               <input
                 type="checkbox"
                 checked={cameraEvidenceAccepted}
-                onChange={(event) => setCameraEvidenceAccepted(event.target.checked)}
+                onChange={(event) =>
+                  setCameraEvidenceAccepted(event.target.checked)
+                }
               />{" "}
               I understand that when a monitored activity event occurs, a still
-              image from my camera may be captured and stored as warning evidence
-              for instructor review. It is not a recording of my tablet screen.
+              image from my camera may be captured and stored as warning
+              evidence for instructor review. It is not a recording of my tablet
+              screen.
             </label>
           )}
           {p.aiCameraMonitoring && (
@@ -1757,8 +1766,9 @@ export default function ExamRoom({
               />{" "}
               I understand and agree that two reduced camera samples are sent to
               Ollama about once every 20 seconds. If no face is clearly visible
-              in either sample, that detection counts as a security warning and
-              may contribute to automatic submission at the exam warning limit.
+              in either sample, or two or more distinct faces are clearly
+              visible, that detection counts as a security warning and may
+              contribute to automatic submission at the exam warning limit.
               Other camera signals are advisory only. Samples are not stored by
               this app, and automated detections can be mistaken.
             </label>

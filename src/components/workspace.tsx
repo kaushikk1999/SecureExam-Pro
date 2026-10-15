@@ -927,7 +927,7 @@ function ExamForm({ done, initial }: { done: () => void; initial?: any }) {
               [
                 "aiCameraMonitoring",
                 "Ollama camera review (optional)",
-                "Send two small, temporary camera samples to Ollama about every 20 seconds. A missing-face detection counts as a warning strike; other signals are advisory. False detections are possible.",
+                "Send two small, temporary camera samples to Ollama about every 20 seconds. A missing-face or two-or-more-faces detection counts as a warning strike; other signals are advisory. False detections are possible.",
               ],
               [
                 "microphone",
@@ -3212,6 +3212,7 @@ function Monitor({ id, policy }: { id: string; policy?: any }) {
       "CAMERA_MOTION",
       "AI_CAMERA_REVIEW",
       "AI_FACE_NOT_VISIBLE",
+      "AI_MULTIPLE_FACES_VISIBLE",
     ];
     const newest = data.events.find(
       (e: any) => e.severity === "HIGH" || alertTypes.includes(e.event_type),
@@ -3239,6 +3240,7 @@ function Monitor({ id, policy }: { id: string; policy?: any }) {
         "CAMERA_MOTION",
         "AI_CAMERA_REVIEW",
         "AI_FACE_NOT_VISIBLE",
+        "AI_MULTIPLE_FACES_VISIBLE",
       ].includes(event.event_type),
     );
     const newest = recentSignals[0];

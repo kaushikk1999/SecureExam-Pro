@@ -184,10 +184,21 @@ describe("objective policy", () => {
       warnings: 5,
       terminate: true,
     });
+    expect(warningDecision(4, "AI_MULTIPLE_FACES_VISIBLE", enabled)).toEqual({
+      warnings: 5,
+      terminate: true,
+    });
     expect(
       warningDecision(
         4,
         "AI_FACE_NOT_VISIBLE",
+        policySchema.parse({ aiCameraMonitoring: true, camera: false }),
+      ),
+    ).toEqual({ warnings: 4, terminate: false });
+    expect(
+      warningDecision(
+        4,
+        "AI_MULTIPLE_FACES_VISIBLE",
         policySchema.parse({ aiCameraMonitoring: true, camera: false }),
       ),
     ).toEqual({ warnings: 4, terminate: false });
