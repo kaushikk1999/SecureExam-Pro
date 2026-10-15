@@ -1090,9 +1090,11 @@ function ExamDetail({ id }: { id: string }) {
     [editing, setEditing] = useState(false),
     [code, setCode] = useState("");
   const [controlDialog, setControlDialog] = useState<
-    "extend" | "close" | "archive" | "delete" | null
+    "extend" | "schedule" | "close" | "archive" | "delete" | null
   >(null);
   const [minutes, setMinutes] = useState("15");
+  const [scheduleStart, setScheduleStart] = useState("");
+  const [scheduleEnd, setScheduleEnd] = useState("");
   const [busy, setBusy] = useState(false);
   const [paperOpen, setPaperOpen] = useState(false);
   const [paperSource, setPaperSource] = useState("");
@@ -1101,6 +1103,30 @@ function ExamDetail({ id }: { id: string }) {
   const [paperSaving, setPaperSaving] = useState(false);
   const [paperError, setPaperError] = useState("");
   const [paperNotice, setPaperNotice] = useState("");
+  function localDateTime(value: string) {
+    const date = new Date(value);
+    return new Date(date.getTime() - date.getTimezoneOffset() * 60000)
+      .toISOString()
+      .slice(0, 16);
+  }
+  async function saveSchedule() {
+    setBusy(true);
+    setMessage("");
+    try {
+      await api(`exams/${id}/control`, {
+        action: "reschedule",
+        startsAt: new Date(scheduleStart).toISOString(),
+        endsAt: new Date(scheduleEnd).toISOString(),
+      });
+      await refresh();
+      setMessage("Exam schedule updated.");
+      setControlDialog(null);
+    } catch (err) {
+      setMessage((err as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  }
   async function action(a: string, extraMinutes?: number) {
     setBusy(true);
     setMessage("");
@@ -1191,6 +1217,19 @@ function ExamDetail({ id }: { id: string }) {
         >
           Add time
         </button>
+        {!["DRAFT", "ARCHIVED", "PAUSED"].includes(e.status) && (
+          <button
+            disabled={busy}
+            onClick={() => {
+              setMessage("");
+              setScheduleStart(localDateTime(e.starts_at));
+              setScheduleEnd(localDateTime(e.ends_at));
+              setControlDialog("schedule");
+            }}
+          >
+            Edit schedule
+          </button>
+        )}
         <button
           disabled={busy}
           onClick={() => {
@@ -1259,11 +1298,13 @@ function ExamDetail({ id }: { id: string }) {
               <h2 id="exam-control-title">
                 {controlDialog === "extend"
                   ? "Add time to this exam"
-                  : controlDialog === "close"
-                    ? "Close this exam?"
-                    : controlDialog === "archive"
-                      ? "Archive this exam?"
-                      : "Delete this exam?"}
+                  : controlDialog === "schedule"
+                    ? "Edit exam schedule"
+                    : controlDialog === "close"
+                      ? "Close this exam?"
+                      : controlDialog === "archive"
+                        ? "Archive this exam?"
+                        : "Delete this exam?"}
               </h2>
               <button
                 aria-label="Cancel exam action"
@@ -1277,7 +1318,34 @@ function ExamDetail({ id }: { id: string }) {
                 <X size={18} />
               </button>
             </div>
-            {controlDialog === "extend" ? (
+            {controlDialog === "schedule" ? (
+              <>
+                <label>
+                  Start time (your device timezone)
+                  <input
+                    autoFocus
+                    required
+                    type="datetime-local"
+                    value={scheduleStart}
+                    onChange={(event) => setScheduleStart(event.target.value)}
+                  />
+                </label>
+                <label>
+                  End time (your device timezone)
+                  <input
+                    required
+                    type="datetime-local"
+                    value={scheduleEnd}
+                    onChange={(event) => setScheduleEnd(event.target.value)}
+                  />
+                </label>
+                <p>
+                  Active attempts follow the updated end time. Shortening it can
+                  submit active attempts when the new end time arrives. Editing
+                  a closed exam does not reopen it.
+                </p>
+              </>
+            ) : controlDialog === "extend" ? (
               <label>
                 Extra minutes
                 <input
@@ -1324,28 +1392,40 @@ function ExamDetail({ id }: { id: string }) {
                 className="primary"
                 disabled={
                   busy ||
+                  (controlDialog === "schedule" &&
+                    (!scheduleStart ||
+                      !scheduleEnd ||
+                      !Number.isFinite(new Date(scheduleStart).getTime()) ||
+                      !Number.isFinite(new Date(scheduleEnd).getTime()) ||
+                      new Date(scheduleEnd) <= new Date(scheduleStart))) ||
                   (controlDialog === "extend" &&
                     (!Number.isInteger(Number(minutes)) ||
                       Number(minutes) < 1 ||
                       Number(minutes) > 600))
                 }
                 onClick={() =>
-                  void action(
-                    controlDialog,
-                    controlDialog === "extend" ? Number(minutes) : undefined,
-                  )
+                  controlDialog === "schedule"
+                    ? void saveSchedule()
+                    : void action(
+                        controlDialog,
+                        controlDialog === "extend"
+                          ? Number(minutes)
+                          : undefined,
+                      )
                 }
                 type="button"
               >
                 {busy
                   ? "Saving…"
-                  : controlDialog === "extend"
-                    ? "Add time"
-                    : controlDialog === "close"
-                      ? "Close exam"
-                      : controlDialog === "archive"
-                        ? "Archive exam"
-                        : "Delete exam"}
+                  : controlDialog === "schedule"
+                    ? "Save schedule"
+                    : controlDialog === "extend"
+                      ? "Add time"
+                      : controlDialog === "close"
+                        ? "Close exam"
+                        : controlDialog === "archive"
+                          ? "Archive exam"
+                          : "Delete exam"}
               </button>
             </div>
           </section>
@@ -3324,8 +3404,8 @@ function Monitor({ id, policy }: { id: string; policy?: any }) {
       <p className="muted evidence-storage-note">
         Students with warnings appear first in red, ordered by their first
         warning; students with no warnings appear in green. Select a student’s
-        name to review the timestamped activity log and any available
-        evidence images.{" "}
+        name to review the timestamped activity log and any available evidence
+        images.{" "}
         {data.driveEvidenceEnabled
           ? "Warned students’ available screen snapshots or consented tablet camera stills and an activity report are archived in Google Drive; students without warnings get no folder."
           : "Google Drive evidence archiving is not configured for this deployment; set GDRIVE_FOLDER_ID and the service-account access to enable it."}

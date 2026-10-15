@@ -537,6 +537,37 @@ describe("server authorization and exam lifecycle", () => {
       ).status,
     ).toBe(403);
   });
+  it("lets teachers edit a closed exam's schedule without reopening the exam", async () => {
+    const closedExam = randomUUID();
+    const startsAt = new Date(Date.now() + 60 * 60_000).toISOString();
+    const endsAt = new Date(Date.now() + 2 * 60 * 60_000).toISOString();
+    await db.execute(
+      sql`INSERT INTO exams(id,course_id,title,status,starts_at,ends_at,duration_minutes,policy,code_secret) VALUES(${closedExam},${course},'Closed schedule test','CLOSED',now()-interval '2 hours',now()-interval '1 hour',60,${JSON.stringify(policySchema.parse({ camera: false, microphone: false, location: false, fullscreen: false, classroomCode: false }))}::jsonb,'secret')`,
+    );
+    login(teacher);
+    const saved = await request(`exams/${closedExam}/control`, {
+      action: "reschedule",
+      startsAt,
+      endsAt,
+    });
+    expect(saved.status).toBe(200);
+    const updated = (
+      await query(
+        sql`SELECT status,starts_at,ends_at FROM exams WHERE id=${closedExam}`,
+      )
+    )[0];
+    expect(updated.status).toBe("CLOSED");
+    expect(new Date(updated.starts_at).toISOString()).toBe(startsAt);
+    expect(new Date(updated.ends_at).toISOString()).toBe(endsAt);
+
+    const invalid = await request(`exams/${closedExam}/control`, {
+      action: "reschedule",
+      startsAt: endsAt,
+      endsAt: startsAt,
+    });
+    expect(invalid.status).toBe(400);
+    login(student);
+  });
   it("does not expose questions or room secrets before entry", async () => {
     login(student);
     const data = await (await request("exams/" + exam)).json();

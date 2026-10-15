@@ -1382,6 +1382,7 @@ async function dispatch(req: Request, parts: string[]) {
           action: z.enum([
             "publish",
             "schedule",
+            "reschedule",
             "pause",
             "resume",
             "close",
@@ -1390,6 +1391,8 @@ async function dispatch(req: Request, parts: string[]) {
             "extend",
           ]),
           minutes: z.number().int().min(1).max(600).optional(),
+          startsAt: z.iso.datetime().optional(),
+          endsAt: z.iso.datetime().optional(),
         })
         .parse(await body(req));
       await db.transaction(async (tx) => {
@@ -1422,6 +1425,37 @@ async function dispatch(req: Request, parts: string[]) {
           await tx.execute(
             sql`UPDATE exams SET status=${v.action === "schedule" ? "SCHEDULED" : "PUBLISHED"} WHERE id=${id}`,
           );
+        } else if (v.action === "reschedule") {
+          if (
+            !["PUBLISHED", "SCHEDULED", "LIVE", "CLOSED"].includes(
+              current.status,
+            )
+          )
+            throw new HttpError(
+              409,
+              "Only published, scheduled, live, or closed exams can be rescheduled. Edit a draft's configuration instead.",
+            );
+          if (!v.startsAt || !v.endsAt)
+            throw new HttpError(400, "Start and end times are required.");
+          if (new Date(v.endsAt).getTime() <= new Date(v.startsAt).getTime())
+            throw new HttpError(
+              400,
+              "The end time must be after the start time.",
+            );
+          await tx.execute(
+            sql`UPDATE exams SET starts_at=${v.startsAt},ends_at=${v.endsAt} WHERE id=${id}`,
+          );
+          // Preserve the attempt duration limit, while letting an attempt
+          // previously capped by the old closing time use the revised time.
+          await tx.execute(sql`
+            UPDATE attempts
+            SET deadline = CASE
+              WHEN deadline >= ${current.ends_at}::timestamptz
+                THEN LEAST(${v.endsAt}::timestamptz, deadline + (${v.endsAt}::timestamptz - ${current.ends_at}::timestamptz))
+              ELSE LEAST(deadline, ${v.endsAt}::timestamptz)
+            END
+            WHERE exam_id=${id} AND status='ACTIVE'
+          `);
         } else if (v.action === "pause") {
           if (!["LIVE", "PUBLISHED", "SCHEDULED"].includes(current.status))
             throw new HttpError(409, "Exam cannot be paused.");
@@ -2305,8 +2339,7 @@ async function dispatch(req: Request, parts: string[]) {
               sql`SELECT * FROM exams WHERE id=${examId}`,
               tx,
             );
-            if (!exam)
-              throw new HttpError(404, "Examination not found.");
+            if (!exam) throw new HttpError(404, "Examination not found.");
             const policy = (await effectivePolicy(exam, u.id, tx)).policy;
             const [startEvent] = await query<{ metadata: Record<string, any> }>(
               sql`SELECT metadata FROM audit_events WHERE attempt_id=${a.id} AND event_type='EXAM_STARTED' ORDER BY sequence LIMIT 1`,
