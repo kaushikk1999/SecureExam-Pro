@@ -3712,6 +3712,45 @@ function Monitor({ id, policy }: { id: string; policy?: any }) {
                     {Number(s.warnings ?? 0) > 0 && s.first_warning_at && (
                       <small>First warning · {time(s.first_warning_at)}</small>
                     )}
+                    {Number(s.warnings ?? 0) > 0 && (
+                      <details className="monitor-warning-details">
+                        <summary>Show warning details</summary>
+                        {data.events
+                          .filter(
+                            (event: any) =>
+                              event.user_id === s.user_id &&
+                              event.event_type === "WARNING_ISSUED",
+                          )
+                          .slice()
+                          .reverse()
+                          .map((event: any, index: number) => {
+                            const evidenceId =
+                              event.metadata?.evidenceFileId ??
+                              event.evidence_file_id;
+                            return (
+                              <div className="monitor-warning-event" key={event.id}>
+                                <strong>
+                                  Warning {event.metadata?.count ?? index + 1}: {String(event.metadata?.reason ?? "Security warning").replaceAll("_", " ")}
+                                </strong>
+                                <small>
+                                  {time(event.created_at)} · {event.severity}
+                                  {event.acknowledgement_count != null &&
+                                    ` · acknowledged ${event.acknowledgement_count} times`}
+                                </small>
+                                {typeof evidenceId === "string" && (
+                                  <a
+                                    href={`/api/platform/files/${encodeURIComponent(evidenceId)}`}
+                                    target="_blank"
+                                    rel="noreferrer"
+                                  >
+                                    View warning evidence
+                                  </a>
+                                )}
+                              </div>
+                            );
+                          })}
+                      </details>
+                    )}
                   </td>
                   <td className="small">
                     Camera {s.device_state?.camera ? "✓" : "—"}
@@ -4271,6 +4310,7 @@ function Audit() {
   const { data, error, refresh } = useData("audit", 10000);
   const live = useData("audit/live", 10000);
   const [search, setSearch] = useState("");
+  const [expandedLiveAttempt, setExpandedLiveAttempt] = useState("");
   const [archivingAttempt, setArchivingAttempt] = useState("");
   const [archiveMessages, setArchiveMessages] = useState<
     Record<string, string>
@@ -4369,25 +4409,85 @@ function Audit() {
                   {students.length ? (
                     <div className="live-audit-students">
                       {students.map((student: any) => (
-                        <div
-                          key={student.attempt_id}
-                          className="live-audit-student"
-                        >
-                          <strong>
-                            {student.name} ·{" "}
-                            {student.student_id ?? "No student ID"}
-                          </strong>
-                          <span>
-                            {student.answered}/{student.total_questions}{" "}
-                            answered · {student.warnings} warnings
-                          </span>
-                          <small>
-                            Started {time(student.started_at)} · last signal{" "}
-                            {student.last_heartbeat_at
-                              ? time(student.last_heartbeat_at)
-                              : "waiting"}
-                          </small>
-                        </div>
+                        (() => {
+                          const warnings = (data ?? []).filter(
+                            (event: any) =>
+                              event.attempt_id === student.attempt_id &&
+                              event.event_type === "WARNING_ISSUED",
+                          );
+                          const expanded =
+                            expandedLiveAttempt === student.attempt_id;
+                          return (
+                            <div
+                              key={student.attempt_id}
+                              className="live-audit-student"
+                            >
+                              <button
+                                className="live-audit-student-name"
+                                aria-expanded={expanded}
+                                onClick={() =>
+                                  setExpandedLiveAttempt(
+                                    expanded ? "" : student.attempt_id,
+                                  )
+                                }
+                              >
+                                {student.name} ·{" "}
+                                {student.student_id ?? "No student ID"}
+                              </button>
+                              <span>
+                                {student.answered}/{student.total_questions}{" "}
+                                answered · {student.warnings} warnings
+                                {student.warnings > 0 && " · select name for details"}
+                              </span>
+                              <small>
+                                Started {time(student.started_at)} · last signal{" "}
+                                {student.last_heartbeat_at
+                                  ? time(student.last_heartbeat_at)
+                                  : "waiting"}
+                              </small>
+                              {expanded && (
+                                <div className="live-audit-warning-list">
+                                  <strong>Warning history</strong>
+                                  {warnings.length ? (
+                                    warnings.map((event: any, index: number) => {
+                                      const evidenceId =
+                                        event.metadata?.evidenceFileId ??
+                                        event.evidence_file_id;
+                                      return (
+                                        <div
+                                          className="monitor-warning-event"
+                                          key={event.id}
+                                        >
+                                          <strong>
+                                            Warning {event.metadata?.count ?? index + 1}: {String(event.metadata?.reason ?? "Security warning").replaceAll("_", " ")}
+                                          </strong>
+                                          <small>
+                                            {time(event.created_at)} · {event.severity}
+                                            {event.acknowledgement_count != null &&
+                                              ` · acknowledged ${event.acknowledgement_count} times`}
+                                          </small>
+                                          {typeof evidenceId === "string" && (
+                                            <a
+                                              href={`/api/platform/files/${encodeURIComponent(evidenceId)}`}
+                                              target="_blank"
+                                              rel="noreferrer"
+                                            >
+                                              View warning evidence
+                                            </a>
+                                          )}
+                                        </div>
+                                      );
+                                    })
+                                  ) : (
+                                    <small className="muted">
+                                      No warning events are recorded for this attempt.
+                                    </small>
+                                  )}
+                                </div>
+                              )}
+                            </div>
+                          );
+                        })()
                       ))}
                     </div>
                   ) : (
