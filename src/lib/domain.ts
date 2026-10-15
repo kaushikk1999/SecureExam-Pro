@@ -78,6 +78,7 @@ export const hardEvents = [
   "WINDOW_BLUR",
   "FULLSCREEN_EXIT",
   "CAMERA_DISABLED",
+  "AI_FACE_NOT_VISIBLE",
   "MICROPHONE_DISABLED",
   "SCREEN_SHARE_STOPPED",
   "LOCATION_OUTSIDE_GEOFENCE",
@@ -87,6 +88,8 @@ export function isHard(type: string, p: Policy) {
   if (type === "TAB_HIDDEN" || type === "WINDOW_BLUR") return p.tabMonitoring;
   if (type === "FULLSCREEN_EXIT") return p.fullscreen;
   if (type === "CAMERA_DISABLED") return p.camera;
+  if (type === "AI_FACE_NOT_VISIBLE")
+    return p.aiCameraMonitoring && p.camera;
   if (type === "MICROPHONE_DISABLED") return p.microphone;
   if (type === "SCREEN_SHARE_STOPPED") return p.screen;
   if (type === "LOCATION_OUTSIDE_GEOFENCE") return p.location;

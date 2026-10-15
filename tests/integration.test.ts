@@ -1422,6 +1422,68 @@ it("uses Ollama for answer suggestions while keeping a labeled source paper unch
   }
 });
 
+it("counts an Ollama missing-face result as a warning only when enabled", async () => {
+  const faceExam = randomUUID();
+  const faceAttempt = randomUUID();
+  const policy = policySchema.parse({
+    camera: true,
+    aiCameraMonitoring: true,
+    microphone: false,
+    location: false,
+    fullscreen: false,
+    classroomCode: false,
+  });
+  await db.execute(
+    sql`INSERT INTO exams(id,course_id,title,status,starts_at,ends_at,duration_minutes,policy,code_secret) VALUES(${faceExam},${course},'Missing face warning','PUBLISHED',now()-interval '1 hour',now()+interval '2 hours',60,${JSON.stringify(policy)}::jsonb,'secret')`,
+  );
+  await db.execute(
+    sql`INSERT INTO attempts(id,exam_id,user_id,device_session_id,deadline,question_order,status,device_state) VALUES(${faceAttempt},${faceExam},${student},${device},now()+interval '1 hour',${JSON.stringify([question])}::jsonb,'ACTIVE',${JSON.stringify({ camera: true, deviceClass: 'laptop' })}::jsonb)`,
+  );
+  login(student);
+  vi.stubEnv("OLLAMA_ENABLED", "true");
+  vi.stubEnv("OLLAMA_API_KEY", "test-key");
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async () =>
+      Response.json({
+        message: {
+          content: JSON.stringify({
+            faceVisible: false,
+            multiplePeople: false,
+            possiblePhoneOrExtraScreen: false,
+            possibleMouthMovement: false,
+          }),
+        },
+      }),
+    ),
+  );
+  try {
+    const response = await request(`attempts/${faceAttempt}/vision-review`, {
+      frames: ["aGVsbG8=", "d29ybGQ="],
+    });
+    expect(response.status).toBe(200);
+    expect(await response.json()).toMatchObject({
+      signals: ["FACE_NOT_VISIBLE"],
+    });
+    expect(
+      (await query(sql`SELECT warnings FROM attempts WHERE id=${faceAttempt}`))[
+        0
+      ].warnings,
+    ).toBe(1);
+    const events = await query(
+      sql`SELECT event_type,severity,metadata FROM audit_events WHERE attempt_id=${faceAttempt} ORDER BY sequence`,
+    );
+    expect(events.map((event) => [event.event_type, event.severity])).toEqual([
+      ["AI_FACE_NOT_VISIBLE", "HIGH"],
+      ["WARNING_ISSUED", "HIGH"],
+    ]);
+  } finally {
+    vi.unstubAllGlobals();
+    vi.unstubAllEnvs();
+    login(null);
+  }
+});
+
 it("keeps a source-faithful question draft when Ollama is unavailable", async () => {
   login(teacher);
   const paperExam = randomUUID();

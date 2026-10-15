@@ -1571,7 +1571,7 @@ async function dispatch(req: Request, parts: string[]) {
       if (method !== "POST") throw new HttpError(405, "POST required.");
       if (u.role !== "STUDENT")
         throw new HttpError(403, "Student attempt access required.");
-      if (!(await rateLimit(`vision:${id}`, 1, 45)))
+      if (!(await rateLimit(`vision:${id}`, 1, 18)))
         throw new HttpError(429, "Camera review is running too frequently.");
       const input = z
         .object({
@@ -1640,16 +1640,23 @@ async function dispatch(req: Request, parts: string[]) {
             tx,
           );
           const { policy } = await effectivePolicy(exam, u.id, tx);
-          if (!policy.aiCameraMonitoring || a.status !== "ACTIVE") return;
+          if (
+            !policy.aiCameraMonitoring ||
+            !policy.camera ||
+            a.status !== "ACTIVE"
+          )
+            return;
+          const faceMissing = signals.includes("FACE_NOT_VISIBLE");
           await event(
             tx,
             a,
             u,
-            "AI_CAMERA_REVIEW",
+            faceMissing ? "AI_FACE_NOT_VISIBLE" : "AI_CAMERA_REVIEW",
             {
               signals: signals.join(","),
-              measurement:
-                "Ollama review of two transient low-resolution camera frames; advisory only",
+              measurement: faceMissing
+                ? "Ollama review of two transient low-resolution camera frames; no face clearly visible in either sample"
+                : "Ollama review of two transient low-resolution camera frames; advisory only",
             },
             randomUUID(),
           );

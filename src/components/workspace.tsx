@@ -927,7 +927,7 @@ function ExamForm({ done, initial }: { done: () => void; initial?: any }) {
               [
                 "aiCameraMonitoring",
                 "Ollama camera review (optional)",
-                "Periodically send small, temporary camera samples to Ollama to flag a missing face, multiple people, possible mouth movement, or a visible phone/extra screen. Signals are advisory and never add warning strikes or auto-submit.",
+                "Send two small, temporary camera samples to Ollama about every 20 seconds. A missing-face detection counts as a warning strike; other signals are advisory. False detections are possible.",
               ],
               [
                 "microphone",
@@ -3207,7 +3207,12 @@ function Monitor({ id, policy }: { id: string; policy?: any }) {
     lastVisibleSignal = useRef(0);
   useEffect(() => {
     if (!data) return;
-    const alertTypes = ["SPEECH_ACTIVITY", "CAMERA_MOTION", "AI_CAMERA_REVIEW"];
+    const alertTypes = [
+      "SPEECH_ACTIVITY",
+      "CAMERA_MOTION",
+      "AI_CAMERA_REVIEW",
+      "AI_FACE_NOT_VISIBLE",
+    ];
     const newest = data.events.find(
       (e: any) => e.severity === "HIGH" || alertTypes.includes(e.event_type),
     );
@@ -3229,9 +3234,12 @@ function Monitor({ id, policy }: { id: string; policy?: any }) {
   useEffect(() => {
     if (!data) return;
     const recentSignals = data.events.filter((event: any) =>
-      ["SPEECH_ACTIVITY", "CAMERA_MOTION", "AI_CAMERA_REVIEW"].includes(
-        event.event_type,
-      ),
+      [
+        "SPEECH_ACTIVITY",
+        "CAMERA_MOTION",
+        "AI_CAMERA_REVIEW",
+        "AI_FACE_NOT_VISIBLE",
+      ].includes(event.event_type),
     );
     const newest = recentSignals[0];
     if (!aiSignalsInitialized.current) {

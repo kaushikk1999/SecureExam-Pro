@@ -850,7 +850,6 @@ export default function ExamRoom({
     let speechTimer: ReturnType<typeof setInterval> | undefined;
     let motionTimer: ReturnType<typeof setInterval> | undefined;
     let visionTimer: ReturnType<typeof setInterval> | undefined;
-    let visionStarted: ReturnType<typeof setTimeout> | undefined;
     let visionBusy = false;
     let lastVisionNotice = 0;
     const analyser = microphoneAudio.current?.analyser;
@@ -1005,8 +1004,11 @@ export default function ExamRoom({
               .map((signal) => labels[signal])
               .filter(Boolean)
               .join("; ");
+            const faceMissing = signals.includes("FACE_NOT_VISIBLE");
             alert(
-              `Camera review signal: ${reasons}. This automated signal may be mistaken and does not count toward your exam warning limit. Adjust your camera view if needed; your instructor can review the signal.`,
+              faceMissing
+                ? `Warning: ${reasons}. This missing-face detection counts as a security warning and may lead to automatic submission when the exam's warning limit is reached. Automated signals can be mistaken; adjust your camera view. Your instructor can review the event.`
+                : `Camera review signal: ${reasons}. This signal is advisory only and does not count as a warning strike. Automated signals can be mistaken; adjust your camera view and your instructor can review the event.`,
             );
           }
         } catch {
@@ -1015,11 +1017,7 @@ export default function ExamRoom({
           visionBusy = false;
         }
       };
-      visionStarted = setTimeout(
-        () => void reviewCamera(),
-        8000 + Math.floor(Math.random() * 37000),
-      );
-      visionTimer = setInterval(() => void reviewCamera(), 60000);
+      visionTimer = setInterval(() => void reviewCamera(), 20000);
     }
     let watch: number | undefined;
     let locationTimer: ReturnType<typeof setInterval> | undefined,
@@ -1062,7 +1060,6 @@ export default function ExamRoom({
       if (speechTimer) clearInterval(speechTimer);
       if (motionTimer) clearInterval(motionTimer);
       if (visionTimer) clearInterval(visionTimer);
-      if (visionStarted) clearTimeout(visionStarted);
       if (locationTimer) clearInterval(locationTimer);
       if (checkpoint) clearInterval(checkpoint);
       if (watch !== undefined) navigator.geolocation.clearWatch(watch);
@@ -1246,6 +1243,10 @@ export default function ExamRoom({
       autoSubmitTriggers.push(
         "turning off or disconnecting the required camera",
       );
+    if (p.aiCameraMonitoring && p.camera)
+      autoSubmitTriggers.push(
+        "Ollama detects no face clearly visible in either camera sample",
+      );
     if (p.microphone)
       autoSubmitTriggers.push(
         "turning off or disconnecting the required microphone",
@@ -1280,7 +1281,7 @@ export default function ExamRoom({
         ? [
             [
               "Ollama camera review",
-              "During the exam, two small, low-resolution camera samples are sent about once per minute to Ollama to look for a face out of view, multiple people, possible mouth movement, or a phone/extra screen. Samples are transient and are not stored by this app. Results can be wrong, do not prove speech or misconduct, and do not count toward auto-submission warnings; only the signal and time are recorded for instructor review.",
+              "During the exam, two small, low-resolution camera samples are sent to Ollama about once every 20 seconds. If no face is clearly visible in either sample, that detection counts as a security warning and can contribute to automatic submission at the exam's warning limit. Multiple people, possible mouth movement, or a phone/extra screen produce advisory signals only. Samples are transient and are not stored by this app. Automated results can be mistaken and do not prove misconduct; instructors can review the signal and time.",
             ],
           ]
         : []),
@@ -1755,9 +1756,11 @@ export default function ExamRoom({
                 onChange={(event) => setAiCameraAccepted(event.target.checked)}
               />{" "}
               I understand and agree that two reduced camera samples are sent to
-              Ollama about once per minute for the disclosed advisory review.
-              The samples are not stored by this app, and the automated signals
-              may be wrong.
+              Ollama about once every 20 seconds. If no face is clearly visible
+              in either sample, that detection counts as a security warning and
+              may contribute to automatic submission at the exam warning limit.
+              Other camera signals are advisory only. Samples are not stored by
+              this app, and automated detections can be mistaken.
             </label>
           )}
           {!examOpen && (

@@ -168,13 +168,29 @@ describe("exam course enrollment invitations", () => {
   });
 });
 describe("objective policy", () => {
-  it("keeps Ollama camera review opt-in and informational", () => {
+  it("counts a missing face only when camera review is enabled", () => {
     const policy = policySchema.parse({});
     expect(policy.aiCameraMonitoring).toBe(false);
     expect(warningDecision(4, "AI_CAMERA_REVIEW", policy)).toEqual({
       warnings: 4,
       terminate: false,
     });
+    expect(warningDecision(4, "AI_FACE_NOT_VISIBLE", policy)).toEqual({
+      warnings: 4,
+      terminate: false,
+    });
+    const enabled = policySchema.parse({ aiCameraMonitoring: true });
+    expect(warningDecision(4, "AI_FACE_NOT_VISIBLE", enabled)).toEqual({
+      warnings: 5,
+      terminate: true,
+    });
+    expect(
+      warningDecision(
+        4,
+        "AI_FACE_NOT_VISIBLE",
+        policySchema.parse({ aiCameraMonitoring: true, camera: false }),
+      ),
+    ).toEqual({ warnings: 4, terminate: false });
   });
   it("auto submits at the fifth warning", () =>
     expect(warningDecision(4, "TAB_HIDDEN", policySchema.parse({}))).toEqual({
