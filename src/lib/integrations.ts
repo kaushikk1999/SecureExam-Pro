@@ -234,7 +234,7 @@ function formatActivityTime(value: string | Date) {
   }).format(new Date(value));
 }
 
-/** Archive a warned student's screenshots and a readable activity report in Drive. */
+/** Archive a warned student's captured evidence images and activity report in Drive. */
 export async function archiveWarningEvidenceToDrive(input: {
   examId: string;
   examTitle: string;
@@ -345,7 +345,7 @@ export async function archiveWarningEvidenceToDrive(input: {
     `Submitted: ${input.submittedAt ? formatActivityTime(input.submittedAt) + " (Asia/Bangkok)" : "Not submitted"}`,
     `Warnings issued: ${input.warnings}`,
     `Submission reason: ${submitReason}`,
-    `Screenshots archived: ${evidenceCount}`,
+    `Captured evidence images archived: ${evidenceCount}`,
     "",
     "ACTIVITY TIMELINE",
     ...events.map((event) => {
@@ -362,12 +362,12 @@ export async function archiveWarningEvidenceToDrive(input: {
       return `${formatActivityTime(event.created_at)} (Asia/Bangkok) | ${event.severity} | ${event.event_type}${reason ? ` | reason: ${String(reason)}` : ""}${metadata ? ` | ${metadata}` : ""}`;
     }),
     "",
-    "SCREENSHOTS",
+    "CAPTURED EVIDENCE IMAGES",
     ...(archivedEvidence.length
       ? archivedEvidence
-      : ["No activity screenshots were available for this attempt."]),
+      : ["No activity evidence images were available for this attempt."]),
     "",
-    "Evidence is a record of application signals and captured screen snapshots, not a determination of misconduct. Review it with the student and relevant context.",
+    "Evidence is a record of application signals and captured images, not a determination of misconduct. Review it with the student and relevant context.",
   ].join("\n");
   const reportName = "Student activity and warning report.txt";
   const existingReport = await findDriveChild(

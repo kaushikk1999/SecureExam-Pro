@@ -111,6 +111,7 @@ export default function ExamRoom({
     [deviceClass, setDeviceClass] = useState<ExamDeviceClass>("unsupported"),
     [accepted, setAccepted] = useState(false),
     [aiCameraAccepted, setAiCameraAccepted] = useState(false),
+    [cameraEvidenceAccepted, setCameraEvidenceAccepted] = useState(false),
     [studentId, setStudentId] = useState(user.student_id ?? ""),
     [identitySaved, setIdentitySaved] = useState(!!user.student_id),
     [identityConfirmed, setIdentityConfirmed] = useState(false),
@@ -280,16 +281,30 @@ export default function ExamRoom({
       const track = screenStream.current
         ?.getVideoTracks()
         .find(captureTrackIsActive);
-      const source = screenCaptureVideo.current;
-      if (
-        !track ||
-        !source ||
-        source.readyState < HTMLMediaElement.HAVE_CURRENT_DATA
-      )
-        return null;
+      const sharedScreen = screenCaptureVideo.current;
+      const cameraTrack = stream.current
+        ?.getVideoTracks()
+        .find(captureTrackIsActive);
+      const cameraSource = video.current;
+      const useCameraStill =
+        deviceClass === "tablet" &&
+        active.current?.policy.camera &&
+        !!cameraTrack &&
+        !!cameraSource &&
+        cameraSource.readyState >= HTMLMediaElement.HAVE_CURRENT_DATA;
+      const source =
+        track && sharedScreen?.readyState === HTMLMediaElement.HAVE_CURRENT_DATA
+          ? sharedScreen
+          : useCameraStill
+            ? cameraSource
+            : null;
+      if (!source) return null;
+      const captureType = useCameraStill && source === cameraSource
+        ? "tablet camera still"
+        : "shared screen snapshot";
       const canvas = document.createElement("canvas");
       canvas.width = 640;
-      canvas.height = 360;
+      canvas.height = captureType === "tablet camera still" ? 480 : 360;
       const context = canvas.getContext("2d");
       if (!context) return null;
       context.drawImage(source, 0, 0, canvas.width, canvas.height);
@@ -314,9 +329,9 @@ export default function ExamRoom({
       const result = await response.json();
       if (!response.ok)
         throw new Error(result.error ?? "Evidence upload failed.");
-      return String(result.id);
+      return { id: String(result.id), captureType };
     },
-    [examId],
+    [deviceClass, examId],
   );
   const emit = useCallback(
     (type: string, metadata: Record<string, any> = {}) => {
@@ -358,17 +373,24 @@ export default function ExamRoom({
         "CAMERA_MOTION",
       ];
       const nowMs = Date.now();
+      const tabletCameraEvidenceEnabled =
+        deviceClass === "tablet" &&
+        active.current.policy?.camera &&
+        active.current.cameraEvidenceAccepted;
       if (
-        active.current.policy.screen &&
+        (active.current.policy.screen || tabletCameraEvidenceEnabled) &&
         evidenceTypes.includes(type) &&
         nowMs - lastEvidenceCapture.current >= 5000
       ) {
         lastEvidenceCapture.current = nowMs;
         void captureScreenEvidence(id, type)
-          .then((evidenceFileId) =>
+          .then((evidence) =>
             recordEvent(
-              evidenceFileId
-                ? { evidenceFileId, evidenceCapture: "screen-share snapshot" }
+              evidence
+                ? {
+                    evidenceFileId: evidence.id,
+                    evidenceCapture: evidence.captureType,
+                  }
                 : { evidenceCapture: "unavailable" },
             ),
           )
@@ -377,7 +399,7 @@ export default function ExamRoom({
       }
       recordEvent();
     },
-    [captureScreenEvidence, persist, synchronize],
+    [captureScreenEvidence, deviceClass, persist, synchronize],
   );
   useEffect(() => {
     device.current = sessionStorage.getItem("exam-device:" + examId) ?? "";
@@ -686,6 +708,7 @@ export default function ExamRoom({
         deviceClass,
         accepted,
         aiCameraAccepted,
+        cameraEvidenceAccepted,
         checks: {
           ...checks,
           fullscreen:
@@ -698,6 +721,10 @@ export default function ExamRoom({
         location: point,
       });
       await loadAttempt(result.id);
+      active.current = {
+        ...active.current,
+        cameraEvidenceAccepted,
+      };
     } catch (e) {
       setError((e as Error).message);
       if (document.fullscreenElement) void document.exitFullscreen();
@@ -1337,6 +1364,7 @@ export default function ExamRoom({
       identityConfirmed &&
       accepted &&
       (!p.aiCameraMonitoring || aiCameraAccepted) &&
+      (deviceClass !== "tablet" || !p.camera || cameraEvidenceAccepted) &&
       online &&
       permissionReady &&
       (!p.camera || checks.camera) &&
@@ -1521,9 +1549,11 @@ export default function ExamRoom({
                 .join(", ")}
               . Device events, location readings, answers and server timestamps
               are stored for authorized instructor review under a{" "}
-              {p.retentionDays}-day retention policy. Raw camera and microphone
-              recordings are not uploaded. Browser observations can be
-              incomplete or inaccurate; your instructor reviews the evidence.
+              {p.retentionDays}-day retention policy. Raw video and microphone
+              recordings are not uploaded. On tablets, a single camera still may
+              be captured when a monitored activity event occurs and stored with
+              warning evidence for instructor review. Browser observations can
+              be incomplete or inaccurate; your instructor reviews the evidence.
               Sustained microphone sound levels and coarse frame movement are
               checked in this browser. Sound levels cannot identify speech or
               conversation. No audio or transcript is sent to AI.{" "}
@@ -1531,7 +1561,7 @@ export default function ExamRoom({
                 ? "Two reduced camera samples are periodically sent to Ollama for the optional camera review described above; samples are not stored by this app."
                 : "No camera images are sent to AI."}{" "}
               {deviceClass === "tablet"
-                ? "Screen sharing is not used on tablets. "
+                ? "Screen sharing is not used on tablets; warning evidence may use a camera still instead of a screenshot of your tablet screen. "
                 : "Entire-screen sharing is required on laptops. "}
               {examScreenSharingRequired(p.screen, deviceClass) &&
               screenShareUnsupported
@@ -1705,6 +1735,18 @@ export default function ExamRoom({
             />{" "}
             I have read the monitoring notice and examination instructions.
           </label>
+          {deviceClass === "tablet" && p.camera && (
+            <label className="check consent">
+              <input
+                type="checkbox"
+                checked={cameraEvidenceAccepted}
+                onChange={(event) => setCameraEvidenceAccepted(event.target.checked)}
+              />{" "}
+              I understand that when a monitored activity event occurs, a still
+              image from my camera may be captured and stored as warning evidence
+              for instructor review. It is not a recording of my tablet screen.
+            </label>
+          )}
           {p.aiCameraMonitoring && (
             <label className="check consent">
               <input

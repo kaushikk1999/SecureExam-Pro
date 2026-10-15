@@ -633,6 +633,100 @@ describe("server authorization and exam lifecycle", () => {
     process.env.STUDENT_LOGIN_EMAILS = previousAllowlist ?? "";
     login(student);
   });
+  it("requires explicit tablet camera-evidence consent and accepts consented warning images", async () => {
+    const tabletStudent = randomUUID();
+    const tabletDevice = randomUUID();
+    const previousAllowlist = process.env.STUDENT_LOGIN_EMAILS;
+    const previousBlobToken = process.env.BLOB_READ_WRITE_TOKEN;
+    process.env.STUDENT_LOGIN_EMAILS = [
+      previousAllowlist,
+      `${tabletStudent}@test.local`,
+    ]
+      .filter(Boolean)
+      .join(",");
+    process.env.BLOB_READ_WRITE_TOKEN = "test-evidence-storage-token";
+    const tabletPolicy = policySchema.parse({
+      camera: true,
+      microphone: false,
+      location: false,
+      fullscreen: false,
+      classroomCode: false,
+      screen: false,
+    });
+    await db.execute(
+      sql`UPDATE exams SET policy=${JSON.stringify(tabletPolicy)}::jsonb WHERE id=${exam}`,
+    );
+    await db.execute(
+      sql`INSERT INTO users(id,email,name,password_hash,role,student_id) VALUES(${tabletStudent},${tabletStudent + "@test.local"},'Tablet Evidence Test','unused','STUDENT','TABLET-EVIDENCE-ID')`,
+    );
+    await db.execute(
+      sql`INSERT INTO exam_devices(id,user_id,session_version) VALUES(${tabletDevice},${tabletStudent},0)`,
+    );
+    await db.execute(
+      sql`INSERT INTO enrollments(course_id,user_id) VALUES(${course},${tabletStudent})`,
+    );
+    login(tabletStudent);
+    const tabletHeaders = {
+      "user-agent":
+        "Mozilla/5.0 (Linux; Android 14; SM-X900) Chrome/130 Safari/537.36",
+      "sec-ch-ua-mobile": "?0",
+    };
+    const entry = {
+      ...start,
+      deviceSessionId: tabletDevice,
+      deviceClass: "tablet" as const,
+      checks: { ...start.checks, camera: true, screen: false },
+    };
+    const declined = await request(
+      `exams/${exam}/start`,
+      entry,
+      tabletHeaders,
+    );
+    expect(declined.status).toBe(400);
+    expect(await declined.json()).toMatchObject({
+      error: "Accept the tablet camera-evidence notice.",
+    });
+
+    const started = await request(
+      `exams/${exam}/start`,
+      { ...entry, cameraEvidenceAccepted: true },
+      tabletHeaders,
+    );
+    expect(started.status).toBe(200);
+    const { id } = await started.json();
+    const form = new FormData();
+    form.append(
+      "file",
+      new Blob([Uint8Array.of(0xff, 0xd8, 0xff, 0xd9)], {
+        type: "image/jpeg",
+      }),
+      `${randomUUID()}.jpg`,
+    );
+    form.append("examId", exam);
+    form.append("attemptId", id);
+    form.append("eventEvidence", "true");
+    form.append("eventId", randomUUID());
+    form.append("eventType", "CAMERA_MOTION");
+    const uploaded = await uploadRequest("files", form, {
+      "x-exam-device": tabletDevice,
+    });
+    expect(uploaded.status).toBe(200);
+    expect(
+      (await query(
+        sql`SELECT name,mime FROM files WHERE attempt_id=${id} AND name LIKE 'EVIDENCE::CAMERA_MOTION::%'`,
+      ))[0],
+    ).toMatchObject({ mime: "image/jpeg" });
+    await db.execute(sql`DELETE FROM files WHERE attempt_id=${id}`);
+    await db.execute(
+      sql`UPDATE attempts SET status='SUBMITTED',submitted_at=now() WHERE id=${id}`,
+    );
+    process.env.STUDENT_LOGIN_EMAILS = previousAllowlist ?? "";
+    process.env.BLOB_READ_WRITE_TOKEN = previousBlobToken ?? "";
+    await db.execute(
+      sql`UPDATE exams SET policy=${JSON.stringify(policySchema.parse({ camera: false, microphone: false, location: false, fullscreen: false, classroomCode: false }))}::jsonb WHERE id=${exam}`,
+    );
+    login(student);
+  });
   it("rejects an accurate outside location", async () => {
     const p = policySchema.parse({
       camera: false,

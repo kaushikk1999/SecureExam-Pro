@@ -3325,9 +3325,9 @@ function Monitor({ id, policy }: { id: string; policy?: any }) {
         Students with warnings appear first in red, ordered by their first
         warning; students with no warnings appear in green. Select a student’s
         name to review the timestamped activity log and any available
-        screenshots.{" "}
+        evidence images.{" "}
         {data.driveEvidenceEnabled
-          ? "Warned students’ available screenshots and an activity report are archived in Google Drive; students without warnings get no folder."
+          ? "Warned students’ available screen snapshots or consented tablet camera stills and an activity report are archived in Google Drive; students without warnings get no folder."
           : "Google Drive evidence archiving is not configured for this deployment; set GDRIVE_FOLDER_ID and the service-account access to enable it."}
       </p>
       <ErrorBox message={error || message} />
@@ -3577,7 +3577,7 @@ function Monitor({ id, policy }: { id: string; policy?: any }) {
                     target="_blank"
                     rel="noreferrer"
                   >
-                    View activity screenshot
+                    View warning evidence image
                   </a>
                 )}
               </div>
@@ -3749,7 +3749,7 @@ function AttemptReview({ id, close }: { id: string; close: () => void }) {
       const result = await api(`attempts/${id}/archive-evidence`, {});
       setArchiveMessage(
         result.archived
-          ? `Google Drive archive updated with ${result.evidenceCount} screenshot${result.evidenceCount === 1 ? "" : "s"} and the activity report.`
+          ? `Google Drive archive updated with ${result.evidenceCount} evidence image${result.evidenceCount === 1 ? "" : "s"} and the activity report.`
           : "No warning evidence is available to archive.",
       );
     } catch (cause) {
@@ -3911,7 +3911,7 @@ function AttemptReview({ id, close }: { id: string; close: () => void }) {
               target="_blank"
               rel="noreferrer"
             >
-              View activity screenshot
+              View warning evidence image
             </a>
           )}
           <small>Hash: {e.event_hash}</small>
@@ -4048,7 +4048,7 @@ function Audit() {
                           target="_blank"
                           rel="noreferrer"
                         >
-                          View activity screenshot
+                          View warning evidence image
                         </a>
                       )}
                       <small>SHA-256: {e.event_hash}</small>

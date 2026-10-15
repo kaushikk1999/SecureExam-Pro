@@ -2121,14 +2121,22 @@ async function dispatch(req: Request, parts: string[]) {
     ) {
       try {
         after(async () => {
-          try {
-            await archiveAttemptWarningEvidence(id);
-          } catch (error) {
-            console.error(
-              "Unable to archive warning evidence in Google Drive",
-              error,
-            );
+          let lastError: unknown;
+          for (let attempt = 0; attempt < 2; attempt++) {
+            try {
+              const result = await archiveAttemptWarningEvidence(id);
+              if (result.archived || result.evidenceCount === 0) return;
+              lastError = new Error("No warning evidence was archived.");
+            } catch (error) {
+              lastError = error;
+            }
+            if (attempt === 0)
+              await new Promise((resolve) => setTimeout(resolve, 750));
           }
+          console.error(
+            "Unable to archive warning evidence in Google Drive after retry",
+            lastError,
+          );
         });
       } catch (error) {
         // Direct handler tests may run outside Next's request context.
@@ -2297,10 +2305,21 @@ async function dispatch(req: Request, parts: string[]) {
               sql`SELECT * FROM exams WHERE id=${examId}`,
               tx,
             );
-            if (!exam || !(await effectivePolicy(exam, u.id, tx)).policy.screen)
+            if (!exam)
+              throw new HttpError(404, "Examination not found.");
+            const policy = (await effectivePolicy(exam, u.id, tx)).policy;
+            const [startEvent] = await query<{ metadata: Record<string, any> }>(
+              sql`SELECT metadata FROM audit_events WHERE attempt_id=${a.id} AND event_type='EXAM_STARTED' ORDER BY sequence LIMIT 1`,
+              tx,
+            );
+            const tabletCameraEvidenceAllowed =
+              a.device_state?.deviceClass === "tablet" &&
+              policy.camera &&
+              startEvent?.metadata?.tabletCameraEvidenceAccepted === true;
+            if (!policy.screen && !tabletCameraEvidenceAllowed)
               throw new HttpError(
                 403,
-                "Screen evidence is not enabled for this exam.",
+                "Warning evidence capture is not enabled for this exam.",
               );
           }
         });
@@ -2327,7 +2346,7 @@ async function dispatch(req: Request, parts: string[]) {
         eventEvidence &&
         ((ext !== "jpg" && ext !== "jpeg") || file.type !== "image/jpeg")
       )
-        throw new HttpError(400, "Event evidence must be a JPEG screenshot.");
+        throw new HttpError(400, "Event evidence must be a JPEG image.");
       const bytes = Buffer.from(await file.arrayBuffer());
       if (
         (ext === "pdf" && !bytes.subarray(0, 5).equals(Buffer.from("%PDF-"))) ||
