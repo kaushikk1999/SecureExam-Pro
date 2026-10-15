@@ -1732,14 +1732,18 @@ export default function ExamRoom({
                     ],
                   ]
                 : []),
-              [
-                ShieldCheck,
-                "Tablet window",
-                deviceClass !== "tablet" || !tabletWindowConstrained,
-                deviceClass === "tablet" && tabletWindowConstrained
-                  ? "Close split screen to continue"
-                  : undefined,
-              ],
+              ...(deviceClass === "tablet"
+                ? [
+                    [
+                      ShieldCheck,
+                      "Tablet window",
+                      !tabletWindowConstrained,
+                      tabletWindowConstrained
+                        ? "Close split screen to continue"
+                        : undefined,
+                    ],
+                  ]
+                : []),
               [
                 Maximize2,
                 deviceClass === "tablet"
