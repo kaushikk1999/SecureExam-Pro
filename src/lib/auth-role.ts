@@ -1,6 +1,14 @@
 export type LoginAudience = "student" | "teacher";
 export const STUDENT_LOGIN_EMAIL = "kaushikka99@gmail.com";
 
+export function isGoogleOnlyStudentEmail(email: unknown) {
+  return (
+    String(email ?? "")
+      .trim()
+      .toLowerCase() === STUDENT_LOGIN_EMAIL
+  );
+}
+
 /**
  * Permit Bangkok University students using verified Workspace email addresses.
  * An explicit `configured` value is a strict allowlist for tests. In production,

@@ -10,7 +10,11 @@ import {
 } from "lucide-react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { matchesLoginAudience, safeStudentReturnPath } from "@/lib/auth-role";
+import {
+  isGoogleOnlyStudentEmail,
+  matchesLoginAudience,
+  safeStudentReturnPath,
+} from "@/lib/auth-role";
 export default function Login() {
   const router = useRouter();
   const [error, setError] = useState(""),
@@ -194,6 +198,13 @@ export default function Login() {
               <span className="provider-audience">{audience}</span>
             </button>
           )}
+          {audience === "student" && google && (
+            <p className="small muted" role="note">
+              For kaushikka99@gmail.com, use Continue with Google. The email
+              and password form is only for accounts with a SecureExam
+              password.
+            </p>
+          )}
           {sso && (
             <button
               className="primary large login-provider login-sso-button"
@@ -220,6 +231,17 @@ export default function Login() {
               setError("");
               const f = new FormData(e.currentTarget);
               try {
+                if (
+                  audience === "student" &&
+                  isGoogleOnlyStudentEmail(f.get("email"))
+                ) {
+                  await signIn(
+                    "google",
+                    { callbackUrl: authCallbackUrl("student") },
+                    { prompt: "select_account" },
+                  );
+                  return;
+                }
                 const result = await signIn("credentials", {
                   email: f.get("email"),
                   password: f.get("password"),

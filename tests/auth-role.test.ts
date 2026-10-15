@@ -1,9 +1,16 @@
 import { describe, expect, it } from "vitest";
 import {
+  isGoogleOnlyStudentEmail,
   isStudentEmailAllowed,
   matchesLoginAudience,
   safeStudentReturnPath,
 } from "../src/lib/auth-role";
+
+it("routes the approved Gmail student account through Google sign-in", () => {
+  expect(isGoogleOnlyStudentEmail("kaushikka99@gmail.com")).toBe(true);
+  expect(isGoogleOnlyStudentEmail(" KAUSHIKKA99@GMAIL.COM ")).toBe(true);
+  expect(isGoogleOnlyStudentEmail("another.student@gmail.com")).toBe(false);
+});
 
 describe("role-specific sign-in", () => {
   it("allows students only into student sign-in", () => {
