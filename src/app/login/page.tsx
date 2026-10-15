@@ -20,6 +20,7 @@ export default function Login() {
   const [error, setError] = useState(""),
     [busy, setBusy] = useState(false);
   const [audience, setAudience] = useState<"student" | "teacher">("student");
+  const [loginEmail, setLoginEmail] = useState("");
 
   const [sso, setSso] = useState(false);
   const [google, setGoogle] = useState(false);
@@ -267,13 +268,18 @@ export default function Login() {
                 autoComplete="username"
                 name="email"
                 type="email"
+                value={loginEmail}
+                onChange={(event) => setLoginEmail(event.target.value)}
                 placeholder="you@university.ac.th"
               />
             </label>
             <label>
               Password
               <input
-                required
+                required={
+                  audience !== "student" ||
+                  !isGoogleOnlyStudentEmail(loginEmail)
+                }
                 autoComplete="current-password"
                 name="password"
                 type="password"
