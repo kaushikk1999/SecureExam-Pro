@@ -346,7 +346,7 @@ export async function archiveWarningEvidenceToDrive(input: {
     `Submitted: ${input.submittedAt ? formatActivityTime(input.submittedAt) + " (Asia/Bangkok)" : "Not submitted"}`,
     `Warnings issued: ${input.warnings}`,
     `Submission reason: ${submitReason}`,
-    `Captured evidence images archived: ${evidenceCount}`,
+    `Captured evidence images archived: ${evidenceCount} of ${new Set(input.events.map((event) => event.metadata.evidenceFileId).filter((id) => typeof id === "string")).size}`,
     "",
     "ACTIVITY TIMELINE",
     ...events.map((event) => {
@@ -391,7 +391,18 @@ export async function archiveWarningEvidenceToDrive(input: {
       exam_id=EXCLUDED.exam_id,folder_id=EXCLUDED.folder_id,report_id=EXCLUDED.report_id,
       evidence_count=EXCLUDED.evidence_count,archived_at=EXCLUDED.archived_at
   `);
-  return { archived: true, evidenceCount, folderId: studentFolderId, reportId };
+  const expectedEvidenceCount = new Set(
+    input.events
+      .map((event) => event.metadata.evidenceFileId)
+      .filter((id) => typeof id === "string"),
+  ).size;
+  return {
+    archived: evidenceCount >= expectedEvidenceCount,
+    evidenceCount,
+    expectedEvidenceCount,
+    folderId: studentFolderId,
+    reportId,
+  };
 }
 
 /** Remove the exam-specific evidence archive when its exam is deleted. */

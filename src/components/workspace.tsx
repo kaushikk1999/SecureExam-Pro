@@ -202,11 +202,35 @@ export default function Workspace({
   view: string[];
 }) {
   const { data: settings } = useData("settings");
+  const { data: notifications, refresh: refreshNotifications } = useData(
+    "growth/notifications",
+    5000,
+  );
   useEffect(() => {
     if (settings?.timezone) setDisplayTimezone(settings.timezone);
   }, [settings?.timezone]);
   const [open, setOpen] = useState(false);
   const page = view[0] ?? "";
+  useEffect(() => {
+    if (user.role === "STUDENT" || page !== "audit") return;
+    let active = true;
+    const markSeen = async () => {
+      if (document.visibilityState !== "visible") return;
+      try {
+        await api("growth/notifications", {}, "POST");
+        if (active) await refreshNotifications();
+      } catch {
+        // Keep the unread count until the audit page can acknowledge it.
+      }
+    };
+    void markSeen();
+    const timer = window.setInterval(() => void markSeen(), 10000);
+    return () => {
+      active = false;
+      window.clearInterval(timer);
+    };
+  }, [page, refreshNotifications, user.role]);
+  const unreadWarnings = Number(notifications?.unreadWarnings ?? 0);
   return (
     <div
       className="app-shell"
@@ -262,6 +286,14 @@ export default function Workspace({
             >
               <Icon size={19} />
               {label}
+              {href === "audit" && unreadWarnings > 0 && (
+                <span
+                  className="notification-badge nav-notification-badge"
+                  aria-label={`${unreadWarnings} new warnings`}
+                >
+                  {unreadWarnings > 99 ? "99+" : unreadWarnings}
+                </span>
+              )}
               {href === "monitor" && <span className="nav-live" />}
             </Link>
           ))}
@@ -314,9 +346,33 @@ export default function Workspace({
             <span className="small muted">
               {settings?.timezone ?? "Asia/Bangkok"}
             </span>
-            <Link href="/workspace/audit" aria-label="Audit activity">
-              <Bell size={19} />
-            </Link>
+            {user.role !== "STUDENT" && (
+              <Link
+                href="/workspace/audit"
+                className={
+                  unreadWarnings
+                    ? "notification-link has-notifications"
+                    : "notification-link"
+                }
+                aria-label={
+                  unreadWarnings
+                    ? `${unreadWarnings} new student warning${unreadWarnings === 1 ? "" : "s"}. Open audit activity`
+                    : "Audit activity"
+                }
+                title={
+                  unreadWarnings
+                    ? `${unreadWarnings} new student warning${unreadWarnings === 1 ? "" : "s"}`
+                    : "Audit activity"
+                }
+              >
+                <Bell size={19} />
+                {unreadWarnings > 0 && (
+                  <span className="notification-badge" aria-live="polite">
+                    {unreadWarnings > 99 ? "99+" : unreadWarnings}
+                  </span>
+                )}
+              </Link>
+            )}
             <span className="avatar small-avatar">{user.name[0]}</span>
           </div>
         </header>
@@ -4212,8 +4268,12 @@ function Accommodations({ examId }: { examId: string }) {
   );
 }
 function Audit() {
-  const { data, error } = useData("audit", 10000);
+  const { data, error, refresh } = useData("audit", 10000);
   const [search, setSearch] = useState("");
+  const [archivingAttempt, setArchivingAttempt] = useState("");
+  const [archiveMessages, setArchiveMessages] = useState<
+    Record<string, string>
+  >({});
   const filtered = (data ?? []).filter((e: any) =>
     JSON.stringify(e).toLowerCase().includes(search.toLowerCase()),
   );
@@ -4354,7 +4414,52 @@ function Audit() {
                             No Drive archive link is available yet.
                           </span>
                         )}
+                        {student.attempt_id && (
+                          <button
+                            className="button small"
+                            disabled={archivingAttempt === student.attempt_id}
+                            onClick={async () => {
+                              const attemptId = student.attempt_id;
+                              setArchivingAttempt(attemptId);
+                              setArchiveMessages((current) => ({
+                                ...current,
+                                [attemptId]:
+                                  "Saving warning screenshots and report to Google Drive…",
+                              }));
+                              try {
+                                const result = await api("audit/archive", {
+                                  attemptId,
+                                });
+                                setArchiveMessages((current) => ({
+                                  ...current,
+                                  [attemptId]:
+                                    result.evidenceCount > 0
+                                      ? `Saved ${result.evidenceCount}${result.expectedEvidenceCount > result.evidenceCount ? ` of ${result.expectedEvidenceCount}` : ""} screenshot${result.evidenceCount === 1 ? "" : "s"} and refreshed the activity report in Google Drive.`
+                                      : "The Drive activity report was refreshed, but no captured screenshots are available for this attempt.",
+                                }));
+                                await refresh();
+                              } catch (archiveError) {
+                                setArchiveMessages((current) => ({
+                                  ...current,
+                                  [attemptId]: (archiveError as Error).message,
+                                }));
+                              } finally {
+                                setArchivingAttempt("");
+                              }
+                            }}
+                          >
+                            {archivingAttempt === student.attempt_id
+                              ? "Saving to Drive…"
+                              : "Save / refresh screenshots in Drive"}
+                          </button>
+                        )}
                       </div>
+                      {student.attempt_id &&
+                        archiveMessages[student.attempt_id] && (
+                          <p className="muted" role="status">
+                            {archiveMessages[student.attempt_id]}
+                          </p>
+                        )}
                       {student.warnings.map((event: any) => (
                         <details key={event.id} className="audit-warning">
                           <summary>

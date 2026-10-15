@@ -297,12 +297,26 @@ export default function ExamRoom({
         !!cameraTrack &&
         !!cameraSource &&
         cameraSource.readyState >= HTMLMediaElement.HAVE_CURRENT_DATA;
+      let screenFrame: ImageBitmap | null = null;
+      if (
+        track &&
+        sharedScreen?.readyState !== HTMLMediaElement.HAVE_CURRENT_DATA &&
+        typeof ImageCapture !== "undefined"
+      ) {
+        try {
+          screenFrame = await new ImageCapture(track).grabFrame();
+        } catch {
+          screenFrame = null;
+        }
+      }
       const source =
         track && sharedScreen?.readyState === HTMLMediaElement.HAVE_CURRENT_DATA
           ? sharedScreen
-          : useCameraStill
-            ? cameraSource
-            : null;
+          : track && screenFrame
+            ? screenFrame
+            : useCameraStill
+              ? cameraSource
+              : null;
       if (!source) return null;
       const captureType =
         useCameraStill && source === cameraSource
@@ -312,9 +326,13 @@ export default function ExamRoom({
       canvas.width = 640;
       canvas.height = captureType === "tablet camera still" ? 480 : 360;
       const context = canvas.getContext("2d");
-      if (!context) return null;
+      if (!context) {
+        screenFrame?.close();
+        return null;
+      }
       const capturedAt = new Date().toISOString();
       context.drawImage(source, 0, 0, canvas.width, canvas.height);
+      screenFrame?.close();
       const blob = await new Promise<Blob | null>((resolve) =>
         canvas.toBlob(resolve, "image/jpeg", 0.52),
       );
@@ -331,7 +349,9 @@ export default function ExamRoom({
         headers: headers(),
         body: form,
         cache: "no-store",
-        signal: AbortSignal.timeout(4000),
+        // Drive-backed storage can take longer than a few seconds, especially
+        // on classroom Wi-Fi. Do not cancel an evidence upload before it lands.
+        signal: AbortSignal.timeout(20000),
       });
       const result = await response.json();
       if (!response.ok)

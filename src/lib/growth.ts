@@ -25,6 +25,52 @@ export async function growthRequest(
     throw new HttpError(405, "Use GET or POST.");
   if (resource === "integrations")
     return integrationRequest(req, parts.slice(1), u, body);
+  if (resource === "notifications") {
+    if (u.role === "STUDENT") return { unreadWarnings: 0 };
+    const latest = async () => {
+      const [row] = await query<{ latest: string | number }>(sql`
+        SELECT COALESCE(max(ev.sequence),0) AS latest
+        FROM audit_events ev
+        JOIN exams e ON e.id=ev.exam_id
+        JOIN courses c ON c.id=e.course_id
+        WHERE ev.event_type='WARNING_ISSUED'
+          AND (${u.role === "ADMIN"} OR c.teacher_id=${u.id})
+      `);
+      return Number(row?.latest ?? 0);
+    };
+    if (read) {
+      const [cursor] = await query<{
+        last_warning_sequence: string | number;
+      }>(sql`
+        INSERT INTO teacher_notification_reads(user_id,last_warning_sequence)
+        VALUES(${u.id},${await latest()})
+        ON CONFLICT(user_id) DO NOTHING
+        RETURNING last_warning_sequence
+      `);
+      const [saved] = cursor
+        ? [cursor]
+        : await query<{ last_warning_sequence: string | number }>(sql`
+            SELECT last_warning_sequence FROM teacher_notification_reads WHERE user_id=${u.id}
+          `);
+      const [count] = await query<{ count: number }>(sql`
+        SELECT count(*)::int AS count FROM audit_events ev
+        JOIN exams e ON e.id=ev.exam_id JOIN courses c ON c.id=e.course_id
+        WHERE ev.event_type='WARNING_ISSUED'
+          AND ev.sequence>${Number(saved?.last_warning_sequence ?? 0)}
+          AND (${u.role === "ADMIN"} OR c.teacher_id=${u.id})
+      `);
+      return { unreadWarnings: count?.count ?? 0 };
+    }
+    const latestSequence = await latest();
+    await query(sql`
+      INSERT INTO teacher_notification_reads(user_id,last_warning_sequence,updated_at)
+      VALUES(${u.id},${latestSequence},now())
+      ON CONFLICT(user_id) DO UPDATE SET
+        last_warning_sequence=GREATEST(teacher_notification_reads.last_warning_sequence,EXCLUDED.last_warning_sequence),
+        updated_at=now()
+    `);
+    return { ok: true, unreadWarnings: 0 };
+  }
   if (resource === "practice") {
     if (read) {
       const [saved] = await query(

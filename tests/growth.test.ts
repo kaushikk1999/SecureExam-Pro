@@ -613,3 +613,33 @@ it("shows only unexpired disconnected attempts in the instructor support queue",
     sql`UPDATE attempts SET status='SUBMITTED' WHERE id=${attempt}`,
   );
 });
+
+it("tracks new warning notifications per teacher and clears them when seen", async () => {
+  login(teacher);
+  // First access seeds the read cursor so historical warnings are not treated
+  // as newly arrived notifications.
+  expect(await ok("notifications")).toEqual({ unreadWarnings: 0 });
+  expect(await ok("notifications", {})).toMatchObject({
+    ok: true,
+    unreadWarnings: 0,
+  });
+  const { record } = await import("../src/lib/audit");
+  await record({
+    userId: student,
+    examId: exam,
+    attemptId: attempt,
+    type: "WARNING_ISSUED",
+    severity: "HIGH",
+    metadata: { reason: "WINDOW_BLUR" },
+  });
+  expect(await ok("notifications")).toEqual({ unreadWarnings: 1 });
+  expect(await ok("notifications", {})).toMatchObject({
+    ok: true,
+    unreadWarnings: 0,
+  });
+  expect(await ok("notifications")).toEqual({ unreadWarnings: 0 });
+  login(foreign);
+  expect(await ok("notifications")).toEqual({ unreadWarnings: 0 });
+  login(student);
+  expect(await ok("notifications")).toEqual({ unreadWarnings: 0 });
+});

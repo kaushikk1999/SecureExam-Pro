@@ -629,6 +629,47 @@ input[type="radio"] {
   font-weight: 500;
   position: relative;
 }
+.notification-link {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 34px;
+  height: 34px;
+  color: #77869a;
+  border-radius: 8px;
+}
+.notification-link:hover {
+  color: var(--accent);
+  background: #ecf3ff;
+}
+.notification-link.has-notifications > svg {
+  color: #d64045;
+}
+.notification-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 18px;
+  height: 18px;
+  padding: 0 5px;
+  border: 2px solid #fff;
+  border-radius: 999px;
+  background: #d64045;
+  color: #fff;
+  font-size: 10px;
+  line-height: 1;
+  font-weight: 750;
+  box-shadow: 0 1px 4px #162b461f;
+}
+.notification-link .notification-badge {
+  position: absolute;
+  top: -3px;
+  right: -4px;
+}
+.nav-notification-badge {
+  margin-left: auto;
+}
 .nav-item:hover {
   background: #f6f8fb;
 }

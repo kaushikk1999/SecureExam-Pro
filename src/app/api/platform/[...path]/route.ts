@@ -2188,10 +2188,10 @@ async function dispatch(req: Request, parts: string[]) {
           for (let attempt = 0; attempt < 2; attempt++) {
             try {
               const result = await archiveAttemptWarningEvidence(id);
-              if (result.archived || result.evidenceCount === 0) return;
+              if (result.archived) return;
             } catch {}
             if (attempt === 0)
-              await new Promise((resolve) => setTimeout(resolve, 750));
+              await new Promise((resolve) => setTimeout(resolve, 1000));
           }
           // Do not serialize provider errors here: Google auth client errors
           // may contain the short-lived Vercel OIDC subject token.
@@ -2209,6 +2209,17 @@ async function dispatch(req: Request, parts: string[]) {
   }
   if (resource === "audit") {
     teacher(u);
+    if (id === "archive") {
+      if (method !== "POST") throw new HttpError(405, "POST required.");
+      const v = z.object({ attemptId: uuid }).parse(await body(req));
+      const [attempt] = await query<{ exam_id: string }>(
+        sql`SELECT exam_id FROM attempts WHERE id=${v.attemptId} AND warnings>0`,
+      );
+      if (!attempt) throw new HttpError(404, "Warned exam attempt not found.");
+      await ownedExam(attempt.exam_id, u);
+      return json(await archiveAttemptWarningEvidence(v.attemptId));
+    }
+    if (method !== "GET") throw new HttpError(405, "GET required.");
     const rows = await query(
       sql`SELECT a.*,u.name,u.student_id,u.role,e.title AS exam_title,
                  c.code AS course_code,c.section,
