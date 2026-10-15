@@ -1572,7 +1572,7 @@ async function dispatch(req: Request, parts: string[]) {
       if (method !== "POST") throw new HttpError(405, "POST required.");
       if (u.role !== "STUDENT")
         throw new HttpError(403, "Student attempt access required.");
-      if (!(await rateLimit(`vision:${id}`, 1, 18)))
+      if (!(await rateLimit(`vision:${id}`, 1, 5)))
         throw new HttpError(429, "Camera review is running too frequently.");
       const input = z
         .object({

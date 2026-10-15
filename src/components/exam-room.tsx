@@ -1187,7 +1187,7 @@ export default function ExamRoom({
           visionBusy = false;
         }
       };
-      visionTimer = setInterval(() => void reviewCamera(), 20000);
+      visionTimer = setInterval(() => void reviewCamera(), 5000);
     }
     let watch: number | undefined;
     let locationTimer: ReturnType<typeof setInterval> | undefined,
