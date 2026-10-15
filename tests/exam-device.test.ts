@@ -4,9 +4,11 @@ import {
   examFullscreenRequired,
   examFullscreenSatisfied,
   examScreenSharingRequired,
+  isTabletSplitScreen,
   screenSharePreflightSatisfied,
   examRequestDeviceAllowed,
 } from "../src/lib/exam-device";
+import { policySchema, warningDecision } from "../src/lib/domain";
 
 describe("supported exam devices", () => {
   it("keeps tablet answer entry usable when native fullscreen is dismissed", () => {
@@ -30,6 +32,23 @@ describe("supported exam devices", () => {
     expect(examScreenSharingRequired(true, "tablet")).toBe(false);
     expect(examScreenSharingRequired(true, "phone")).toBe(false);
     expect(examScreenSharingRequired(false, "laptop")).toBe(false);
+  });
+
+  it("detects tablet split-screen widths without reacting to normal browser chrome", () => {
+    expect(isTabletSplitScreen(620, 1366)).toBe(true);
+    expect(isTabletSplitScreen(900, 1024)).toBe(false);
+    expect(isTabletSplitScreen(0, 1024)).toBe(false);
+    expect(isTabletSplitScreen(600, 0)).toBe(false);
+  });
+
+  it("records split-screen detection without adding a warning strike", () => {
+    const decision = warningDecision(
+      2,
+      "TABLET_SPLIT_VIEW",
+      policySchema.parse({}),
+    );
+    expect(decision.warnings).toBe(2);
+    expect(decision.terminate).toBe(false);
   });
 
   it("allows laptops and common iPad and Android tablet identifiers", () => {

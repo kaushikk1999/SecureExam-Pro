@@ -2164,6 +2164,32 @@ fieldset {
   min-height: 100vh;
   min-height: 100dvh;
 }
+.tablet-window-blocker {
+  position: fixed;
+  inset: 0;
+  z-index: 10000;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+  background: rgb(15 29 48 / 82%);
+}
+.tablet-window-blocker .panel {
+  width: min(100%, 560px);
+  padding: 32px;
+  text-align: center;
+}
+.tablet-window-blocker svg {
+  color: #bd3d32;
+}
+.tablet-window-blocker h1 {
+  margin: 12px 0;
+  color: #182f49;
+  font-size: 24px;
+}
+.tablet-window-blocker p {
+  color: #60758f;
+  line-height: 1.6;
+}
 .exam-answer-field {
   font-size: 16px;
   touch-action: manipulation;

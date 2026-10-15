@@ -2068,6 +2068,8 @@ async function dispatch(req: Request, parts: string[]) {
                 "TAB_HIDDEN",
                 "WINDOW_BLUR",
                 "FULLSCREEN_EXIT",
+                "TABLET_SPLIT_VIEW",
+                "TABLET_WINDOW_RESTORED",
                 "CAMERA_DISABLED",
                 "MICROPHONE_DISABLED",
                 "SPEECH_ACTIVITY",

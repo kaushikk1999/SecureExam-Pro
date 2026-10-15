@@ -26,6 +26,7 @@ import {
   examFullscreenRequired,
   examFullscreenSatisfied,
   examScreenSharingRequired,
+  isTabletSplitScreen,
   screenSharePreflightSatisfied,
   type ExamDeviceClass,
 } from "@/lib/exam-device";
@@ -128,10 +129,12 @@ export default function ExamRoom({
     [online, setOnline] = useState(true),
     [warning, setWarning] = useState(""),
     [tabHold, setTabHold] = useState(false),
+    [tabletWindowConstrained, setTabletWindowConstrained] = useState(false),
     [seconds, setSeconds] = useState(0),
     [clockNow, setClockNow] = useState(0),
     [fullscreen, setFullscreen] = useState(true);
   const device = useRef(""),
+    tabletConstrainedRef = useRef(false),
     stream = useRef<MediaStream | null>(null),
     microphoneAudio = useRef<{
       context: AudioContext;
@@ -448,8 +451,16 @@ export default function ExamRoom({
     setChecks((c) => ({
       ...c,
       fullscreen:
-        detectedDeviceClass === "tablet" || document.fullscreenEnabled,
+        document.fullscreenEnabled &&
+        typeof document.documentElement.requestFullscreen === "function",
     }));
+    setTabletWindowConstrained(
+      detectedDeviceClass === "tablet" &&
+        isTabletSplitScreen(window.innerWidth, window.screen.width),
+    );
+    tabletConstrainedRef.current =
+      detectedDeviceClass === "tablet" &&
+      isTabletSplitScreen(window.innerWidth, window.screen.width);
     async function loadExam() {
       if (enrollmentToken && enrollmentInviteIssuedAt) {
         await api(`exams/${examId}/self-enroll`, {
@@ -483,6 +494,47 @@ export default function ExamRoom({
       microphoneAudio.current = null;
     };
   }, [examId, enrollmentToken, enrollmentInviteIssuedAt]);
+  useEffect(() => {
+    if (deviceClass !== "tablet") return;
+    let resizeTimer: ReturnType<typeof setTimeout> | undefined;
+    const inspectWindow = () => {
+      clearTimeout(resizeTimer);
+      resizeTimer = setTimeout(() => {
+        const constrained = isTabletSplitScreen(
+          window.innerWidth,
+          window.screen.width,
+        );
+        setTabletWindowConstrained(constrained);
+        if (
+          constrained &&
+          !tabletConstrainedRef.current &&
+          active.current?.status === "ACTIVE"
+        )
+          emit("TABLET_SPLIT_VIEW", {
+            viewportWidth: window.innerWidth,
+            screenWidth: window.screen.width,
+            reason: "tablet viewport is substantially narrower than the screen",
+          });
+        if (
+          !constrained &&
+          tabletConstrainedRef.current &&
+          active.current?.status === "ACTIVE"
+        )
+          emit("TABLET_WINDOW_RESTORED", {
+            viewportWidth: window.innerWidth,
+            screenWidth: window.screen.width,
+          });
+        tabletConstrainedRef.current = constrained;
+      }, 180);
+    };
+    window.addEventListener("resize", inspectWindow);
+    window.visualViewport?.addEventListener("resize", inspectWindow);
+    return () => {
+      clearTimeout(resizeTimer);
+      window.removeEventListener("resize", inspectWindow);
+      window.visualViewport?.removeEventListener("resize", inspectWindow);
+    };
+  }, [deviceClass, emit]);
   useEffect(() => {
     if (video.current && stream.current)
       video.current.srcObject = stream.current;
@@ -720,8 +772,38 @@ export default function ExamRoom({
     setBusy(true);
     setError("");
     try {
-      if (examFullscreenRequired(exam.policy.fullscreen, deviceClass))
-        await document.documentElement.requestFullscreen();
+      if (
+        deviceClass === "tablet" &&
+        isTabletSplitScreen(window.innerWidth, window.screen.width)
+      ) {
+        setTabletWindowConstrained(true);
+        throw new Error(
+          "Close split screen or multi-window mode, then return to this exam in a full-width browser window before starting.",
+        );
+      }
+      if (exam.policy.fullscreen) {
+        const requestFullscreen =
+          document.documentElement.requestFullscreen?.bind(
+            document.documentElement,
+          );
+        if (requestFullscreen) {
+          try {
+            await requestFullscreen();
+          } catch (fullscreenError) {
+            if (examFullscreenRequired(exam.policy.fullscreen, deviceClass))
+              throw fullscreenError;
+            setError(
+              "This tablet browser did not allow fullscreen. Continue in its normal browser view, keep the exam full width, and do not use split screen.",
+            );
+          }
+        } else if (
+          examFullscreenRequired(exam.policy.fullscreen, deviceClass)
+        ) {
+          throw new Error(
+            "This browser cannot enter fullscreen, which is required for this exam.",
+          );
+        }
+      }
       const result = await api(`exams/${examId}/start`, {
         deviceSessionId: device.current,
         deviceClass,
@@ -1340,7 +1422,7 @@ export default function ExamRoom({
         "Fullscreen",
         p.fullscreen
           ? deviceClass === "tablet"
-            ? "Tablet typing mode is used; browser fullscreen is not required."
+            ? "Fullscreen is requested when supported. It may close when the on-screen keyboard opens; split screen is blocked."
             : "Fullscreen is required on this device."
           : "Fullscreen is not required.",
       ],
@@ -1408,6 +1490,7 @@ export default function ExamRoom({
       ) &&
       (!p.location || locationGood) &&
       examFullscreenSatisfied(p.fullscreen, deviceClass, checks.fullscreen) &&
+      !tabletWindowConstrained &&
       (deviceClass === "laptop" || deviceClass === "tablet") &&
       (!p.classroomCode || code.length === 6);
     return (
@@ -1650,15 +1733,28 @@ export default function ExamRoom({
                   ]
                 : []),
               [
+                ShieldCheck,
+                "Tablet window",
+                deviceClass !== "tablet" || !tabletWindowConstrained,
+                deviceClass === "tablet" && tabletWindowConstrained
+                  ? "Close split screen to continue"
+                  : undefined,
+              ],
+              [
                 Maximize2,
                 deviceClass === "tablet"
-                  ? "Tablet typing mode"
+                  ? "Browser fullscreen support"
                   : "Fullscreen capability",
-                examFullscreenSatisfied(
-                  p.fullscreen,
-                  deviceClass,
-                  checks.fullscreen,
-                ),
+                deviceClass === "tablet"
+                  ? checks.fullscreen
+                  : examFullscreenSatisfied(
+                      p.fullscreen,
+                      deviceClass,
+                      checks.fullscreen,
+                    ),
+                deviceClass === "tablet" && p.fullscreen && !checks.fullscreen
+                  ? "Not supported by this browser"
+                  : undefined,
               ],
               [
                 ShieldCheck,
@@ -1707,9 +1803,15 @@ export default function ExamRoom({
           )}
           {deviceClass === "tablet" && p.fullscreen && (
             <p className="small muted">
-              Tablet mode keeps the exam page available when the on-screen
-              keyboard opens. Tab-change and other enabled security checks
-              remain active.
+              We request fullscreen at exam start when this browser supports it.
+              The on-screen keyboard may exit fullscreen so you can type;
+              split-screen and multi-window layouts are blocked.
+            </p>
+          )}
+          {deviceClass === "tablet" && tabletWindowConstrained && (
+            <p className="small error" role="alert">
+              Close split screen or multi-window mode and reopen this exam in a
+              full-width browser window before continuing.
             </p>
           )}
           <button
@@ -1855,7 +1957,8 @@ export default function ExamRoom({
   const blocked =
     attempt.examStatus === "PAUSED" ||
     (attempt.policy.fullscreen && !fullscreen) ||
-    tabHold;
+    tabHold ||
+    (deviceClass === "tablet" && tabletWindowConstrained);
   return (
     <div className="exam-shell">
       <header className="exam-top">
@@ -1904,6 +2007,27 @@ export default function ExamRoom({
         </span>
         <span>{attempt.location_status.replaceAll("_", " ")}</span>
       </div>
+      {deviceClass === "tablet" && tabletWindowConstrained && (
+        <section
+          className="tablet-window-blocker"
+          role="alertdialog"
+          aria-modal="true"
+          aria-labelledby="tablet-window-blocker-title"
+        >
+          <div className="panel form-panel">
+            <AlertTriangle size={28} aria-hidden="true" />
+            <h1 id="tablet-window-blocker-title">
+              Close split screen to continue
+            </h1>
+            <p>
+              The exam is paused because this tablet browser is using a
+              multi-window layout. Close the other app or window and expand the
+              browser to the full screen width. Your saved answers are
+              preserved; the exam will resume when the full-width view returns.
+            </p>
+          </div>
+        </section>
+      )}
       {warning && (
         <div className="warning-banner" role="alert">
           <AlertTriangle />
@@ -2015,18 +2139,29 @@ export default function ExamRoom({
               <h2>
                 {attempt.examStatus === "PAUSED"
                   ? "Your instructor has paused this examination."
-                  : tabHold
-                    ? "You left the examination tab. Acknowledge the monitoring signal above to continue."
-                    : "Return to fullscreen to continue."}
+                  : deviceClass === "tablet" && tabletWindowConstrained
+                    ? "Split screen or a multi-window layout is not allowed during this examination."
+                    : tabHold
+                      ? "You left the examination tab. Acknowledge the monitoring signal above to continue."
+                      : "Return to fullscreen to continue."}
               </h2>
-              {attempt.examStatus !== "PAUSED" && !tabHold && (
-                <button
-                  className="primary"
-                  onClick={() => document.documentElement.requestFullscreen()}
-                >
-                  Return to fullscreen
-                </button>
+              {deviceClass === "tablet" && tabletWindowConstrained && (
+                <p>
+                  Close the other app or window and expand this browser to the
+                  full screen width. Your saved answers are preserved, and the
+                  exam will resume when the full-width view is restored.
+                </p>
               )}
+              {attempt.examStatus !== "PAUSED" &&
+                !tabHold &&
+                !(deviceClass === "tablet" && tabletWindowConstrained) && (
+                  <button
+                    className="primary"
+                    onClick={() => document.documentElement.requestFullscreen()}
+                  >
+                    Return to fullscreen
+                  </button>
+                )}
             </div>
           ) : questions.length === 0 ? (
             <section className="panel form-panel">

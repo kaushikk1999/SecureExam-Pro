@@ -8,6 +8,18 @@ export type ExamDeviceSignals = {
   mobileHint?: boolean;
 };
 
+/** Detect a tablet browser viewport that is substantially narrower than its screen. */
+export function isTabletSplitScreen(
+  viewportWidth: number,
+  screenWidth: number,
+  minimumWidthRatio = 0.72,
+) {
+  if (!Number.isFinite(viewportWidth) || !Number.isFinite(screenWidth))
+    return false;
+  if (viewportWidth <= 0 || screenWidth <= 0) return false;
+  return viewportWidth / screenWidth < minimumWidthRatio;
+}
+
 /** Tablets need the browser's native keyboard, which can dismiss Fullscreen API mode. */
 export function examFullscreenRequired(
   policyRequiresFullscreen: boolean,
