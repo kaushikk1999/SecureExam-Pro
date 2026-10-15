@@ -733,7 +733,7 @@ describe("server authorization and exam lifecycle", () => {
     form.append("attemptId", id);
     form.append("eventEvidence", "true");
     form.append("eventId", randomUUID());
-    form.append("eventType", "CAMERA_MOTION");
+    form.append("eventType", "AI_FACE_NOT_VISIBLE");
     const uploaded = await uploadRequest("files", form, {
       "x-exam-device": tabletDevice,
     });
@@ -741,7 +741,7 @@ describe("server authorization and exam lifecycle", () => {
     expect(
       (
         await query(
-          sql`SELECT name,mime FROM files WHERE attempt_id=${id} AND name LIKE 'EVIDENCE::CAMERA_MOTION::%'`,
+          sql`SELECT name,mime FROM files WHERE attempt_id=${id} AND name LIKE 'EVIDENCE::AI_FACE_NOT_VISIBLE::%'`,
         )
       )[0],
     ).toMatchObject({ mime: "image/jpeg" });
@@ -1469,6 +1469,28 @@ it("counts Ollama missing-face and multiple-face results as warning strikes", as
     expect(await response.json()).toMatchObject({
       signals: ["FACE_NOT_VISIBLE"],
     });
+    expect(
+      (
+        await query(sql`SELECT warnings FROM attempts WHERE id=${faceAttempt}`)
+      )[0].warnings,
+    ).toBe(0);
+    const faceEventId = randomUUID();
+    const faceSync = await request(`attempts/${faceAttempt}/sync`, {
+      events: [
+        {
+          id: faceEventId,
+          type: "AI_FACE_NOT_VISIBLE",
+          metadata: {
+            signals: "FACE_NOT_VISIBLE",
+            measurement:
+              "Ollama review of two transient low-resolution camera frames; no face clearly visible in either sample",
+            evidenceCapture: "tablet camera still",
+            evidenceCapturedAt: new Date().toISOString(),
+          },
+        },
+      ],
+    });
+    expect(faceSync.status).toBe(200);
     expect(
       (
         await query(sql`SELECT warnings FROM attempts WHERE id=${faceAttempt}`)

@@ -308,6 +308,7 @@ export default function ExamRoom({
       canvas.height = captureType === "tablet camera still" ? 480 : 360;
       const context = canvas.getContext("2d");
       if (!context) return null;
+      const capturedAt = new Date().toISOString();
       context.drawImage(source, 0, 0, canvas.width, canvas.height);
       const blob = await new Promise<Blob | null>((resolve) =>
         canvas.toBlob(resolve, "image/jpeg", 0.52),
@@ -330,7 +331,7 @@ export default function ExamRoom({
       const result = await response.json();
       if (!response.ok)
         throw new Error(result.error ?? "Evidence upload failed.");
-      return { id: String(result.id), captureType };
+      return { id: String(result.id), captureType, capturedAt };
     },
     [deviceClass, examId],
   );
@@ -372,6 +373,7 @@ export default function ExamRoom({
         "PASTE_ATTEMPT",
         "SPEECH_ACTIVITY",
         "CAMERA_MOTION",
+        "AI_FACE_NOT_VISIBLE",
       ];
       const nowMs = Date.now();
       const tabletCameraEvidenceEnabled =
@@ -381,7 +383,8 @@ export default function ExamRoom({
       if (
         (active.current.policy.screen || tabletCameraEvidenceEnabled) &&
         evidenceTypes.includes(type) &&
-        nowMs - lastEvidenceCapture.current >= 5000
+        (type === "AI_FACE_NOT_VISIBLE" ||
+          nowMs - lastEvidenceCapture.current >= 5000)
       ) {
         lastEvidenceCapture.current = nowMs;
         void captureScreenEvidence(id, type)
@@ -391,11 +394,20 @@ export default function ExamRoom({
                 ? {
                     evidenceFileId: evidence.id,
                     evidenceCapture: evidence.captureType,
+                    evidenceCapturedAt: evidence.capturedAt,
                   }
-                : { evidenceCapture: "unavailable" },
+                : {
+                    evidenceCapture: "unavailable",
+                    evidenceCapturedAt: new Date().toISOString(),
+                  },
             ),
           )
-          .catch(() => recordEvent({ evidenceCapture: "unavailable" }));
+          .catch(() =>
+            recordEvent({
+              evidenceCapture: "unavailable",
+              evidenceCapturedAt: new Date().toISOString(),
+            }),
+          );
         return;
       }
       recordEvent();
@@ -992,6 +1004,13 @@ export default function ExamRoom({
           );
           const signals: string[] = result.signals ?? [];
           if (!signals.length) return;
+          const faceMissing = signals.includes("FACE_NOT_VISIBLE");
+          if (faceMissing)
+            emit("AI_FACE_NOT_VISIBLE", {
+              signals: "FACE_NOT_VISIBLE",
+              measurement:
+                "Ollama review of two transient low-resolution camera frames; no face clearly visible in either sample",
+            });
           if (Date.now() - lastVisionNotice > 30000) {
             lastVisionNotice = Date.now();
             const labels: Record<string, string> = {
@@ -1005,13 +1024,13 @@ export default function ExamRoom({
               .map((signal) => labels[signal])
               .filter(Boolean)
               .join("; ");
-            const faceMissing = signals.includes("FACE_NOT_VISIBLE");
             const multipleFaces = signals.includes("MULTIPLE_PEOPLE_VISIBLE");
-            alert(
-              faceMissing || multipleFaces
-                ? `Warning: ${reasons}. This camera detection counts as a security warning and may lead to automatic submission when the exam's warning limit is reached. Automated signals can be mistaken; adjust your camera view. Your instructor can review the event.`
-                : `Camera review signal: ${reasons}. This signal is advisory only and does not count as a warning strike. Automated signals can be mistaken; adjust your camera view and your instructor can review the event.`,
-            );
+            if (!faceMissing)
+              alert(
+                multipleFaces
+                  ? `Warning: ${reasons}. This camera detection counts as a security warning and may lead to automatic submission when the exam's warning limit is reached. Automated signals can be mistaken; adjust your camera view. Your instructor can review the event.`
+                  : `Camera review signal: ${reasons}. This signal is advisory only and does not count as a warning strike. Automated signals can be mistaken; adjust your camera view and your instructor can review the event.`,
+              );
           }
         } catch {
           // Camera review is advisory and must never interrupt exam progress.
@@ -1558,9 +1577,11 @@ export default function ExamRoom({
               are stored for authorized instructor review under a{" "}
               {p.retentionDays}-day retention policy. Raw video and microphone
               recordings are not uploaded. On tablets, a single camera still may
-              be captured when a monitored activity event occurs and stored with
-              warning evidence for instructor review. Browser observations can
-              be incomplete or inaccurate; your instructor reviews the evidence.
+              be captured when a monitored activity event occurs. If Ollama
+              reports that your face is not visible, a timestamped camera still
+              is attached to that warning and archived in Google Drive when
+              Drive storage is configured. Browser observations can be
+              incomplete or inaccurate; your instructor reviews the evidence.
               Sustained microphone sound levels and coarse frame movement are
               checked in this browser. Sound levels cannot identify speech or
               conversation. No audio or transcript is sent to AI.{" "}

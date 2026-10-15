@@ -1634,41 +1634,39 @@ async function dispatch(req: Request, parts: string[]) {
         ...(review.possibleMouthMovement ? ["POSSIBLE_MOUTH_MOVEMENT"] : []),
       ];
       if (signals.length) {
-        await db.transaction(async (tx) => {
-          const a = await lockedAttempt(id, u, tx, device);
-          const [exam] = await query(
-            sql`SELECT * FROM exams WHERE id=${a.exam_id}`,
-            tx,
-          );
-          const { policy } = await effectivePolicy(exam, u.id, tx);
-          if (
-            !policy.aiCameraMonitoring ||
-            !policy.camera ||
-            a.status !== "ACTIVE"
-          )
-            return;
-          const faceMissing = signals.includes("FACE_NOT_VISIBLE");
-          const multipleFaces = signals.includes("MULTIPLE_PEOPLE_VISIBLE");
-          await event(
-            tx,
-            a,
-            u,
-            faceMissing
-              ? "AI_FACE_NOT_VISIBLE"
-              : multipleFaces
-                ? "AI_MULTIPLE_FACES_VISIBLE"
-                : "AI_CAMERA_REVIEW",
-            {
-              signals: signals.join(","),
-              measurement: faceMissing
-                ? "Ollama review of two transient low-resolution camera frames; no face clearly visible in either sample"
-                : multipleFaces
+        // Missing-face warnings are recorded by the client's normal sync path
+        // after it uploads the matching camera still. That keeps the immutable
+        // audit event linked to the evidence file in its original metadata.
+        // Other camera signals retain their existing server-side audit path.
+        if (!signals.includes("FACE_NOT_VISIBLE"))
+          await db.transaction(async (tx) => {
+            const a = await lockedAttempt(id, u, tx, device);
+            const [exam] = await query(
+              sql`SELECT * FROM exams WHERE id=${a.exam_id}`,
+              tx,
+            );
+            const { policy } = await effectivePolicy(exam, u.id, tx);
+            if (
+              !policy.aiCameraMonitoring ||
+              !policy.camera ||
+              a.status !== "ACTIVE"
+            )
+              return;
+            const multipleFaces = signals.includes("MULTIPLE_PEOPLE_VISIBLE");
+            await event(
+              tx,
+              a,
+              u,
+              multipleFaces ? "AI_MULTIPLE_FACES_VISIBLE" : "AI_CAMERA_REVIEW",
+              {
+                signals: signals.join(","),
+                measurement: multipleFaces
                   ? "Ollama review of two transient low-resolution camera frames; two or more distinct faces clearly visible"
                   : "Ollama review of two transient low-resolution camera frames; advisory only",
-            },
-            randomUUID(),
-          );
-        });
+              },
+              randomUUID(),
+            );
+          });
       }
       return json({ signals });
     }
@@ -2081,6 +2079,7 @@ async function dispatch(req: Request, parts: string[]) {
                 "NETWORK_DISCONNECTED",
                 "NETWORK_RECONNECTED",
                 "PASTE_ATTEMPT",
+                "AI_FACE_NOT_VISIBLE",
               ]),
               metadata: z
                 .record(
@@ -2117,13 +2116,24 @@ async function dispatch(req: Request, parts: string[]) {
     const syncResult = await db.transaction(async (tx) => {
       const a = await lockedAttempt(id, u, tx, device);
       const [e] = await query(
-        sql`SELECT status,paused_at FROM exams WHERE id=${a.exam_id}`,
+        sql`SELECT * FROM exams WHERE id=${a.exam_id}`,
         tx,
       );
+      const { policy } = await effectivePolicy(e, u.id, tx);
       const answersAccepted = a.status === "ACTIVE" && e.status !== "PAUSED";
       if (answersAccepted) {
         await saveAnswers(tx, a, v.answers);
         for (const ev of v.events) {
+          if (
+            ev.type === "AI_FACE_NOT_VISIBLE" &&
+            (!policy.aiCameraMonitoring ||
+              !policy.camera ||
+              !a.device_state?.camera)
+          )
+            throw new HttpError(
+              403,
+              "Missing-face warnings require active camera review for this exam.",
+            );
           if (typeof ev.metadata.evidenceFileId === "string") {
             const evidenceFileId = uuid.parse(ev.metadata.evidenceFileId);
             const [evidence] = await query(
@@ -2323,6 +2333,7 @@ async function dispatch(req: Request, parts: string[]) {
               "PASTE_ATTEMPT",
               "SPEECH_ACTIVITY",
               "CAMERA_MOTION",
+              "AI_FACE_NOT_VISIBLE",
             ])
             .parse(form.get("eventType"))
         : null;
