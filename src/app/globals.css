@@ -26,6 +26,13 @@ body {
 a {
   color: var(--accent);
   text-decoration: none;
+  transition:
+    color 180ms ease,
+    background-color 180ms ease,
+    border-color 180ms ease,
+    box-shadow 180ms ease,
+    transform 180ms cubic-bezier(0.2, 0.7, 0.2, 1),
+    opacity 180ms ease;
 }
 button,
 input,
@@ -47,17 +54,22 @@ button,
   font-weight: 550;
   cursor: pointer;
   transition:
-    background 0.16s,
-    transform 0.16s;
+    color 180ms ease,
+    background-color 180ms ease,
+    border-color 180ms ease,
+    box-shadow 180ms ease,
+    transform 180ms cubic-bezier(0.2, 0.7, 0.2, 1),
+    opacity 180ms ease;
   line-height: 1.4;
 }
 button:hover,
 .button:hover {
   background: #eff4fa;
+  transform: translateY(-1px);
 }
 button:active,
 .button:active {
-  transform: translateY(1px);
+  transform: translateY(1px) scale(0.985);
 }
 button:disabled {
   opacity: 0.5;
@@ -796,6 +808,19 @@ input[type="radio"] {
   min-height: calc(100vh - 127px);
   max-width: 1700px;
   margin: auto;
+}
+.main-content.page-transition {
+  animation: workspace-page-enter 320ms cubic-bezier(0.2, 0.7, 0.2, 1) both;
+}
+@keyframes workspace-page-enter {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
 }
 .page-heading {
   display: flex;
@@ -2991,6 +3016,137 @@ fieldset {
   background: #111827;
   object-fit: contain;
 }
+
+/* Dark animated overview theme, scoped to the teacher/admin home dashboard. */
+.dashboard-shell {
+  --ink: #d1e4ff;
+  --muted: #9eafc6;
+  --line: rgb(141 160 186 / 16%);
+  --surface: #000f20;
+  --navy: #071d31;
+  min-height: 100vh;
+  color: #d1e4ff;
+  background: #000f20;
+}
+.dashboard-shell .sidebar {
+  border-color: rgb(141 160 186 / 15%);
+  color: #d1e4ff;
+  background: #071d31;
+  box-shadow: 8px 0 32px rgb(0 0 0 / 12%);
+}
+.dashboard-shell .sidebar .brand {
+  color: #e5edfc;
+}
+.dashboard-shell .sidebar .brand-icon {
+  box-shadow: 0 0 20px rgb(37 99 235 / 34%);
+}
+.dashboard-shell .institution {
+  border-color: rgb(141 160 186 / 16%);
+}
+.dashboard-shell .institution-icon {
+  color: #b4c5ff;
+  background: #172b41;
+}
+.dashboard-shell .institution strong {
+  color: #d9e5f5;
+}
+.dashboard-shell .institution small,
+.dashboard-shell .nav-label {
+  color: #8297af;
+}
+.dashboard-shell .nav-item {
+  color: #a5b6ca;
+  transition: transform 200ms ease, color 200ms ease, background 200ms ease;
+}
+.dashboard-shell .nav-item:hover {
+  color: #e6efff;
+  background: #172b41;
+  transform: translateX(3px);
+}
+.dashboard-shell .nav-item.selected {
+  color: #fff;
+  background: linear-gradient(105deg, #2563eb, #1d4ed8);
+  box-shadow: 0 0 22px rgb(37 99 235 / 22%);
+}
+.dashboard-shell .nav-item.selected::before {
+  background: #00dbe9;
+  box-shadow: 0 0 12px rgb(0 219 233 / 70%);
+}
+.dashboard-shell .sidebar-bottom {
+  border-color: rgb(141 160 186 / 15%);
+}
+.dashboard-shell .security-note {
+  border-color: rgb(141 160 186 / 14%);
+  color: #9eafc6;
+  background: #0c2136;
+}
+.dashboard-shell .security-note svg {
+  color: #00dbe9;
+}
+.dashboard-shell .security-note strong {
+  color: #d1e4ff;
+}
+.dashboard-shell .profile {
+  border-color: rgb(141 160 186 / 16%);
+  color: #d1e4ff;
+  background: transparent;
+}
+.dashboard-shell .profile:hover {
+  background: #172b41;
+}
+.dashboard-shell .profile small,
+.dashboard-shell .profile > svg {
+  color: #8fa3ba;
+}
+.dashboard-shell .avatar {
+  color: #dce6ff;
+  background: #23364c;
+}
+.dashboard-shell .topbar {
+  border-color: rgb(141 160 186 / 15%);
+  color: #9eafc6;
+  background: rgb(0 20 41 / 88%);
+  box-shadow: 0 5px 24px rgb(0 0 0 / 12%);
+  backdrop-filter: blur(18px);
+}
+.dashboard-shell .topbar > span,
+.dashboard-shell .topbar > div {
+  color: #9eafc6;
+}
+.dashboard-shell .topbar strong {
+  color: #e0eaff;
+}
+.dashboard-shell .topbar .small.muted {
+  color: #a0b2c8;
+}
+.dashboard-shell .notification-link {
+  border-color: rgb(141 160 186 / 20%);
+  color: #a9bbd1;
+}
+.dashboard-shell .notification-link:hover {
+  color: #00dbe9;
+  background: #172b41;
+}
+.dashboard-shell .notification-link .notification-badge {
+  border-color: #001429;
+}
+.dashboard-shell .main-content {
+  max-width: none;
+  min-height: 0;
+  padding: 0;
+  margin: 0;
+  background: #000f20;
+}
+.dashboard-shell .workspace-footer {
+  border-color: rgb(141 160 186 / 15%);
+  color: #8297af;
+  background: #000f20;
+}
+.dashboard-shell .mobile-menu {
+  color: #d1e4ff;
+  background: #0c2136;
+}
+
 @media (max-width: 700px) {
   .live-exam-card {
     align-items: flex-start;

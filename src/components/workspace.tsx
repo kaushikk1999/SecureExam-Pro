@@ -35,6 +35,7 @@ import type { Actor } from "@/lib/auth";
 import { COURSE_CATALOG } from "@/lib/course-data";
 import ExamQrDialog from "./exam-qr-dialog";
 import CourseEnrollmentQrDialog from "./course-enrollment-qr-dialog";
+import OverviewDashboard from "./overview-dashboard";
 import {
   api,
   useData,
@@ -233,7 +234,11 @@ export default function Workspace({
   const unreadWarnings = Number(notifications?.unreadWarnings ?? 0);
   return (
     <div
-      className="app-shell"
+      className={
+        page === "" && user.role !== "STUDENT"
+          ? "app-shell dashboard-shell"
+          : "app-shell"
+      }
       style={
         { "--accent": settings?.accent ?? "#2563eb" } as React.CSSProperties
       }
@@ -376,7 +381,7 @@ export default function Workspace({
             <span className="avatar small-avatar">{user.name[0]}</span>
           </div>
         </header>
-        <main className="main-content">
+        <main key={page} className="main-content page-transition">
           {growthPages.includes(page) ? (
             <GrowthWorkspace key={page} page={page} user={user} />
           ) : user.role === "STUDENT" ? (
@@ -402,7 +407,10 @@ export default function Workspace({
           ) : page === "settings" ? (
             <SettingsPage isAdmin={user.role === "ADMIN"} />
           ) : (
-            <Overview user={user} />
+            <OverviewDashboard
+              user={user}
+              timezone={settings?.timezone ?? "Asia/Bangkok"}
+            />
           )}
         </main>
         <footer className="workspace-footer">
@@ -436,166 +444,6 @@ function Heading({
       </div>
       <div className="actions">{children}</div>
     </div>
-  );
-}
-function Overview({ user }: { user: Actor }) {
-  const { data: overview, error } = useData("overview", 10000);
-  const exams = overview?.exams;
-  const events = overview?.events;
-  return (
-    <>
-      <Heading
-        eyebrow="YOUR TEACHING, AT A GLANCE"
-        title={"Good to see you, " + user.name.split(" ")[0] + "."}
-        description="A little clarity before your next examination."
-      >
-        <Link className="button primary" href="/workspace/exams?new=1">
-          <Plus size={17} /> Create examination
-        </Link>
-      </Heading>
-      <ErrorBox message={error} />
-      <div className="welcome-banner">
-        <div>
-          <span className="eyebrow">READY FOR WHAT’S NEXT</span>
-          <h2>
-            Less administration.
-            <br />
-            More room for learning.
-          </h2>
-          <p>
-            Prepare your questions, bring your class together,
-            <br />
-            and follow every exam from one place.
-          </p>
-          <Link href="/workspace/exams">
-            Manage examinations <ArrowUpRight size={16} />
-          </Link>
-        </div>
-        <div className="banner-art">
-          <div className="orbit" />
-          <ShieldCheck size={84} strokeWidth={1} />
-          <span>
-            <CheckCircle2 size={14} /> Instructor-led assessment
-          </span>
-        </div>
-      </div>
-      <div className="stat-grid">
-        {[
-          [
-            FileText,
-            overview?.examCount ?? "—",
-            "Examinations",
-            "Across your courses",
-          ],
-          [
-            Users,
-            overview?.students ?? "—",
-            "Enrolled students",
-            "Your teaching community",
-          ],
-          [
-            Radio,
-            exams?.filter(
-              (e: any) =>
-                ["LIVE", "PUBLISHED"].includes(e.status) &&
-                new Date(e.starts_at) <= new Date() &&
-                new Date(e.ends_at) > new Date(),
-            ).length ?? "—",
-            "Open examinations",
-            "Ready for live supervision",
-          ],
-          [
-            ShieldCheck,
-            overview?.warnings ?? "—",
-            "Warnings recorded",
-            "Recent audit window",
-          ],
-        ].map(([Icon, value, label, caption]: any) => (
-          <article className="stat" key={label}>
-            <span className="stat-icon">
-              <Icon size={20} />
-            </span>
-            <strong>{value}</strong>
-            <h3>{label}</h3>
-            <small>{caption}</small>
-          </article>
-        ))}
-      </div>
-      <div className="two-column">
-        <section className="panel">
-          <div className="panel-heading">
-            <div>
-              <h2>Examinations</h2>
-              <p>Recently created assessments</p>
-            </div>
-            <Link href="/workspace/exams">View all →</Link>
-          </div>
-          {!exams ? (
-            <Loading />
-          ) : !exams.length ? (
-            <Empty
-              title="A fresh semester starts here"
-              description="Create a course, enroll your students, then prepare your first examination."
-            />
-          ) : (
-            exams.slice(0, 4).map((e: any) => (
-              <Link
-                className="exam-row"
-                href={"/workspace/exams/" + e.id}
-                key={e.id}
-              >
-                <span className="exam-icon">
-                  <FileText size={22} />
-                </span>
-                <div>
-                  <strong>{e.title}</strong>
-                  <small>
-                    {e.course_code} · {e.duration_minutes} min ·{" "}
-                    {time(e.starts_at)}
-                  </small>
-                </div>
-                <Status value={e.status} />
-                <ChevronRight size={17} />
-              </Link>
-            ))
-          )}
-        </section>
-        <section className="panel">
-          <div className="panel-heading">
-            <div>
-              <h2>Recent activity</h2>
-              <p>Your examination audit trail</p>
-            </div>
-            <Activity size={19} />
-          </div>
-          <div className="activity-list">
-            {events?.slice(0, 5).map((e: any) => (
-              <div key={e.id}>
-                <span
-                  className={
-                    "activity-dot " + (e.severity === "HIGH" ? "red" : "")
-                  }
-                />
-                <div>
-                  <strong>
-                    {e.event_type.replaceAll("_", " ").toLowerCase()}
-                  </strong>
-                  <p>
-                    {e.name ?? "System"} <small>· {time(e.created_at)}</small>
-                  </p>
-                </div>
-              </div>
-            ))}
-            {events?.length === 0 && (
-              <Empty
-                title="All quiet for now"
-                description="Exam and account activity will appear here."
-              />
-            )}
-          </div>
-        </section>
-      </div>
-    </>
   );
 }
 const standard = {
