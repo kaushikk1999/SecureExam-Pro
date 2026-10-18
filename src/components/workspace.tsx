@@ -212,6 +212,9 @@ export default function Workspace({
   }, [settings?.timezone]);
   const [open, setOpen] = useState(false);
   const page = view[0] ?? "";
+  const useDarkConsole =
+    user.role !== "STUDENT" &&
+    (page === "" || (page === "exams" && view.length === 1));
   useEffect(() => {
     if (user.role === "STUDENT" || page !== "audit") return;
     let active = true;
@@ -234,11 +237,7 @@ export default function Workspace({
   const unreadWarnings = Number(notifications?.unreadWarnings ?? 0);
   return (
     <div
-      className={
-        page === "" && user.role !== "STUDENT"
-          ? "app-shell dashboard-shell"
-          : "app-shell"
-      }
+      className={useDarkConsole ? "app-shell dashboard-shell" : "app-shell"}
       style={
         { "--accent": settings?.accent ?? "#2563eb" } as React.CSSProperties
       }
@@ -474,7 +473,15 @@ function ExamList() {
   const { data: exams, error, refresh } = useData("exams");
   const [creating, setCreating] = useState(false),
     [search, setSearch] = useState(""),
+    [statusFilter, setStatusFilter] = useState("all"),
     [notice, setNotice] = useState("");
+  const [currentTime, setCurrentTime] = useState<number | null>(null);
+  useEffect(() => {
+    const updateTime = () => setCurrentTime(Date.now());
+    updateTime();
+    const interval = window.setInterval(updateTime, 30000);
+    return () => window.clearInterval(interval);
+  }, []);
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
     setCreating(params.has("new"));
@@ -488,16 +495,52 @@ function ExamList() {
       window.history.replaceState(null, "", window.location.pathname);
     }
   }, []);
+  const examRows = Array.isArray(exams) ? exams : [];
+  const normalizedSearch = search.trim().toLowerCase();
+  const filteredExams = examRows.filter((exam: any) => {
+    const status = String(exam.status ?? "").toUpperCase();
+    const matchesSearch = [exam.title, exam.course_code, exam.course_name, status]
+      .some((value) => String(value ?? "").toLowerCase().includes(normalizedSearch));
+    const matchesStatus =
+      statusFilter === "all" ||
+      (statusFilter === "active" &&
+        ["LIVE", "PUBLISHED", "SCHEDULED", "PAUSED", "ACTIVE"].includes(status)) ||
+      (statusFilter === "draft" && status === "DRAFT") ||
+      (statusFilter === "closed" &&
+        ["CLOSED", "ARCHIVED", "COMPLETED"].includes(status));
+    return matchesSearch && matchesStatus;
+  });
+  const assignedSeats = examRows.reduce(
+    (total: number, exam: any) => total + Number(exam.enrolled ?? 0),
+    0,
+  );
+  const filters = [
+    ["all", "All status"],
+    ["active", "Published / active"],
+    ["draft", "Draft"],
+    ["closed", "Closed / archived"],
+  ] as const;
   return (
-    <>
+    <div className="exam-console">
       <Heading
         eyebrow="PLAN. PREPARE. PUBLISH."
         title="Examinations"
         description="A home for every assessment, from first draft to final marks."
       >
-        <button className="primary" onClick={() => setCreating(!creating)}>
-          <Plus size={17} /> Create examination
-        </button>
+        <div className="exam-header-actions">
+          <div className="exam-telemetry-chip" aria-label={`${examRows.length} examinations and ${assignedSeats} exam assignments`}>
+            <div><span>EXAMINATIONS</span><strong>{examRows.length}</strong></div>
+            <i aria-hidden="true" />
+            <div><span>EXAM ASSIGNMENTS</span><strong>{assignedSeats}</strong></div>
+          </div>
+          <button
+            className="primary exam-create-button"
+            onClick={() => setCreating(!creating)}
+            aria-expanded={creating}
+          >
+            <Plus size={17} /> Create examination
+          </button>
+        </div>
       </Heading>
       {notice && (
         <p role="status" className="notice">
@@ -513,66 +556,139 @@ function ExamList() {
           }}
         />
       )}
-      <div className="list-tools">
-        <Search size={18} />
-        <input
-          aria-label="Search examinations"
-          placeholder="Find an examination…"
-          value={search}
-          onChange={(e) => setSearch(e.target.value)}
-        />
-        <span className="muted">{exams?.length ?? 0} examinations</span>
-      </div>
-      <div className="exam-grid">
-        {exams
-          ?.filter((e: any) =>
-            e.title.toLowerCase().includes(search.toLowerCase()),
-          )
-          .map((e: any) => (
+      <section className="exam-toolbar" aria-label="Search and filter examinations">
+        <div className="exam-search">
+          <Search size={17} aria-hidden="true" />
+          <input
+            aria-label="Search examinations"
+            placeholder="Find an examination by course, title, or status…"
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+          />
+          <span>{filteredExams.length} shown</span>
+        </div>
+        <div className="exam-filter-group" role="group" aria-label="Filter by status">
+          {filters.map(([value, label]) => (
+            <button
+              type="button"
+              key={value}
+              className={statusFilter === value ? "active" : ""}
+              aria-pressed={statusFilter === value}
+              onClick={() => setStatusFilter(value)}
+            >
+              {label}
+            </button>
+          ))}
+        </div>
+      </section>
+      {error && <ErrorBox message={error} />}
+      {!exams ? (
+        <div className="exam-loading"><Loading /></div>
+      ) : filteredExams.length > 0 ? (
+        <section className="exam-console-grid" aria-label="Examinations">
+          {filteredExams.map((e: any, index: number) => {
+            const status = String(e.status ?? "UNKNOWN").toUpperCase();
+            const closed = ["CLOSED", "ARCHIVED", "COMPLETED"].includes(status);
+            const draft = status === "DRAFT";
+            const startsAt = Date.parse(e.starts_at);
+            const endsAt = Date.parse(e.ends_at);
+            const live = status === "LIVE" ||
+              (!closed && !draft && Number.isFinite(startsAt) && Number.isFinite(endsAt) &&
+                currentTime !== null && startsAt <= currentTime && endsAt > currentTime);
+            const enrolled = Number(e.enrolled ?? 0);
+            const checkedIn = Number(e.checked_in ?? 0);
+            const submitted = Number(e.submitted ?? 0);
+            const progressTotal = closed ? submitted : checkedIn;
+            const progressPercent = enrolled > 0
+              ? Math.min(100, Math.round((progressTotal / enrolled) * 100))
+              : 0;
+            const stateClass = live
+              ? "live"
+              : draft
+                ? "draft"
+                : closed
+                  ? "closed"
+                  : "scheduled";
+            const stateLabel = live
+              ? "Live"
+              : status.replaceAll("_", " ").toLowerCase();
+            return (
             <Link
-              className="exam-card"
+              className={`exam-card exam-console-card exam-console-card-${stateClass}`}
               key={e.id}
               href={"/workspace/exams/" + e.id}
+              style={{ "--exam-index": index } as React.CSSProperties}
             >
-              <div>
-                <span className="course-tag">{e.course_code}</span>
-                <Status value={e.status} />
+              <div className="exam-console-card-main">
+                <div className="exam-console-card-top">
+                  <div className="exam-console-course">
+                    <span className="course-tag">{e.course_code || "COURSE"}</span>
+                    {e.course_name && <span>{e.course_name}</span>}
+                  </div>
+                  <span className={`exam-console-status exam-console-status-${stateClass}`}>
+                    <i aria-hidden="true" />{stateLabel}
+                  </span>
+                </div>
+                <h2>{e.title || "Untitled examination"}</h2>
+                <div className="exam-console-details">
+                  <div>
+                    <span><Clock3 size={14} /> Starts</span>
+                    <strong>{time(e.starts_at)}</strong>
+                  </div>
+                  <div>
+                    <span><Clock3 size={14} /> Ends</span>
+                    <strong>{time(e.ends_at)}</strong>
+                  </div>
+                  <div>
+                    <span><Activity size={14} /> Duration</span>
+                    <strong>{Number(e.duration_minutes ?? 0)} minutes</strong>
+                  </div>
+                  <div>
+                    <span><CheckCircle2 size={14} /> Submissions</span>
+                    <strong>{submitted} students</strong>
+                  </div>
+                </div>
+                <div className="exam-console-progress">
+                  <div>
+                    <span>{closed ? "Submissions received" : "Check-in progress"}</span>
+                    <strong>{progressTotal} / {enrolled}{enrolled ? ` · ${progressPercent}%` : ""}</strong>
+                  </div>
+                  <div className="exam-console-progress-track" aria-label={`${progressTotal} of ${enrolled} students ${closed ? "submitted" : "checked in"}`}>
+                    <span style={{ width: `${progressPercent}%` }} />
+                  </div>
+                </div>
               </div>
-              <h2>{e.title}</h2>
-              <div className="exam-card-details">
-                <p>
-                  <Clock3 size={15} /> <strong>Starts</strong>{" "}
-                  {time(e.starts_at)}
-                </p>
-                <p>
-                  <Clock3 size={15} /> <strong>Ends</strong> {time(e.ends_at)}
-                </p>
-                <p>
-                  <Clock3 size={15} /> <strong>Duration</strong>{" "}
-                  {e.duration_minutes} minutes
-                </p>
-                <p>
-                  <CheckCircle2 size={15} /> <strong>Submissions</strong>{" "}
-                  {e.submitted ?? 0} students
-                </p>
-              </div>
-              <div className="exam-card-bottom">
-                <span>
-                  <Users size={16} /> {e.enrolled} assigned ·{" "}
-                  {e.checked_in ?? 0} checked in
-                </span>
-                <ArrowUpRight size={19} />
+              <div className="exam-console-card-footer">
+                <span><Users size={15} /> {enrolled} assigned · {checkedIn} checked in</span>
+                <span className="exam-console-open" aria-hidden="true"><ArrowUpRight size={17} /></span>
               </div>
             </Link>
-          ))}
-      </div>
-      {exams?.length === 0 && (
+          );})}
+        </section>
+      ) : examRows.length === 0 ? (
         <Empty
           title="Build your first examination"
           description="Start with a course and a classroom, then add questions from your question bank."
         />
+      ) : (
+        <Empty
+          title="No examinations match"
+          description="Try a different search or status filter to see more examinations."
+        />
       )}
-    </>
+      <section className="exam-console-cta">
+        <div>
+          <span className="exam-console-cta-icon"><Sparkles size={17} /></span>
+          <div>
+            <strong>Ready to prepare another assessment?</strong>
+            <p>Create an exam, add questions, and assign it to your course.</p>
+          </div>
+        </div>
+        <button type="button" onClick={() => setCreating(true)}>
+          Create examination <ArrowUpRight size={15} />
+        </button>
+      </section>
+    </div>
   );
 }
 
