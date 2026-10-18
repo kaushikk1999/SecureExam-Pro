@@ -203,7 +203,7 @@ test("student preflight, autosave, refresh recovery, submission and API authoriz
       duration: 60,
       policy: {
         camera: false,
-        microphone: false,
+        microphone: true,
         location: false,
         fullscreen: false,
         classroomCode: false,
@@ -242,10 +242,20 @@ test("student preflight, autosave, refresh recovery, submission and API authoriz
   await expect(
     page.getByRole("heading", { name: "Checks used for this exam" }),
   ).toBeVisible();
-  await expect(page.locator(".preflight-check-list li")).toHaveCount(14);
-  await page
-    .getByRole("button", { name: "Check camera, microphone & location" })
-    .click();
+  await expect(page.locator(".preflight-check-list li")).toHaveCount(7);
+  await expect(page.locator(".preflight-check-list")).not.toContainText(
+    /camera|classroom location/i,
+  );
+  await expect(page.locator(".preflight-check-list")).toContainText(
+    "Microphone sound level",
+  );
+  await expect(page.locator(".preflight-grid")).not.toContainText(
+    /Camera|required location/i,
+  );
+  await expect(page.locator(".preflight-grid")).toContainText(
+    "Microphone required",
+  );
+  await page.getByRole("button", { name: "Run enabled checks" }).click();
   await page
     .getByRole("checkbox", {
       name: "I confirm my name, student ID and email are correct.",
@@ -266,9 +276,7 @@ test("student preflight, autosave, refresh recovery, submission and API authoriz
   await page.getByRole("button", { name: "Question 1", exact: true }).click();
   page.on("dialog", (d) => d.accept());
   await page.reload();
-  await page
-    .getByRole("button", { name: "Check camera, microphone & location" })
-    .click();
+  await page.getByRole("button", { name: "Run enabled checks" }).click();
   await page
     .getByRole("checkbox", {
       name: "I confirm my name, student ID and email are correct.",
@@ -391,9 +399,7 @@ test("strict preflight with simulated devices, location checkpoint and fifth-war
   await expect(page.locator(".exam-risk-warning")).toContainText(
     "switching away from or hiding the exam tab/window",
   );
-  await page
-    .getByRole("button", { name: "Check camera, microphone & location" })
-    .click();
+  await page.getByRole("button", { name: "Run enabled checks" }).click();
   await expect(page.getByText(/Location accuracy: ±5 m/)).toBeVisible({
     timeout: 30000,
   });

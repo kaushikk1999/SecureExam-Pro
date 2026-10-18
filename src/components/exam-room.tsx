@@ -1451,13 +1451,15 @@ export default function ExamRoom({
         "Student identity",
         "Your name, student ID and account email are attached to your attempt.",
       ],
-      [
-        "Camera and movement signals",
-        p.camera
-          ? "Camera permission is required; coarse movement signals may be logged for instructor review."
-          : "Camera monitoring is not enabled.",
-      ],
-      ...(p.aiCameraMonitoring
+      ...(p.camera
+        ? [
+            [
+              "Camera and movement signals",
+              "Camera permission is required; coarse movement signals may be logged for instructor review.",
+            ],
+          ]
+        : []),
+      ...(p.aiCameraMonitoring && p.camera
         ? [
             [
               "Ollama camera review",
@@ -1465,64 +1467,84 @@ export default function ExamRoom({
             ],
           ]
         : []),
-      [
-        "Microphone sound level",
-        p.microphone
-          ? "Microphone permission is required; sustained sound levels may be logged. Audio is not recorded or transcribed."
-          : "Microphone monitoring is not enabled.",
-      ],
-      [
-        "Classroom location",
-        p.location
-          ? "Your device location is checked against the configured classroom radius."
-          : "Classroom location is not checked.",
-      ],
-      [
-        "Entire-screen sharing",
-        examScreenSharingRequired(p.screen, deviceClass)
-          ? "Required on laptops. Choose Entire screen in the browser prompt; sharing a tab or window does not pass."
-          : deviceClass === "tablet"
-            ? "Not required on tablets; screen sharing is unavailable in tablet typing mode."
-            : "Required on laptops only.",
-      ],
-      [
-        "Fullscreen",
-        p.fullscreen
-          ? deviceClass === "tablet"
-            ? "Fullscreen is requested when supported. It may close when the on-screen keyboard opens; split screen is blocked."
-            : "Fullscreen is required on this device."
-          : "Fullscreen is not required.",
-      ],
-      [
-        "Tab and window changes",
-        p.tabMonitoring
-          ? "Leaving or hiding the exam tab can create a security warning. The browser cannot block switching apps."
-          : "Tab and window changes are not monitored.",
-      ],
-      [
-        "Copy and paste",
-        !p.allowCopy || !p.allowPaste
-          ? `Copy is ${p.allowCopy ? "allowed" : "blocked"}; paste is ${p.allowPaste ? "allowed" : "blocked"}.`
-          : "Copying and pasting are allowed.",
-      ],
-      [
-        "Question navigation",
-        p.navigation
-          ? "You can move between questions."
-          : "You must answer questions in order; earlier questions cannot be reopened.",
-      ],
-      [
-        "Classroom code",
-        p.classroomCode
-          ? "A current classroom code is required before entry."
-          : "A classroom code is not required.",
-      ],
-      [
-        "Instructor approval",
-        p.teacherApproval
-          ? "Your instructor must approve your check-in before the exam starts."
-          : "Instructor approval is not required.",
-      ],
+      ...(p.microphone
+        ? [
+            [
+              "Microphone sound level",
+              "Microphone permission is required; sustained sound levels may be logged. Audio is not recorded or transcribed.",
+            ],
+          ]
+        : []),
+      ...(p.location
+        ? [
+            [
+              "Classroom location",
+              "Your device location is checked against the configured classroom radius.",
+            ],
+          ]
+        : []),
+      ...(p.screen
+        ? [
+            [
+              "Entire-screen sharing",
+              examScreenSharingRequired(p.screen, deviceClass)
+                ? "Required on laptops. Choose Entire screen in the browser prompt; sharing a tab or window does not pass."
+                : deviceClass === "tablet"
+                  ? "Not required on tablets; screen sharing is unavailable in tablet typing mode."
+                  : "Required on laptops only.",
+            ],
+          ]
+        : []),
+      ...(p.fullscreen
+        ? [
+            [
+              "Fullscreen",
+              deviceClass === "tablet"
+                ? "Fullscreen is requested when supported. It may close when the on-screen keyboard opens; split screen is blocked."
+                : "Fullscreen is required on this device.",
+            ],
+          ]
+        : []),
+      ...(p.tabMonitoring
+        ? [
+            [
+              "Tab and window changes",
+              "Leaving or hiding the exam tab can create a security warning. The browser cannot block switching apps.",
+            ],
+          ]
+        : []),
+      ...(!p.allowCopy || !p.allowPaste
+        ? [
+            [
+              "Copy and paste",
+              `Copy is ${p.allowCopy ? "allowed" : "blocked"}; paste is ${p.allowPaste ? "allowed" : "blocked"}.`,
+            ],
+          ]
+        : []),
+      ...(!p.navigation
+        ? [
+            [
+              "Question navigation",
+              "You must answer questions in order; earlier questions cannot be reopened.",
+            ],
+          ]
+        : []),
+      ...(p.classroomCode
+        ? [
+            [
+              "Classroom code",
+              "A current classroom code is required before entry.",
+            ],
+          ]
+        : []),
+      ...(p.teacherApproval
+        ? [
+            [
+              "Instructor approval",
+              "Your instructor must approve your check-in before the exam starts.",
+            ],
+          ]
+        : []),
       [
         "Answer and event records",
         `Answers, submission times and enabled security events are retained for ${p.retentionDays} days for authorized instructor review.`,
@@ -1544,7 +1566,7 @@ export default function ExamRoom({
       identitySaved &&
       identityConfirmed &&
       accepted &&
-      (!p.aiCameraMonitoring || aiCameraAccepted) &&
+      (!p.aiCameraMonitoring || !p.camera || aiCameraAccepted) &&
       (deviceClass !== "tablet" || !p.camera || cameraEvidenceAccepted) &&
       online &&
       permissionReady &&
@@ -1612,9 +1634,16 @@ export default function ExamRoom({
                 : deviceClass === "tablet" && p.screen
                   ? " Screen sharing is not used on tablets."
                   : " Screen sharing is required on laptops only."}{" "}
-            Camera movement and microphone sound signals can be mistaken; they
-            do not identify a person or prove misconduct. Your instructor must
-            review the evidence.
+            {(p.camera || p.microphone) && (
+              <>
+                {p.camera && p.microphone
+                  ? " Camera movement and microphone sound signals can be mistaken; they do not identify a person or prove misconduct."
+                  : p.camera
+                    ? " Camera movement signals can be mistaken and do not prove misconduct."
+                    : " Microphone sound signals can be mistaken and do not prove misconduct."}{" "}
+                Your instructor must review the evidence.
+              </>
+            )}
           </p>
         </section>
         <section
@@ -1729,19 +1758,22 @@ export default function ExamRoom({
                 )
                 .map(([k]) => k)
                 .join(", ")}
-              . Device events, location readings, answers and server timestamps
-              are stored for authorized instructor review under a{" "}
-              {p.retentionDays}-day retention policy. Raw video and microphone
-              recordings are not uploaded. On tablets, a single camera still may
-              be captured when a monitored activity event occurs. If Ollama
-              reports that your face is not visible, a timestamped camera still
-              is attached to that warning and archived in Google Drive when
-              Drive storage is configured. Browser observations can be
-              incomplete or inaccurate; your instructor reviews the evidence.
-              Sustained microphone sound levels and coarse frame movement are
-              checked in this browser. Sound levels cannot identify speech or
-              conversation. No audio or transcript is sent to AI.{" "}
-              {p.aiCameraMonitoring
+              . Device events, {p.location ? "location readings, " : ""}
+              answers and server timestamps are stored for authorized instructor
+              review under a {p.retentionDays}-day retention policy.{" "}
+              {p.camera || p.microphone
+                ? "Raw video and microphone recordings are not uploaded. "
+                : "Camera and microphone access are not requested for this exam. "}
+              {p.camera
+                ? "On tablets, a camera still may be captured when a monitored activity event occurs. If Ollama reports that your face is not visible, a timestamped camera still is attached to that warning and archived in Google Drive when Drive storage is configured. Camera movement is checked locally. "
+                : "Camera monitoring and camera evidence capture are off. "}
+              {p.microphone
+                ? "Sustained microphone sound levels are checked in this browser; sound levels cannot identify speech or conversation. No audio or transcript is sent to AI. "
+                : "Microphone monitoring is off. "}
+              {p.camera || p.microphone
+                ? "Browser observations can be incomplete or inaccurate; your instructor reviews the evidence. "
+                : ""}
+              {p.aiCameraMonitoring && p.camera
                 ? "Two reduced camera samples are periodically sent to Ollama for the optional camera review described above; samples are not stored by this app."
                 : "No camera images are sent to AI."}{" "}
               {deviceClass === "tablet"
@@ -1762,21 +1794,13 @@ export default function ExamRoom({
           <div className="preflight-grid">
             {[
               [Wifi, "Network connection", online],
-              [
-                Camera,
-                p.camera ? "Camera required" : "Camera optional",
-                !p.camera || checks.camera,
-              ],
-              [
-                Mic,
-                p.microphone ? "Microphone required" : "Microphone optional",
-                !p.microphone || checks.microphone,
-              ],
-              [
-                MapPin,
-                p.location ? "Location required" : "Location optional",
-                !p.location || locationGood,
-              ],
+              ...(p.camera ? [[Camera, "Camera required", checks.camera]] : []),
+              ...(p.microphone
+                ? [[Mic, "Microphone required", checks.microphone]]
+                : []),
+              ...(p.location
+                ? [[MapPin, "Location required", locationGood]]
+                : []),
               ...(p.screen
                 ? [
                     [
@@ -1811,22 +1835,26 @@ export default function ExamRoom({
                     ],
                   ]
                 : []),
-              [
-                Maximize2,
-                deviceClass === "tablet"
-                  ? "Browser fullscreen support"
-                  : "Fullscreen capability",
-                deviceClass === "tablet"
-                  ? checks.fullscreen
-                  : examFullscreenSatisfied(
-                      p.fullscreen,
-                      deviceClass,
-                      checks.fullscreen,
-                    ),
-                deviceClass === "tablet" && p.fullscreen && !checks.fullscreen
-                  ? "Not supported by this browser"
-                  : undefined,
-              ],
+              ...(p.fullscreen
+                ? [
+                    [
+                      Maximize2,
+                      deviceClass === "tablet"
+                        ? "Browser fullscreen support"
+                        : "Fullscreen capability",
+                      deviceClass === "tablet"
+                        ? checks.fullscreen
+                        : examFullscreenSatisfied(
+                            p.fullscreen,
+                            deviceClass,
+                            checks.fullscreen,
+                          ),
+                      deviceClass === "tablet" && !checks.fullscreen
+                        ? "Not supported by this browser"
+                        : undefined,
+                    ],
+                  ]
+                : []),
               [
                 ShieldCheck,
                 deviceClass === "phone"
@@ -1891,9 +1919,7 @@ export default function ExamRoom({
               busy || (deviceClass !== "laptop" && deviceClass !== "tablet")
             }
           >
-            {busy
-              ? "Checking permissions…"
-              : "Check camera, microphone & location"}
+            {busy ? "Checking permissions…" : "Run enabled checks"}
           </button>
           {permissionReady && p.camera && (
             <video
@@ -1957,7 +1983,7 @@ export default function ExamRoom({
               screen.
             </label>
           )}
-          {p.aiCameraMonitoring && (
+          {p.aiCameraMonitoring && p.camera && (
             <label className="check consent">
               <input
                 type="checkbox"
