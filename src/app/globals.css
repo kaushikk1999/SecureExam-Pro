@@ -3869,6 +3869,13 @@ fieldset {
   border-radius: 18px;
   background: linear-gradient(160deg, rgb(7 29 55 / 97%), rgb(0 19 39 / 98%));
 }
+.exam-console-shell .exam-console .exam-console-card > div:first-child {
+  display: block;
+  width: 100%;
+}
+.exam-console-shell .exam-console-card-main {
+  width: 100%;
+}
 .exam-console-shell .exam-console .exam-console-card-live {
   border-color: rgb(0 210 231 / 40%);
   box-shadow: 0 12px 32px rgb(0 15 32 / 42%), inset 0 0 28px rgb(0 210 231 / 3%);
