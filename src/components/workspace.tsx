@@ -212,9 +212,27 @@ export default function Workspace({
   }, [settings?.timezone]);
   const [open, setOpen] = useState(false);
   const page = view[0] ?? "";
+  const isExamList = user.role !== "STUDENT" && page === "exams" && view.length === 1;
   const useDarkConsole =
-    user.role !== "STUDENT" &&
-    (page === "" || (page === "exams" && view.length === 1));
+    user.role !== "STUDENT" && (page === "" || isExamList);
+  const [consoleClock, setConsoleClock] = useState("");
+  useEffect(() => {
+    if (!isExamList) return;
+    const updateClock = () => {
+      setConsoleClock(
+        new Intl.DateTimeFormat("en-GB", {
+          timeZone: settings?.timezone ?? "Asia/Bangkok",
+          hour: "2-digit",
+          minute: "2-digit",
+          second: "2-digit",
+          hour12: false,
+        }).format(new Date()),
+      );
+    };
+    updateClock();
+    const timer = window.setInterval(updateClock, 1000);
+    return () => window.clearInterval(timer);
+  }, [isExamList, settings?.timezone]);
   useEffect(() => {
     if (user.role === "STUDENT" || page !== "audit") return;
     let active = true;
@@ -237,7 +255,11 @@ export default function Workspace({
   const unreadWarnings = Number(notifications?.unreadWarnings ?? 0);
   return (
     <div
-      className={useDarkConsole ? "app-shell dashboard-shell" : "app-shell"}
+      className={
+        useDarkConsole
+          ? `app-shell dashboard-shell${isExamList ? " exam-console-shell" : ""}`
+          : "app-shell"
+      }
       style={
         { "--accent": settings?.accent ?? "#2563eb" } as React.CSSProperties
       }
@@ -346,7 +368,18 @@ export default function Workspace({
               {nav.find((n) => n[0] === page)?.[1] ?? "Examination"}
             </strong>
           </span>
+          {isExamList && (
+            <span className="exam-topbar-node">
+              <i aria-hidden="true" /> Bangkok University <b>·</b> Exam workspace
+            </span>
+          )}
           <div>
+            {isExamList && (
+              <span className="exam-clock-chip">
+                <span>{settings?.timezone ?? "Asia/Bangkok"}</span>
+                <strong>{consoleClock || "--:--:--"}</strong>
+              </span>
+            )}
             <span className="small muted">
               {settings?.timezone ?? "Asia/Bangkok"}
             </span>
@@ -514,9 +547,23 @@ function ExamList() {
     (total: number, exam: any) => total + Number(exam.enrolled ?? 0),
     0,
   );
+  const activeExams = examRows.filter((exam: any) => {
+    const status = String(exam.status ?? "").toUpperCase();
+    const startsAt = Date.parse(exam.starts_at);
+    const endsAt = Date.parse(exam.ends_at);
+    return (
+      status === "LIVE" ||
+      (status !== "DRAFT" &&
+        !["CLOSED", "ARCHIVED", "COMPLETED"].includes(status) &&
+        Number.isFinite(startsAt) &&
+        Number.isFinite(endsAt) &&
+        startsAt <= (currentTime ?? 0) &&
+        endsAt > (currentTime ?? 0))
+    );
+  }).length;
   const filters = [
     ["all", "All status"],
-    ["active", "Published / active"],
+    ["active", "Active / in-progress"],
     ["draft", "Draft"],
     ["closed", "Closed / archived"],
   ] as const;
@@ -529,9 +576,9 @@ function ExamList() {
       >
         <div className="exam-header-actions">
           <div className="exam-telemetry-chip" aria-label={`${examRows.length} examinations and ${assignedSeats} exam assignments`}>
-            <div><span>EXAMINATIONS</span><strong>{examRows.length}</strong></div>
+            <div><span>TOTAL ASSIGNED</span><strong>{assignedSeats}</strong></div>
             <i aria-hidden="true" />
-            <div><span>EXAM ASSIGNMENTS</span><strong>{assignedSeats}</strong></div>
+            <div><span>ACTIVE EXAMS</span><strong>{activeExams}</strong></div>
           </div>
           <button
             className="primary exam-create-button"
@@ -561,7 +608,7 @@ function ExamList() {
           <Search size={17} aria-hidden="true" />
           <input
             aria-label="Search examinations"
-            placeholder="Find an examination by course, title, or status…"
+            placeholder="Find an examination by code, title, or course…"
             value={search}
             onChange={(e) => setSearch(e.target.value)}
           />
@@ -581,7 +628,6 @@ function ExamList() {
           ))}
         </div>
       </section>
-      {error && <ErrorBox message={error} />}
       {!exams ? (
         <div className="exam-loading"><Loading /></div>
       ) : filteredExams.length > 0 ? (
@@ -680,8 +726,8 @@ function ExamList() {
         <div>
           <span className="exam-console-cta-icon"><Sparkles size={17} /></span>
           <div>
-            <strong>Ready to prepare another assessment?</strong>
-            <p>Create an exam, add questions, and assign it to your course.</p>
+            <strong>Ready to prepare your next assessment?</strong>
+            <p>Create an examination, add questions, and assign it to a course.</p>
           </div>
         </div>
         <button type="button" onClick={() => setCreating(true)}>
