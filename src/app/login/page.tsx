@@ -1,5 +1,5 @@
 "use client";
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { signIn, signOut, getProviders } from "next-auth/react";
 import {
   ShieldCheck,
@@ -7,30 +7,33 @@ import {
   LockKeyhole,
   GraduationCap,
   ClipboardList,
+  Eye,
+  MonitorCheck,
+  KeyRound,
+  School,
+  CircleCheck,
 } from "lucide-react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import {
-  isGoogleOnlyStudentEmail,
-  matchesLoginAudience,
-  safeStudentReturnPath,
-} from "@/lib/auth-role";
+import { matchesLoginAudience, safeStudentReturnPath } from "@/lib/auth-role";
+import styles from "./login-page.module.css";
 export default function Login() {
   const router = useRouter();
   const [error, setError] = useState(""),
     [busy, setBusy] = useState(false);
   const [audience, setAudience] = useState<"student" | "teacher">("student");
-  const [loginEmail, setLoginEmail] = useState("");
+  const storyRef = useRef<HTMLElement>(null);
+  const rippleCanvasRef = useRef<HTMLCanvasElement>(null);
 
-  const [sso, setSso] = useState(false);
   const [google, setGoogle] = useState(false);
+  const [providersLoaded, setProvidersLoaded] = useState(false);
   useEffect(() => {
     void getProviders()
       .then((p) => {
-        setSso(Boolean(p?.university));
         setGoogle(Boolean(p?.google));
+        setProvidersLoaded(true);
       })
-      .catch(() => {});
+      .catch(() => setProvidersLoaded(true));
     const params = new URLSearchParams(window.location.search);
     const requestedRole = params.get("role");
     const returnTo =
@@ -75,31 +78,96 @@ export default function Login() {
       .then(setBrand)
       .catch(() => {});
   }, []);
-  async function completeSignIn(role: "student" | "teacher") {
-    const response = await fetch("/api/auth/session", { cache: "no-store" });
-    const session = await response.json();
-    const actualRole = session?.user?.role;
-    if (!actualRole) {
-      setError("Sign-in completed, but we could not verify your account role.");
-      return;
-    }
-    const allowed = matchesLoginAudience(actualRole, role);
-    if (!allowed) {
-      await signOut({ redirect: false });
-      setError(
-        role === "teacher"
-          ? "This account is not set up for teacher access. Choose Student sign in or contact your administrator."
-          : "This account is set up for teacher access. Choose Teacher sign in instead.",
-      );
-      return;
-    }
-    const params = new URLSearchParams(window.location.search);
-    const returnTo =
-      role === "student"
-        ? (safeStudentReturnPath(params.get("next")) ?? "/workspace")
-        : "/workspace";
-    router.replace(returnTo);
-  }
+  useEffect(() => {
+    const story = storyRef.current;
+    const canvas = rippleCanvasRef.current;
+    const context = canvas?.getContext("2d");
+    if (!story || !canvas || !context) return;
+
+    const reduceMotion = window.matchMedia("(prefers-reduced-motion: reduce)");
+    if (reduceMotion.matches) return;
+
+    type Ripple = { x: number; y: number; startedAt: number };
+    const ripples: Ripple[] = [];
+    let animationFrame = 0;
+    let lastRippleAt = 0;
+    let running = false;
+
+    const resizeCanvas = () => {
+      const bounds = story.getBoundingClientRect();
+      const pixelRatio = Math.min(window.devicePixelRatio || 1, 2);
+      canvas.width = Math.round(bounds.width * pixelRatio);
+      canvas.height = Math.round(bounds.height * pixelRatio);
+      context.setTransform(pixelRatio, 0, 0, pixelRatio, 0, 0);
+    };
+
+    const render = (now: number) => {
+      const bounds = story.getBoundingClientRect();
+      context.clearRect(0, 0, bounds.width, bounds.height);
+      const activeRipples: Ripple[] = [];
+
+      for (const ripple of ripples) {
+        const progress = (now - ripple.startedAt) / 1550;
+        if (progress >= 1) continue;
+        activeRipples.push(ripple);
+        const fade = (1 - progress) ** 1.4;
+
+        for (let ring = 0; ring < 3; ring += 1) {
+          const phase = progress - ring * 0.13;
+          if (phase <= 0) continue;
+          const radius = 220 * phase;
+          context.beginPath();
+          context.arc(ripple.x, ripple.y, radius, 0, Math.PI * 2);
+          context.strokeStyle = `rgba(0, 219, 233, ${fade * (0.68 - ring * 0.12)})`;
+          context.lineWidth = Math.max(1, 4.2 * (1 - phase));
+          context.shadowColor = "rgba(0, 219, 233, 0.9)";
+          context.shadowBlur = 34 * fade;
+          context.stroke();
+        }
+      }
+
+      ripples.splice(0, ripples.length, ...activeRipples);
+      context.shadowBlur = 0;
+      if (ripples.length > 0) {
+        animationFrame = window.requestAnimationFrame(render);
+      } else {
+        running = false;
+        context.clearRect(0, 0, bounds.width, bounds.height);
+      }
+    };
+
+    const startAnimation = () => {
+      if (running) return;
+      running = true;
+      animationFrame = window.requestAnimationFrame(render);
+    };
+
+    const onPointerMove = (event: PointerEvent) => {
+      if (event.pointerType === "touch") return;
+      const now = performance.now();
+      if (now - lastRippleAt < 95) return;
+      const bounds = story.getBoundingClientRect();
+      ripples.push({
+        x: event.clientX - bounds.left,
+        y: event.clientY - bounds.top,
+        startedAt: now,
+      });
+      if (ripples.length > 12) ripples.shift();
+      lastRippleAt = now;
+      startAnimation();
+    };
+
+    resizeCanvas();
+    const resizeObserver = new ResizeObserver(resizeCanvas);
+    resizeObserver.observe(story);
+    story.addEventListener("pointermove", onPointerMove, { passive: true });
+
+    return () => {
+      story.removeEventListener("pointermove", onPointerMove);
+      resizeObserver.disconnect();
+      window.cancelAnimationFrame(animationFrame);
+    };
+  }, []);
   function authCallbackUrl(role: "student" | "teacher") {
     const next =
       role === "student"
@@ -110,207 +178,201 @@ export default function Login() {
     return `/login?role=${role}${next ? `&next=${encodeURIComponent(next)}` : ""}`;
   }
   return (
-    <main className="login-page">
-      <section className="login-story">
-        <Link href="/" className="brand">
-          <ShieldCheck /> {brand.brand}
-        </Link>
-        <div>
-          <span className="eyebrow">{brand.institution}</span>
-          <h1>
-            A clear mind.
-            <br />A fair start.
-          </h1>
-          <p>
-            Your teaching. Your students.
-            <br />
-            One trusted examination workspace.
-          </p>
-        </div>
-        <p className="small">
-          Privacy-conscious monitoring · Instructor-led decisions
-        </p>
-      </section>
-      <section className="login-form">
-        <div>
-          <div className="login-card-heading">
-            <span className="brand-icon">
-              <LockKeyhole />
+    <main className={styles.page}>
+      <section
+        ref={storyRef}
+        className={styles.story}
+        aria-label="SecureExam Pro"
+      >
+        <div className={styles.ambientGrid} aria-hidden="true" />
+        <div className={styles.glowOne} aria-hidden="true" />
+        <div className={styles.glowTwo} aria-hidden="true" />
+        <canvas
+          ref={rippleCanvasRef}
+          className={styles.rippleCanvas}
+          aria-hidden="true"
+        />
+        <div className={styles.storyTop}>
+          <Link href="/" className={styles.brand}>
+            <span className={styles.brandIcon}>
+              <ShieldCheck size={22} />
             </span>
-            <span className="login-kicker">SECURE UNIVERSITY ACCESS</span>
-            <h2>
+            <span>
+              {brand.brand.split(" ").slice(0, -1).join(" ")}{" "}
+              <b>{brand.brand.split(" ").at(-1)}</b>
+            </span>
+          </Link>
+          <div className={styles.institution}>
+            <School size={15} />
+            <span>{brand.institution} · Evaluation node</span>
+            <i aria-hidden="true" />
+          </div>
+          <div className={styles.hero}>
+            <p className={styles.kicker}>A focused space for fair assessment</p>
+            <h1>
+              A clear mind.
+              <br />
+              <span>A fair start.</span>
+            </h1>
+            <p className={styles.heroDescription}>
+              Your teaching. Your students. One trusted institutional examination workspace.
+            </p>
+          </div>
+        </div>
+        <div className={styles.featureDeck}>
+          <div className={styles.integrityCard}>
+            <span className={styles.integrityIcon}>
+              <LockKeyhole size={17} />
+            </span>
+            <div>
+              <small>ASSESSMENT APPROACH</small>
+              <strong>Instructor-led review</strong>
+              <span>Monitoring signals are visible and reviewed with context.</span>
+            </div>
+            <CircleCheck className={styles.integrityCheck} size={20} />
+          </div>
+          <div className={styles.features}>
+            <article>
+              <span>
+                <Eye size={17} />
+              </span>
+              <div>
+                <strong>Contextual signals</strong>
+                <p>Signals support instructor review.</p>
+              </div>
+            </article>
+            <article>
+              <span>
+                <MonitorCheck size={17} />
+              </span>
+              <div>
+                <strong>Course-linked exams</strong>
+                <p>Keep courses and assessments together.</p>
+              </div>
+            </article>
+            <article>
+              <span>
+                <KeyRound size={17} />
+              </span>
+              <div>
+                <strong>University sign-in</strong>
+                <p>Use the account assigned to you.</p>
+              </div>
+            </article>
+          </div>
+        </div>
+        <footer className={styles.storyFooter}>
+          <span>Privacy-conscious monitoring · Instructor-led decisions</span>
+          <span>SECURE ASSESSMENT WORKSPACE</span>
+        </footer>
+      </section>
+
+      <section className={styles.auth} aria-labelledby="auth-title">
+        <div className={styles.authContent}>
+          <div className={styles.authHeader}>
+            <span className={styles.authIcon}>
+              <LockKeyhole size={23} />
+            </span>
+            <span className={styles.authKicker}>SECURE UNIVERSITY ACCESS</span>
+            <h2 id="auth-title">
               {audience === "student" ? "Student sign in" : "Teacher sign in"}
             </h2>
+            <p>
+              {audience === "student"
+                ? "Access your exams, practice, and learning progress."
+                : "Access your courses, exams, reports, and instructor tools."}
+            </p>
           </div>
-          <p className="muted">
-            {audience === "student"
-              ? "Access your exams, practice, and learning progress."
-              : "Access your courses, exams, reports, and instructor tools."}
-          </p>
+
           <div
-            className="login-role-picker"
+            className={styles.rolePicker}
             role="group"
             aria-label="Choose sign-in type"
           >
             <button
               type="button"
-              className={audience === "student" ? "selected" : ""}
+              className={audience === "student" ? styles.roleSelected : ""}
               aria-pressed={audience === "student"}
               onClick={() => {
                 setAudience("student");
                 setError("");
               }}
             >
-              <span className="login-role-title">
-                <GraduationCap size={19} />
+              <span className={styles.roleTitle}>
+                <GraduationCap size={18} />
                 <strong>Student</strong>
               </span>
               <span>Take exams and view results</span>
             </button>
             <button
               type="button"
-              className={audience === "teacher" ? "selected" : ""}
+              className={audience === "teacher" ? styles.roleSelected : ""}
               aria-pressed={audience === "teacher"}
               onClick={() => {
                 setAudience("teacher");
                 setError("");
               }}
             >
-              <span className="login-role-title">
+              <span className={styles.roleTitle}>
                 <ClipboardList size={18} />
                 <strong>Teacher</strong>
               </span>
               <span>Manage classes and exams</span>
             </button>
           </div>
-          {google && (
+
+          <div className={styles.providers}>
             <button
-              className="primary large login-provider google-provider"
-              onClick={() =>
-                void signIn("google", {
-                  callbackUrl: authCallbackUrl(audience),
-                })
-              }
-            >
-              <span className="google-mark" aria-hidden="true">
-                G
-              </span>
-              <span>Continue with Google</span>
-              <span className="provider-audience">{audience}</span>
-            </button>
-          )}
-          {audience === "student" && google && (
-            <p className="small muted" role="note">
-              For kaushikka99@gmail.com, use Continue with Google. The email
-              and password form is only for accounts with a SecureExam
-              password.
-            </p>
-          )}
-          {sso && (
-            <button
-              className="primary large login-provider login-sso-button"
-              onClick={() =>
-                void signIn("university", {
-                  callbackUrl: authCallbackUrl(audience),
-                })
-              }
-            >
-              <ShieldCheck size={19} />
-              <span>Continue with university SSO</span>
-              <span className="provider-audience">{audience}</span>
-            </button>
-          )}
-          {(google || sso) && (
-            <div className="login-divider" aria-hidden="true">
-              <span>or use your university email</span>
-            </div>
-          )}
-          <form
-            onSubmit={async (e) => {
-              e.preventDefault();
-              setBusy(true);
-              setError("");
-              const f = new FormData(e.currentTarget);
-              try {
-                if (
-                  audience === "student" &&
-                  isGoogleOnlyStudentEmail(f.get("email"))
-                ) {
+              className={styles.googleButton}
+              disabled={!google || busy}
+              onClick={async () => {
+                setBusy(true);
+                setError("");
+                try {
                   await signIn(
                     "google",
-                    { callbackUrl: authCallbackUrl("student") },
+                    { callbackUrl: authCallbackUrl(audience) },
                     { prompt: "select_account" },
                   );
-                  return;
+                } catch {
+                  setError("Google sign-in could not start. Please retry.");
+                  setBusy(false);
                 }
-                const result = await signIn("credentials", {
-                  email: f.get("email"),
-                  password: f.get("password"),
-                  otp: f.get("otp"),
-                  redirect: false,
-                });
-                if (result?.error)
-                  setError(
-                    "Sign-in failed. Check your credentials and authenticator code, or contact your instructor.",
-                  );
-                else await completeSignIn(audience);
-              } catch {
-                setError("Unable to connect. Please retry.");
-              } finally {
-                setBusy(false);
-              }
-            }}
-          >
-            <label>
-              University email
-              <input
-                required
-                autoComplete="username"
-                name="email"
-                type="email"
-                value={loginEmail}
-                onChange={(event) => setLoginEmail(event.target.value)}
-                placeholder="you@university.ac.th"
-              />
-            </label>
-            <label>
-              Password
-              <input
-                required={
-                  audience !== "student" ||
-                  !isGoogleOnlyStudentEmail(loginEmail)
-                }
-                autoComplete="current-password"
-                name="password"
-                type="password"
-              />
-            </label>
-            <label>
-              Authenticator code <span className="muted">if enabled</span>
-              <input
-                autoComplete="one-time-code"
-                name="otp"
-                inputMode="numeric"
-                maxLength={6}
-              />
-            </label>
+              }}
+            >
+              <span className={styles.googleMark} aria-hidden="true">
+                G
+              </span>
+              <span>{busy ? "Opening Google…" : "Continue with Google"}</span>
+              <ArrowRight size={16} />
+            </button>
             {error && (
-              <p role="alert" className="error">
+              <p role="alert" className={styles.error}>
                 {error}
               </p>
             )}
-            <button className="primary large" disabled={busy}>
-              {busy ? "Signing in…" : `Sign in as ${audience}`}{" "}
-              <ArrowRight size={17} />
-            </button>
-          </form>
-          <p className="small muted">
+            {providersLoaded && !google && (
+              <p className={styles.providerNotice} role="status">
+                Google sign-in is not configured in this environment.
+              </p>
+            )}
+          </div>
+
+          <p className={styles.guidance}>
             {audience === "student"
-              ? "Use the university account assigned to you."
-              : "Teacher access is provisioned by the university administrator."}
+              ? "Continue with your assigned university Google account."
+              : "Teacher access uses your university Google account."}
           </p>
-          <Link href="/">← Back to SecureExam</Link>
+          <Link className={styles.backLink} href="/">
+            ← Back to SecureExam
+          </Link>
         </div>
+        <footer className={styles.authFooter}>
+          <span>
+            <i aria-hidden="true" /> Account sign-in
+          </span>
+          <span>Secure connection</span>
+        </footer>
       </section>
     </main>
   );
