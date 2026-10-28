@@ -410,6 +410,111 @@
     margin: 16mm;
   }
 }
+
+/* Student growth pages share the dark workspace palette used by the exam UI. */
+:global(.dashboard-shell) .root {
+  color: #dce8f8;
+}
+:global(.dashboard-shell) .intro {
+  border-bottom-color: rgb(48 88 130 / 52%);
+}
+:global(.dashboard-shell) .intro h1,
+:global(.dashboard-shell) .card h2,
+:global(.dashboard-shell) .card h3,
+:global(.dashboard-shell) .card h4,
+:global(.dashboard-shell) .card strong {
+  color: #e8f1ff;
+}
+:global(.dashboard-shell) .intro p,
+:global(.dashboard-shell) .card p,
+:global(.dashboard-shell) .card label,
+:global(.dashboard-shell) .metrics > div,
+:global(.dashboard-shell) .note,
+:global(.dashboard-shell) .options legend {
+  color: #9aafc6;
+}
+:global(.dashboard-shell) .icon {
+  color: #56e3f5;
+  background: #0b3456;
+}
+:global(.dashboard-shell) .card {
+  border-color: rgb(48 88 130 / 62%);
+  color: #dce8f8;
+  background: #071c32;
+  box-shadow: 0 12px 32px rgb(0 0 0 / 18%);
+}
+:global(.dashboard-shell) .row,
+:global(.dashboard-shell) .submissionExam,
+:global(.dashboard-shell) .submissionRow,
+:global(.dashboard-shell) .submissionDetail,
+:global(.dashboard-shell) .submissionAnswer {
+  border-color: rgb(48 88 130 / 48%);
+}
+:global(.dashboard-shell) .row small,
+:global(.dashboard-shell) .card td small,
+:global(.dashboard-shell) .submissionStudent small,
+:global(.dashboard-shell) .submissionMeta small,
+:global(.dashboard-shell) .submissionMeta span,
+:global(.dashboard-shell) .batchExportHint,
+:global(.dashboard-shell) .printHint {
+  color: #91a8c2;
+}
+:global(.dashboard-shell) .number {
+  color: #e8f1ff;
+}
+:global(.dashboard-shell) .options label {
+  border-color: rgb(63 101 142 / 58%);
+  color: #dce8f8;
+  background: #0a213a;
+}
+:global(.dashboard-shell) .result,
+:global(.dashboard-shell) .success {
+  border-color: rgb(16 185 129 / 36%);
+  color: #a7f3d0;
+  background: rgb(6 78 59 / 32%);
+}
+:global(.dashboard-shell) .note {
+  border-left-color: #168ed3;
+}
+:global(.dashboard-shell) .card input,
+:global(.dashboard-shell) .card select,
+:global(.dashboard-shell) .card textarea {
+  border-color: rgb(63 101 142 / 70%);
+  color: #e3edfb;
+  background: #03162a;
+  color-scheme: dark;
+}
+:global(.dashboard-shell) .card input::placeholder,
+:global(.dashboard-shell) .card textarea::placeholder {
+  color: #718aa5;
+}
+:global(.dashboard-shell) .card input:focus,
+:global(.dashboard-shell) .card select:focus,
+:global(.dashboard-shell) .card textarea:focus {
+  border-color: #168ed3;
+  outline-color: rgb(0 190 228 / 22%);
+}
+:global(.dashboard-shell) .tag {
+  border-color: rgb(0 196 230 / 35%);
+  color: #75e7f5;
+  background: rgb(11 52 86 / 72%);
+}
+:global(.dashboard-shell) .details,
+:global(.dashboard-shell) .case,
+:global(.dashboard-shell) .topic,
+:global(.dashboard-shell) .timeline {
+  border-color: rgb(48 88 130 / 48%);
+  color: #dce8f8;
+}
+:global(.dashboard-shell) .card pre,
+:global(.dashboard-shell) .submissionAnswer pre {
+  border: 1px solid rgb(48 88 130 / 52%);
+  color: #dce8f8;
+  background: #03162a;
+}
+:global(.dashboard-shell) .batchExportError {
+  color: #ffb6ae;
+}
 .case {
   padding: 20px 0;
   border-top: 1px solid #e1e8ef;
