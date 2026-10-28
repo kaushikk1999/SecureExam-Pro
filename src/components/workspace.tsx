@@ -213,8 +213,6 @@ export default function Workspace({
   const [open, setOpen] = useState(false);
   const page = view[0] ?? "";
   const isExamList = user.role !== "STUDENT" && page === "exams" && view.length === 1;
-  const useDarkConsole =
-    user.role !== "STUDENT" && (page === "" || isExamList);
   const [consoleClock, setConsoleClock] = useState("");
   useEffect(() => {
     if (!isExamList) return;
@@ -255,11 +253,7 @@ export default function Workspace({
   const unreadWarnings = Number(notifications?.unreadWarnings ?? 0);
   return (
     <div
-      className={
-        useDarkConsole
-          ? `app-shell dashboard-shell${isExamList ? " exam-console-shell" : ""}`
-          : "app-shell"
-      }
+      className={`app-shell dashboard-shell${isExamList ? " exam-console-shell" : ""}`}
       style={
         { "--accent": settings?.accent ?? "#2563eb" } as React.CSSProperties
       }

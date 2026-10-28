@@ -3940,3 +3940,527 @@ fieldset {
     animation: none;
   }
 }
+
+/* Shared night theme for every signed-in workspace and student exam screen. */
+.dashboard-shell,
+.exam-shell,
+.preflight {
+  --ink: #e2ecfb;
+  --muted: #9aafc6;
+  --line: rgb(63 101 142 / 42%);
+  --surface: #061a2e;
+  --navy: #001428;
+  min-height: 100vh;
+  color: #dce8f8;
+  background: #000f20;
+  color-scheme: dark;
+}
+.dashboard-shell .main-content {
+  background-image:
+    radial-gradient(ellipse at 76% 0%, rgb(0 91 156 / 12%), transparent 46%),
+    linear-gradient(rgb(22 72 119 / 8%) 1px, transparent 1px),
+    linear-gradient(90deg, rgb(22 72 119 / 8%) 1px, transparent 1px);
+  background-color: #000f20;
+  background-size: auto, 42px 42px, 42px 42px;
+}
+.dashboard-shell .page-heading h1,
+.dashboard-shell .page-heading h2,
+.dashboard-shell .page-heading h3,
+.dashboard-shell .panel h1,
+.dashboard-shell .panel h2,
+.dashboard-shell .panel h3,
+.dashboard-shell .panel h4,
+.dashboard-shell .stat h3,
+.dashboard-shell .exam-row strong,
+.dashboard-shell .exam-card h2,
+.dashboard-shell .student-exam-alert h2,
+.dashboard-shell .room-card h2 {
+  color: #eaf2ff;
+}
+.dashboard-shell .page-heading p,
+.dashboard-shell .panel-heading p,
+.dashboard-shell .muted,
+.dashboard-shell .stat small,
+.dashboard-shell .exam-row small,
+.dashboard-shell .exam-card p,
+.dashboard-shell .exam-card-bottom,
+.dashboard-shell .empty,
+.dashboard-shell .empty p,
+.dashboard-shell .activity-list p,
+.dashboard-shell .activity-list small,
+.dashboard-shell .room-card p,
+.dashboard-shell .question-meta,
+.dashboard-shell .watermark {
+  color: #94a9c1;
+}
+.dashboard-shell .panel,
+.dashboard-shell .stat,
+.dashboard-shell .exam-card,
+.dashboard-shell .student-exam-alert,
+.dashboard-shell .audit-student,
+.dashboard-shell .ai-question-card,
+.dashboard-shell .room-card,
+.dashboard-shell .course-roster,
+.dashboard-shell .student-request-row,
+.dashboard-shell .answer-option {
+  border-color: rgb(48 88 130 / 62%);
+  color: #dce8f8;
+  background-color: #071c32;
+  box-shadow: 0 12px 32px rgb(0 0 0 / 18%);
+}
+.dashboard-shell .panel-heading,
+.dashboard-shell .exam-row,
+.dashboard-shell .timeline > div,
+.dashboard-shell .integration,
+.dashboard-shell .student-request-row,
+.dashboard-shell .question-preview {
+  border-color: rgb(48 88 130 / 48%);
+}
+.dashboard-shell .exam-icon,
+.dashboard-shell .stat-icon,
+.dashboard-shell .student-exam-alert-icon,
+.dashboard-shell .course-pill,
+.dashboard-shell .room-code,
+.dashboard-shell .answer-value,
+.dashboard-shell .rich-editor,
+.dashboard-shell .rich-editor .markdown,
+.dashboard-shell .upload,
+.dashboard-shell .course-roster-empty {
+  border-color: rgb(48 88 130 / 55%);
+  color: #a9c5e3;
+  background-color: #0b2743;
+}
+.dashboard-shell .course-pill-button.selected,
+.dashboard-shell .answer-option:has(input:checked) {
+  border-color: #2585da;
+  color: #e6f3ff;
+  background: #0b3456;
+  box-shadow: 0 0 0 2px rgb(0 181 226 / 10%);
+}
+.dashboard-shell .exam-card-ready {
+  border-color: rgb(0 207 231 / 74%);
+  box-shadow: 0 0 24px rgb(0 207 231 / 9%);
+}
+.dashboard-shell .exam-card-upcoming {
+  background: linear-gradient(155deg, #092441, #061a2e);
+}
+.dashboard-shell .exam-row,
+.dashboard-shell .exam-card,
+.dashboard-shell .live-audit-student,
+.dashboard-shell .audit-student,
+.dashboard-shell .room-card,
+.dashboard-shell .question-preview {
+  color: #dce8f8;
+}
+.dashboard-shell .status {
+  border: 1px solid rgb(117 145 176 / 28%);
+  color: #afc0d3;
+  background: #112943;
+}
+.dashboard-shell .status.good {
+  border-color: rgb(16 185 129 / 28%);
+  color: #6ee7b7;
+  background: rgb(6 78 59 / 36%);
+}
+.dashboard-shell .status.bad {
+  border-color: rgb(248 113 113 / 34%);
+  color: #fda4a4;
+  background: rgb(127 29 29 / 32%);
+}
+.dashboard-shell .monitor-student-row.has-warnings > td {
+  color: #ffd7d7;
+  background: rgb(127 29 29 / 26%);
+}
+.dashboard-shell .monitor-student-row.no-warnings > td {
+  color: #baf2d6;
+  background: rgb(6 78 59 / 25%);
+}
+.dashboard-shell .monitor-student-link,
+.dashboard-shell .monitor-student-row.has-warnings .monitor-student-link,
+.dashboard-shell .monitor-student-row.no-warnings .monitor-student-link {
+  color: inherit;
+}
+.dashboard-shell input:not([type="checkbox"]):not([type="radio"]),
+.dashboard-shell select,
+.dashboard-shell textarea {
+  border-color: rgb(63 101 142 / 70%);
+  color: #e3edfb;
+  background: #03162a;
+  color-scheme: dark;
+}
+.dashboard-shell input::placeholder,
+.dashboard-shell textarea::placeholder {
+  color: #718aa5;
+}
+.dashboard-shell .exam-search input,
+.dashboard-shell .list-tools input {
+  border-color: transparent;
+  color: #e3edfb;
+  background: transparent;
+}
+.dashboard-shell input:focus,
+.dashboard-shell select:focus,
+.dashboard-shell textarea:focus {
+  border-color: #168ed3;
+  outline-color: rgb(0 190 228 / 22%);
+}
+.dashboard-shell input[type="checkbox"],
+.dashboard-shell input[type="radio"] {
+  color-scheme: dark;
+}
+.dashboard-shell button:not(.primary):not(.nav-item):not(.profile):not(.monitor-student-link):not(.exam-filter-group button):not(.tabs button):not(.toolbar button):not(.question-numbers button):not(.course-pill-button):not(.flag-button):not(.danger-button),
+.dashboard-shell .button:not(.primary) {
+  border-color: rgb(63 101 142 / 68%);
+  color: #d4e3f5;
+  background: #0b2340;
+}
+.dashboard-shell button:not(.primary):not(.nav-item):not(.profile):not(.monitor-student-link):not(.exam-filter-group button):not(.tabs button):not(.toolbar button):not(.question-numbers button):not(.course-pill-button):not(.flag-button):not(.danger-button):hover,
+.dashboard-shell .button:not(.primary):hover {
+  border-color: rgb(0 196 230 / 56%);
+  color: #effaff;
+  background: #103354;
+}
+.dashboard-shell button.primary,
+.dashboard-shell .button.primary {
+  color: #fff;
+  background: linear-gradient(105deg, #2563eb, #078ebc);
+}
+.dashboard-shell .tabs button,
+.dashboard-shell .toolbar button {
+  border-color: transparent;
+  background: transparent;
+}
+.dashboard-shell .tabs button.active {
+  color: #56e3f5;
+  border-bottom-color: #00cde6;
+}
+.dashboard-shell .exam-checks,
+.dashboard-shell .rich-editor,
+.dashboard-shell .list-tools,
+.dashboard-shell .exam-status,
+.dashboard-shell .toolbar,
+.dashboard-shell .answer-value,
+.dashboard-shell pre,
+.dashboard-shell .markdown pre {
+  border-color: rgb(48 88 130 / 52%);
+  color: #cbdcf0;
+  background: #061a2e;
+}
+.dashboard-shell .room-code,
+.dashboard-shell .room-code small,
+.dashboard-shell .answer-value > b {
+  color: #b9d4ed;
+}
+.dashboard-shell .geofence-visual {
+  border-color: #28618f;
+  color: #8cc5ee;
+  background: radial-gradient(circle, #123d61, #071c32);
+}
+.dashboard-shell .geofence-visual span {
+  background: #2aa6dc;
+}
+.dashboard-shell th {
+  border-color: rgb(48 88 130 / 52%);
+  color: #9eb6d0;
+  background: #0b2743;
+}
+.dashboard-shell td {
+  border-color: rgb(48 88 130 / 42%);
+  color: #d8e5f4;
+}
+.dashboard-shell td small,
+.dashboard-shell .timeline time,
+.dashboard-shell .timeline p,
+.dashboard-shell .device-labels,
+.dashboard-shell .room-coordinates {
+  color: #93aac3;
+}
+.dashboard-shell .timeline > div {
+  border-color: rgb(48 88 130 / 42%);
+}
+.dashboard-shell .notice,
+.dashboard-shell .evidence-storage-note {
+  border-color: rgb(47 115 170 / 55%);
+  color: #c5def5;
+  background: #092846;
+}
+.dashboard-shell .location-success {
+  border-color: rgb(16 185 129 / 33%);
+  color: #9ee8cb;
+  background: rgb(6 78 59 / 32%);
+}
+.dashboard-shell .error,
+.dashboard-shell .exam-risk-warning,
+.dashboard-shell .room-delete-confirmation {
+  border-color: rgb(248 113 113 / 42%);
+  color: #ffd0ca;
+  background: rgb(91 26 34 / 72%);
+}
+.dashboard-shell .exam-risk-heading h2,
+.dashboard-shell .room-delete-confirmation p {
+  color: #ffb6ae;
+}
+.dashboard-shell .warning-banner {
+  border-color: rgb(245 158 11 / 32%);
+  color: #f8d394;
+  background: rgb(96 54 9 / 58%);
+}
+.dashboard-shell .exam-qr-panel,
+.dashboard-shell .exam-control-dialog,
+.dashboard-shell .warning-ack-dialog,
+.dashboard-shell .tablet-window-blocker .panel {
+  border-color: rgb(63 101 142 / 65%);
+  color: #e1ecf9;
+  background: #071c32;
+}
+.dashboard-shell .exam-qr-image {
+  border-color: rgb(63 101 142 / 65%);
+  background: #fff;
+}
+.dashboard-shell .exam-qr-image img {
+  background: #fff;
+}
+.dashboard-shell .tablet-window-blocker h1,
+.dashboard-shell .tablet-window-blocker p {
+  color: #e1ecf9;
+}
+.dashboard-shell .danger-button {
+  border-color: rgb(248 113 113 / 42%);
+  color: #ffb7ae;
+  background: rgb(91 26 34 / 55%);
+}
+.dashboard-shell .danger-button:hover {
+  background: rgb(127 29 29 / 70%);
+}
+.dashboard-shell .upload {
+  border-color: #315c80;
+}
+.exam-shell .exam-top {
+  border-color: rgb(48 88 130 / 55%);
+  color: #dce8f8;
+  background: #061a2e;
+}
+.exam-shell .exam-top strong,
+.exam-shell .question-area > .markdown {
+  color: #e5effc;
+}
+.exam-shell .exam-top small,
+.exam-shell .exam-top svg,
+.exam-shell .exam-status,
+.exam-shell .question-meta,
+.exam-shell .watermark {
+  color: #98aec7;
+}
+.exam-shell .exam-status {
+  border-color: rgb(48 88 130 / 52%);
+  background: #0a213a;
+}
+.exam-shell .question-nav {
+  border-color: rgb(48 88 130 / 55%);
+}
+.exam-shell .question-numbers button,
+.exam-shell .answer-option {
+  border-color: rgb(63 101 142 / 60%);
+  color: #d9e7f8;
+  background: #0a213a;
+}
+.exam-shell .question-numbers .answered,
+.exam-shell .answer-option:has(input:checked) {
+  border-color: #168ed3;
+  color: #e8f7ff;
+  background: #0b3456;
+}
+.exam-shell .question-numbers .current {
+  border-color: #31cce8;
+}
+.exam-shell .question-footer {
+  border-color: rgb(48 88 130 / 55%);
+}
+.exam-shell .warning-ack-dialog {
+  border-color: #dc3f43;
+}
+.preflight {
+  max-width: 900px;
+  padding: 40px clamp(18px, 4vw, 36px);
+  background-image:
+    radial-gradient(ellipse at 82% 0%, rgb(0 91 156 / 15%), transparent 50%),
+    linear-gradient(rgb(22 72 119 / 8%) 1px, transparent 1px),
+    linear-gradient(90deg, rgb(22 72 119 / 8%) 1px, transparent 1px);
+  background-size: auto, 42px 42px, 42px 42px;
+}
+.preflight .panel {
+  border-color: rgb(48 88 130 / 62%);
+  color: #dce8f8;
+  background: #071c32;
+}
+.preflight .preflight-check-list li {
+  border-color: rgb(48 88 130 / 48%);
+}
+.preflight .preflight-check-list span,
+.preflight .preflight-grid .muted,
+.preflight .muted {
+  color: #9aafc6;
+}
+.preflight .preflight-grid > div,
+.preflight h1,
+.preflight h2,
+.preflight h3 {
+  color: #e6effc;
+}
+.preflight .exam-risk-warning {
+  border-color: rgb(248 113 113 / 45%);
+  color: #ffd0ca;
+  background: rgb(91 26 34 / 72%);
+}
+.preflight .exam-risk-heading h2 {
+  color: #ffb6ae;
+}
+.preflight input:not([type="checkbox"]):not([type="radio"]),
+.preflight select,
+.preflight textarea {
+  border-color: rgb(63 101 142 / 70%);
+  color: #e3edfb;
+  background: #03162a;
+  color-scheme: dark;
+}
+.landing {
+  --ink: #e2ecfb;
+  --muted: #98aec7;
+  --line: rgb(63 101 142 / 42%);
+  color: #dce8f8;
+  background:
+    radial-gradient(ellipse at 82% 9%, rgb(0 91 156 / 14%), transparent 48%),
+    #000f20;
+}
+.landing .brand,
+.landing h1,
+.landing h2,
+.landing h3 {
+  color: #e8f1ff;
+}
+.landing .hero-orb {
+  border-color: #174368;
+  color: #64c8f5;
+  background: radial-gradient(circle at 40% 40%, #123d61, #061a2e 70%);
+  box-shadow: inset 0 0 60px rgb(0 108 173 / 14%), 0 10px 70px rgb(0 91 156 / 17%);
+}
+.landing .hero-orb::before,
+.landing .hero-orb::after {
+  border-color: #174368;
+}
+.landing .feature-grid svg {
+  color: #44d7ed;
+}
+.landing .hero-note,
+.landing .feature-grid p,
+.landing footer,
+.landing .muted {
+  color: #98aec7;
+}
+.dashboard-shell .eyebrow {
+  color: #63d9ed;
+}
+.dashboard-shell .welcome-banner {
+  border-color: rgb(48 88 130 / 58%);
+  color: #e2ecfb;
+  background: linear-gradient(112deg, #092542, #071c32 62%, #0a2946);
+}
+.dashboard-shell .welcome-banner .eyebrow,
+.dashboard-shell .welcome-banner h2,
+.dashboard-shell .banner-art {
+  color: #cfe5fb;
+}
+.dashboard-shell .welcome-banner p,
+.dashboard-shell .banner-art > span {
+  color: #a1b6cd;
+}
+.dashboard-shell .banner-art > span {
+  border-color: rgb(63 101 142 / 55%);
+  background: #0a2742;
+}
+.dashboard-shell .orbit,
+.dashboard-shell .orbit::before,
+.dashboard-shell .orbit::after {
+  border-color: rgb(63 142 190 / 45%);
+  background: radial-gradient(circle, rgb(0 139 202 / 13%), transparent 70%);
+}
+.dashboard-shell .student-exam-alert-list > div {
+  border-color: rgb(48 88 130 / 58%);
+  color: #dce8f8;
+  background: #0a2742;
+}
+.dashboard-shell .course-enrollment-count {
+  color: #73dcf2;
+  background: #071c32;
+}
+.exam-shell .warning-ack-dialog {
+  color: #e1ecf9;
+  background: #071c32;
+}
+.exam-shell .warning-banner {
+  border-color: rgb(245 158 11 / 32%);
+  color: #f8d394;
+  background: rgb(96 54 9 / 58%);
+}
+.login-page {
+  background: #000f20;
+}
+.login-form {
+  color: #dce8f8;
+}
+.login-form > div {
+  border-color: rgb(48 88 130 / 62%);
+  color: #dce8f8;
+  background: #071c32;
+  box-shadow: 0 24px 70px rgb(0 0 0 / 26%), 0 3px 10px rgb(0 0 0 / 16%);
+}
+.login-form h2,
+.login-form form label {
+  color: #e2ecfb;
+}
+.login-kicker,
+.login-form > div > p.muted,
+.login-form > div > p.small {
+  color: #9aafc6;
+}
+.login-role-picker button {
+  border-color: rgb(63 101 142 / 60%);
+  color: #dce8f8;
+  background: #0a213a;
+}
+.login-role-picker button.selected {
+  border-color: #2585da;
+  color: #e6f3ff;
+  background: #0d3152;
+  box-shadow: 0 0 0 3px rgb(37 99 235 / 14%);
+}
+.login-role-picker .login-role-title,
+.login-role-picker button.selected .login-role-title,
+.login-role-picker button.selected .login-role-title svg {
+  color: #d7e9fb;
+}
+.login-role-picker button span {
+  color: #9aafc6;
+}
+.login-form form input {
+  border-color: rgb(63 101 142 / 70%);
+  color: #e3edfb;
+  background: #03162a;
+  color-scheme: dark;
+}
+.login-form .login-divider {
+  color: #91a8c2;
+}
+.login-divider::before,
+.login-divider::after {
+  background: rgb(63 101 142 / 52%);
+}
+.login-form button.google-provider {
+  border-color: #d9e2ed;
+  color: #26384b;
+  background: #fff;
+}
+.login-form button.google-provider:hover {
+  border-color: #b9cbe0;
+  background: #f8faff;
+}
