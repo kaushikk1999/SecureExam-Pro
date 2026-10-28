@@ -1,5 +1,8 @@
 import type { NextConfig } from "next";
 const config: NextConfig = {
+  experimental: {
+    agentUpgrade: "security",
+  },
   serverExternalPackages: ["@electric-sql/pglite", "pg"],
   async headers() {
     return [
