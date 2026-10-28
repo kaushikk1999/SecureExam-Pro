@@ -4912,6 +4912,25 @@ function StudentHome({ user }: { user: Actor }) {
         <ShieldCheck size={20} /> Keep your university account private. Read the
         monitoring notice before each examination.
       </div>
+      <section
+        className="student-readiness-card panel"
+        aria-labelledby="student-readiness-title"
+      >
+        <span className="student-readiness-icon" aria-hidden="true">
+          <CheckCircle2 size={22} />
+        </span>
+        <div className="student-readiness-copy">
+          <h2 id="student-readiness-title">Check your setup before an exam</h2>
+          <p>
+            Test this browser’s camera, microphone, location, and fullscreen
+            permissions. This does not start an exam; each exam will still run
+            its instructor-selected checks before you begin.
+          </p>
+        </div>
+        <Link className="button primary" href="/workspace/practice">
+          Run setup check <ArrowUpRight size={16} />
+        </Link>
+      </section>
       <ErrorBox message={error} />
       {availableNow.length > 0 && (
         <section

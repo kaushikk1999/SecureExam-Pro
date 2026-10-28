@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import Image from "next/image";
 import QRCode from "qrcode";
 import { Copy, Maximize2, QrCode, X } from "lucide-react";
@@ -124,7 +125,7 @@ export default function ExamQrDialog({
       <button onClick={() => setOpen(true)}>
         <QrCode size={15} /> Show exam QR
       </button>
-      {open && (
+      {open && typeof document !== "undefined" && createPortal(
         <div
           className="exam-qr-backdrop"
           onMouseDown={(event) => {
@@ -211,7 +212,8 @@ export default function ExamQrDialog({
               </p>
             )}
           </section>
-        </div>
+        </div>,
+        document.body,
       )}
     </>
   );

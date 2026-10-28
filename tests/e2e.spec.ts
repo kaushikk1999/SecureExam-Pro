@@ -42,17 +42,24 @@ async function login(page: Page, email: string) {
       });
     });
   }
-  await page.goto("/login");
-  const audience = email === "teacher@example.test" ? "teacher" : "student";
-  await page
-    .getByRole("group", { name: "Choose sign-in type" })
-    .getByRole("button", { name: new RegExp(audience, "i") })
-    .click();
-  await page.getByLabel("University email").fill(email);
-  await page
-    .getByLabel("Password", { exact: true })
-    .fill(process.env.SEED_PASSWORD!);
-  await page.getByRole("button", { name: `Sign in as ${audience}` }).click();
+  const csrfResponse = await page.request.get("/api/auth/csrf");
+  expect(csrfResponse.ok()).toBeTruthy();
+  const { csrfToken } = await csrfResponse.json();
+  const signInResponse = await page.request.post(
+    "/api/auth/callback/credentials",
+    {
+      form: {
+        csrfToken,
+        email,
+        password: process.env.SEED_PASSWORD!,
+        callbackUrl: "http://localhost:3000/workspace",
+        json: "true",
+      },
+      headers: { origin: "http://localhost:3000" },
+    },
+  );
+  expect(signInResponse.ok()).toBeTruthy();
+  await page.goto("/workspace");
   await expect(page).toHaveURL(/workspace/);
 }
 test("explains the approved student account after Google access is denied", async ({
@@ -72,9 +79,14 @@ test("teacher workspace, authoring, audit and responsive layout", async ({
 }) => {
   await login(page, "teacher@example.test");
   await expect(
-    page.getByRole("heading", { name: /Good to see you/ }),
+    page.getByRole("heading", {
+      name: "Less administration. More room for learning.",
+      exact: true,
+    }),
   ).toBeVisible();
-  await expect(page.locator(".exam-row").first()).toBeVisible();
+  await expect(
+    page.getByRole("link", { name: "Manage examinations" }),
+  ).toBeVisible();
   await page.screenshot({
     path: ".data/dashboard-desktop.png",
     fullPage: true,
@@ -142,6 +154,7 @@ test("teacher workspace, authoring, audit and responsive layout", async ({
   ).toBeVisible();
   await page
     .getByRole("button", { name: "Create examination", exact: true })
+    .first()
     .click();
   const title = "Browser-verified assessment " + Date.now();
   await page.getByLabel("Exam title").fill(title);
@@ -169,7 +182,7 @@ test("teacher workspace, authoring, audit and responsive layout", async ({
   ).toBeVisible();
   await expect(page.locator(".exam-qr-link")).toContainText(/\/exam\//);
   await page.getByRole("button", { name: "Close exam QR" }).click();
-  await page.getByRole("link", { name: "Login & audit", exact: true }).click();
+  await page.getByRole("link", { name: /Login & audit/ }).click();
   await expect(
     page.getByRole("heading", { name: "Login & attendance audit" }),
   ).toBeVisible();
@@ -549,9 +562,13 @@ test("new student readiness, learning and appeals pages preserve the exam worksp
   const errors: string[] = [];
   page.on("pageerror", (e) => errors.push(e.message));
   await login(page, "student6@example.test");
-  await page
-    .getByRole("link", { name: "Practice & readiness", exact: true })
-    .click();
+  await expect(
+    page.getByRole("heading", {
+      name: "Check your setup before an exam",
+      exact: true,
+    }),
+  ).toBeVisible();
+  await page.getByRole("link", { name: /Run setup check/ }).click();
   await expect(
     page.getByRole("heading", { name: "Practice & readiness", exact: true }),
   ).toBeVisible();
@@ -764,11 +781,29 @@ test("student appeal submission and instructor decision complete through the UI"
   expect(attemptResponse.status()).toBe(200);
   const attempt = await attemptResponse.json();
   const deviceHeaders = { ...headers, "x-exam-device": device.id };
+  const warningSync = await page.request.post(
+    `/api/platform/attempts/${attempt.id}/sync`,
+    {
+      headers: deviceHeaders,
+      data: { events: [{ id: crypto.randomUUID(), type: "TAB_HIDDEN" }] },
+    },
+  );
+  expect(warningSync.status()).toBe(200);
+  const { newWarnings } = await warningSync.json();
+  expect(newWarnings).toHaveLength(1);
   expect(
     (
       await page.request.post(`/api/platform/attempts/${attempt.id}/sync`, {
         headers: deviceHeaders,
-        data: { events: [{ id: crypto.randomUUID(), type: "TAB_HIDDEN" }] },
+        data: {
+          events: [
+            {
+              id: crypto.randomUUID(),
+              type: "WARNING_ACKNOWLEDGED",
+              metadata: { warningId: newWarnings[0].id },
+            },
+          ],
+        },
       })
     ).status(),
   ).toBe(200);
@@ -811,8 +846,15 @@ test("student appeal submission and instructor decision complete through the UI"
   await page.screenshot({ path: ".data/appeal-history.png", fullPage: true });
   await login(page, "teacher@example.test");
   await page.goto("/workspace/actions");
-  const review = page.locator("details").filter({ hasText: title });
-  await review.locator("summary").click();
+  const examSummary = page.locator("summary").filter({ hasText: title }).first();
+  const examReview = examSummary.locator("xpath=..");
+  await examSummary.click();
+  await examReview.locator("details > summary").first().click();
+  const studentSummary = examReview
+    .locator("details > details > summary")
+    .filter({ hasText: `Appeals Test Student · APL${suffix}` });
+  const review = studentSummary.locator("xpath=..");
+  await studentSummary.click();
   await review
     .getByLabel("Review note")
     .fill(

@@ -819,7 +819,7 @@ input[type="radio"] {
   }
   to {
     opacity: 1;
-    transform: translateY(0);
+    transform: none;
   }
 }
 .page-heading {
@@ -4463,4 +4463,47 @@ fieldset {
 .login-form button.google-provider:hover {
   border-color: #b9cbe0;
   background: #f8faff;
+}
+.student-readiness-card {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 18px;
+  margin: 22px 0;
+  padding: 22px 24px;
+}
+.student-readiness-icon {
+  display: grid;
+  width: 46px;
+  height: 46px;
+  place-items: center;
+  border: 1px solid rgb(0 196 230 / 28%);
+  border-radius: 14px;
+  color: #57dff1;
+  background: #0b3456;
+}
+.student-readiness-copy h2 {
+  margin: 0 0 6px;
+  color: #e8f1ff;
+  font-size: 17px;
+}
+.student-readiness-copy p {
+  max-width: 720px;
+  margin: 0;
+  color: #9aafc6;
+  line-height: 1.55;
+}
+.student-readiness-card > .button {
+  white-space: nowrap;
+}
+@media (max-width: 720px) {
+  .student-readiness-card {
+    grid-template-columns: auto minmax(0, 1fr);
+    align-items: start;
+    padding: 18px;
+  }
+  .student-readiness-card > .button {
+    grid-column: 1 / -1;
+    justify-self: start;
+  }
 }
