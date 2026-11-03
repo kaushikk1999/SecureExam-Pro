@@ -1,5 +1,8 @@
 export type ExamDeviceClass = "laptop" | "tablet" | "phone" | "unsupported";
 
+/** Indoor GPS can remain coarse even after the browser reports a fresh fix. */
+export const MIN_CLASSROOM_LOCATION_ACCURACY_METRES = 250;
+
 export type ExamDeviceSignals = {
   userAgent: string;
   platform?: string;

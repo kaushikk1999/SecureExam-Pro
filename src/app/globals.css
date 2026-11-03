@@ -4507,3 +4507,110 @@ fieldset {
     justify-self: start;
   }
 }
+
+/* Keep dark-themed student and audit pages readable at every viewport size. */
+.dashboard-shell:not(.exam-console-shell) .main-content {
+  width: 100%;
+  max-width: 1700px;
+  padding: clamp(18px, 2.5vw, 36px);
+  margin-inline: auto;
+}
+.dashboard-shell .student-exam-alert {
+  border-color: rgb(63 101 142 / 62%);
+  color: #e2ecfb;
+  background: linear-gradient(120deg, #092542, #071c32 78%);
+  box-shadow: 0 12px 30px rgb(0 0 0 / 18%);
+}
+.dashboard-shell .student-exam-alert h2 {
+  color: #eaf2ff;
+}
+.dashboard-shell .student-exam-alert p {
+  color: #a9bfd8;
+}
+.dashboard-shell .student-exam-alert-list > div > span {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.dashboard-shell .audit-folder,
+.dashboard-shell .audit-all,
+.dashboard-shell .audit-student,
+.dashboard-shell .audit-warning,
+.dashboard-shell .live-audit-panel,
+.dashboard-shell .audit-all .table-wrap {
+  min-width: 0;
+  max-width: 100%;
+}
+.dashboard-shell .audit-folder > summary,
+.dashboard-shell .audit-student > summary,
+.dashboard-shell .audit-warning > summary {
+  overflow-wrap: anywhere;
+}
+.dashboard-shell .audit-date {
+  margin-left: clamp(0px, 1.2vw, 18px);
+}
+.dashboard-shell .audit-student {
+  margin-left: clamp(0px, 1.3vw, 20px);
+  overflow-wrap: anywhere;
+}
+.preflight .notice {
+  border-color: rgb(63 101 142 / 62%);
+  color: #c5def5;
+  background: #092846;
+}
+.preflight .notice strong {
+  color: #e6effc;
+}
+.preflight .notice p {
+  color: #b4c9e0;
+}
+.preflight button:disabled,
+.exam-shell button:disabled {
+  border-color: rgb(63 101 142 / 58%);
+  color: #abc0d8;
+  background: #102b46;
+  opacity: 0.82;
+}
+.exam-shell input:not([type="checkbox"]):not([type="radio"]),
+.exam-shell select,
+.exam-shell textarea {
+  border-color: rgb(63 101 142 / 70%);
+  color: #e3edfb;
+  background: #03162a;
+  color-scheme: dark;
+}
+.exam-shell input::placeholder,
+.exam-shell textarea::placeholder {
+  color: #829ab5;
+  opacity: 1;
+}
+.exam-shell .exam-answer-field {
+  min-width: 0;
+  max-width: 100%;
+  line-height: 1.6;
+  caret-color: #54dcef;
+}
+.exam-shell textarea.exam-answer-field {
+  min-height: 180px;
+  padding: 16px;
+  font-size: 16px;
+}
+.exam-shell .answer-input {
+  min-width: 0;
+  max-width: 100%;
+}
+@media (max-width: 700px) {
+  .dashboard-shell:not(.exam-console-shell) .main-content {
+    padding: 18px 14px 28px;
+  }
+  .dashboard-shell .live-audit-student,
+  .dashboard-shell .audit-student {
+    padding: 12px;
+  }
+  .exam-shell .question-area {
+    min-width: 0;
+    padding: 24px 16px;
+  }
+  .exam-shell textarea.exam-answer-field {
+    min-height: 150px;
+  }
+}

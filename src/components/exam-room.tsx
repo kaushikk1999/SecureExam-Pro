@@ -27,6 +27,7 @@ import {
   examFullscreenSatisfied,
   examScreenSharingRequired,
   isTabletSplitScreen,
+  MIN_CLASSROOM_LOCATION_ACCURACY_METRES,
   screenSharePreflightSatisfied,
   type ExamDeviceClass,
 } from "@/lib/exam-device";
@@ -777,7 +778,7 @@ export default function ExamRoom({
       }
       if (p.location) {
         const maximumAccuracy = Math.max(
-          100,
+          MIN_CLASSROOM_LOCATION_ACCURACY_METRES,
           Number(exam.classroom?.accuracy ?? 0),
           Number(exam.classroom?.radius ?? 0),
         );
@@ -1551,7 +1552,7 @@ export default function ExamRoom({
       ],
     ];
     const maximumLocationUncertainty = Math.max(
-      100,
+      MIN_CLASSROOM_LOCATION_ACCURACY_METRES,
       Number(exam.classroom?.accuracy ?? 0),
       Number(exam.classroom?.radius ?? 0),
     );

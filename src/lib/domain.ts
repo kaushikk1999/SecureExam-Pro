@@ -1,5 +1,6 @@
 import { createHash, createHmac, timingSafeEqual } from "node:crypto";
 import { z } from "zod";
+import { MIN_CLASSROOM_LOCATION_ACCURACY_METRES } from "./exam-device";
 export const policySchema = z.object({
   camera: z.boolean().default(true),
   aiCameraMonitoring: z.boolean().default(false),
@@ -70,7 +71,13 @@ export function geofence(
     distance: metres,
     inside: !clearlyOutside,
     clearlyOutside,
-    acceptable: point.accuracy <= Math.max(room.accuracy, room.radius, 100),
+    acceptable:
+      point.accuracy <=
+      Math.max(
+        room.accuracy,
+        room.radius,
+        MIN_CLASSROOM_LOCATION_ACCURACY_METRES,
+      ),
   };
 }
 export const hardEvents = [
