@@ -462,6 +462,10 @@ it("binds existing Google accounts and provisions verified university accounts s
   expect(buTeacher?.name).toBe("Kaushik K");
 
   vi.stubEnv("GOOGLE_TEACHER_EMAILS_ADDITIONAL", "");
+  const existingAdrianId = randomUUID();
+  await db.execute(
+    sql`INSERT INTO users(id,email,name,password_hash,role) VALUES(${existingAdrianId},'adrian.b@bu.ac.th','Adrian B.','unused','STUDENT')`,
+  );
   const invitedTeacher = await resolveGoogleIdentity({
     iss: "https://accounts.google.com",
     sub: "google-adrian-teacher",
@@ -470,6 +474,7 @@ it("binds existing Google accounts and provisions verified university accounts s
     name: "Adrian B.",
   });
   expect(invitedTeacher?.role).toBe("TEACHER");
+  expect(invitedTeacher?.id).toBe(existingAdrianId);
   expect(invitedTeacher?.name).toBe("Adrian B.");
 
   const buStudent = await resolveGoogleIdentity({

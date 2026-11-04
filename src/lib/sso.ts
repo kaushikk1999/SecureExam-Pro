@@ -113,7 +113,12 @@ export async function resolveGoogleIdentity(
       );
       if (existing && !existing.active) return null;
       u = existing;
-      if (u?.role === "STUDENT" && !isStudentEmailAllowed(u.email)) return null;
+      if (
+        u?.role === "STUDENT" &&
+        !isStudentEmailAllowed(u.email) &&
+        !isApprovedTeacher
+      )
+        return null;
       const canProvisionTrustedWorkspace =
         verifiedWorkspace && autoProvisionDomains.has(emailDomain);
       const canProvisionExactStudent =
@@ -165,6 +170,16 @@ export async function resolveGoogleIdentity(
         tx,
       );
       if (identity?.user_id !== u.id) return null;
+    }
+    // An explicit exact-email teacher invitation also corrects an existing
+    // student-role record for that same verified Google identity.
+    if (u.role === "STUDENT" && isApprovedTeacher) {
+      const [promoted] = await query(
+        sql`UPDATE users SET role='TEACHER' WHERE id=${u.id} AND role='STUDENT' RETURNING *`,
+        tx,
+      );
+      if (!promoted) return null;
+      u = promoted;
     }
     if (u.role === "STUDENT" && !isStudentEmailAllowed(u.email)) return null;
     if (
