@@ -70,7 +70,14 @@ export async function resolveGoogleIdentity(
   autoProvisionDomains.add("bumail.net");
   // Keep support for BU staff accounts when they authenticate through Google.
   autoProvisionDomains.add("bu.ac.th");
-  const teacherEmails = configuredValues(process.env.GOOGLE_TEACHER_EMAILS);
+  // Keep one-off teacher invitations additive so provisioning another teacher
+  // never overwrites the primary allowlist maintained in Vercel.
+  const teacherEmails = configuredValues(
+    [
+      process.env.GOOGLE_TEACHER_EMAILS,
+      process.env.GOOGLE_TEACHER_EMAILS_ADDITIONAL,
+    ].join(","),
+  );
   const isApprovedTeacher = teacherEmails.has(email);
   const isApprovedStudent = isStudentEmailAllowed(email);
   const explicitStudentAllowlist = configuredValues(

@@ -28,6 +28,7 @@ const { GET, POST, PATCH, DELETE } =
   await import("../src/app/api/platform/[...path]/route");
 const { resolveGoogleIdentity } = await import("../src/lib/sso");
 const { readPrivateFile } = await import("../src/lib/integrations");
+const { record } = await import("../src/lib/audit");
 const { authOptions } = await import("../src/lib/auth");
 const { auditHash, policySchema, createCourseEnrollmentInvite } =
   await import("../src/lib/domain");
@@ -338,6 +339,61 @@ describe("server authorization and exam lifecycle", () => {
   it("allows an authorized teacher", async () => {
     login(teacher);
     expect((await request("exams/" + exam)).status).toBe(200);
+  });
+  it("keeps teacher courses, questions, exams, and student audit scoped to their own workspace", async () => {
+    const secondTeacher = randomUUID();
+    const secondCourse = randomUUID();
+    const secondQuestion = randomUUID();
+    const secondExam = randomUUID();
+    await db.execute(
+      sql`INSERT INTO users(id,email,name,password_hash,role) VALUES(${secondTeacher},${secondTeacher + "@test.local"},'Second Teacher','unused','TEACHER')`,
+    );
+    await db.execute(
+      sql`INSERT INTO courses(id,teacher_id,code,name) VALUES(${secondCourse},${secondTeacher},'OTHER','Other teacher course')`,
+    );
+    await db.execute(
+      sql`INSERT INTO questions(id,teacher_id,type,prompt,marks,solution,options) VALUES(${secondQuestion},${secondTeacher},'MCQ','Private question',1,'"A"','["A","B"]')`,
+    );
+    await db.execute(
+      sql`INSERT INTO exams(id,course_id,title,status,starts_at,ends_at,duration_minutes,policy,code_secret) VALUES(${secondExam},${secondCourse},'Private exam','PUBLISHED',now()-interval '1 hour',now()+interval '2 hours',60,'{}'::jsonb,'secret')`,
+    );
+    await db.execute(
+      sql`INSERT INTO enrollments(course_id,user_id) VALUES(${secondCourse},${student})`,
+    );
+    await record({
+      userId: student,
+      type: "STUDENT_SELF_ENROLLED",
+      metadata: { courseId: secondCourse, source: "course_qr" },
+    });
+
+    const ownedCourses = await requestAs(teacher, "courses");
+    const ownedQuestions = await requestAs(teacher, "questions");
+    const ownedExams = await requestAs(teacher, "exams");
+    const foreignExam = await requestAs(teacher, `exams/${secondExam}`);
+    const audit = await requestAs(teacher, "audit");
+    const [courseRows, questionRows, examRows, auditRows] = await Promise.all([
+      ownedCourses.json(),
+      ownedQuestions.json(),
+      ownedExams.json(),
+      audit.json(),
+    ]);
+    expect(courseRows.map((row: any) => row.id)).toContain(course);
+    expect(courseRows.map((row: any) => row.id)).not.toContain(secondCourse);
+    expect(questionRows.map((row: any) => row.id)).toContain(question);
+    expect(questionRows.map((row: any) => row.id)).not.toContain(
+      secondQuestion,
+    );
+    expect(examRows.map((row: any) => row.id)).toContain(exam);
+    expect(examRows.map((row: any) => row.id)).not.toContain(secondExam);
+    expect(foreignExam.status).toBe(403);
+    expect(
+      auditRows.some((event: any) => event.metadata?.courseId === secondCourse),
+    ).toBe(false);
+
+    const secondTeacherCourses = await requestAs(secondTeacher, "courses");
+    expect(
+      (await secondTeacherCourses.json()).map((row: any) => row.id),
+    ).toEqual([secondCourse]);
   });
   it("lists exam schedule and completed submission totals for teachers", async () => {
     login(teacher);

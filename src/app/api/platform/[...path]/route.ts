@@ -2339,7 +2339,6 @@ async function dispatch(req: Request, parts: string[]) {
           ) warning_source ON true
           LEFT JOIN files evidence ON evidence.id::text=COALESCE(a.metadata->>'evidenceFileId',warning_source.evidence_file_id) AND evidence.attempt_id=a.attempt_id
           WHERE ${u.role === "ADMIN"} OR c.teacher_id=${u.id} OR a.user_id=${u.id}
-             OR (a.exam_id IS NULL AND u.id IN(SELECT n.user_id FROM enrollments n JOIN courses co ON co.id=n.course_id WHERE co.teacher_id=${u.id}))
           ORDER BY a.sequence DESC LIMIT 1000`,
     );
     if (url.searchParams.get("format") === "csv")

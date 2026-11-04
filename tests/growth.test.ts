@@ -461,6 +461,18 @@ it("binds existing Google accounts and provisions verified university accounts s
   expect(buTeacher?.role).toBe("TEACHER");
   expect(buTeacher?.name).toBe("Kaushik K");
 
+  vi.stubEnv("GOOGLE_TEACHER_EMAILS_ADDITIONAL", "adrian.b@bu.ac.th");
+  const invitedTeacher = await resolveGoogleIdentity({
+    iss: "https://accounts.google.com",
+    sub: "google-adrian-teacher",
+    email: "adrian.b@bu.ac.th",
+    email_verified: true,
+    hd: "bu.ac.th",
+    name: "Adrian B.",
+  });
+  expect(invitedTeacher?.role).toBe("TEACHER");
+  expect(invitedTeacher?.name).toBe("Adrian B.");
+
   const buStudent = await resolveGoogleIdentity({
     iss: "https://accounts.google.com",
     sub: "google-bu-student",
