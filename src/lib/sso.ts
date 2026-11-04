@@ -91,7 +91,16 @@ export async function resolveGoogleIdentity(
     );
     let u = mapped;
     if (!u) {
-      if (!email.endsWith("@gmail.com") && !verifiedWorkspace) return null;
+      // An explicitly approved exact teacher address can be authenticated by
+      // Google without a hosted-domain claim (for example, a federated staff
+      // address). The verified email check above plus the exact allowlist is
+      // the authorization boundary for this case.
+      if (
+        !email.endsWith("@gmail.com") &&
+        !verifiedWorkspace &&
+        !isApprovedTeacher
+      )
+        return null;
       const [existing] = await query(
         sql`SELECT * FROM users WHERE lower(email)=${email} FOR UPDATE`,
         tx,
@@ -106,7 +115,7 @@ export async function resolveGoogleIdentity(
       if (
         !u &&
         (isApprovedTeacher
-          ? canProvisionTrustedWorkspace
+          ? true
           : isApprovedStudent &&
             (canProvisionTrustedWorkspace || canProvisionExactStudent))
       ) {

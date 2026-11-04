@@ -467,7 +467,6 @@ it("binds existing Google accounts and provisions verified university accounts s
     sub: "google-adrian-teacher",
     email: "adrian.b@bu.ac.th",
     email_verified: true,
-    hd: "bu.ac.th",
     name: "Adrian B.",
   });
   expect(invitedTeacher?.role).toBe("TEACHER");
