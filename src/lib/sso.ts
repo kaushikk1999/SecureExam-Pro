@@ -171,11 +171,12 @@ export async function resolveGoogleIdentity(
       );
       if (identity?.user_id !== u.id) return null;
     }
-    // An explicit exact-email teacher invitation also corrects an existing
-    // student-role record for that same verified Google identity.
-    if (u.role === "STUDENT" && isApprovedTeacher) {
+    // An explicit exact-email teacher invitation has a teacher-only workspace.
+    // Normalize pre-existing role records too, so an account that was previously
+    // provisioned as an administrator cannot inherit another teacher's data.
+    if (isApprovedTeacher && u.role !== "TEACHER") {
       const [promoted] = await query(
-        sql`UPDATE users SET role='TEACHER' WHERE id=${u.id} AND role='STUDENT' RETURNING *`,
+        sql`UPDATE users SET role='TEACHER' WHERE id=${u.id} RETURNING *`,
         tx,
       );
       if (!promoted) return null;

@@ -32,7 +32,6 @@ import {
   Trash2,
 } from "lucide-react";
 import type { Actor } from "@/lib/auth";
-import { COURSE_CATALOG } from "@/lib/course-data";
 import ExamQrDialog from "./exam-qr-dialog";
 import CourseEnrollmentQrDialog from "./course-enrollment-qr-dialog";
 import OverviewDashboard from "./overview-dashboard";
@@ -2626,6 +2625,7 @@ function Students() {
   const [mode, setMode] = useState(""),
     [message, setMessage] = useState(""),
     [courseCode, setCourseCode] = useState(""),
+    [courseName, setCourseName] = useState(""),
     [courseSection, setCourseSection] = useState(""),
     [selectedCourseId, setSelectedCourseId] = useState(""),
     [roster, setRoster] = useState<any[] | null>(null),
@@ -2633,7 +2633,6 @@ function Students() {
     [rosterError, setRosterError] = useState(""),
     [enrollEmail, setEnrollEmail] = useState(""),
     [removingStudentId, setRemovingStudentId] = useState("");
-  const selectedCourse = COURSE_CATALOG.find((c) => c.code === courseCode);
   const selectedRosterCourse = courses?.find(
     (course: any) => course.id === selectedCourseId,
   );
@@ -2690,6 +2689,7 @@ function Students() {
       );
       setMode("");
       setCourseCode("");
+      setCourseName("");
       setCourseSection("");
       setMessage(
         result.count
@@ -2711,6 +2711,7 @@ function Students() {
           onClick={() => {
             setMode(mode === "course" ? "" : "course");
             setCourseCode("");
+            setCourseName("");
             setCourseSection("");
           }}
         >
@@ -2744,46 +2745,37 @@ function Students() {
             {mode === "course" ? (
               <div className="form-grid">
                 <label>
-                  Subject
-                  <select
+                  Course code
+                  <input
                     required
                     name="code"
+                    maxLength={30}
                     value={courseCode}
-                    onChange={(event) => {
-                      setCourseCode(event.target.value);
-                      setCourseSection("");
-                    }}
-                  >
-                    <option value="">Select a subject</option>
-                    {COURSE_CATALOG.map((course) => (
-                      <option key={course.code} value={course.code}>
-                        {course.code} · {course.name}
-                      </option>
-                    ))}
-                  </select>
+                    onChange={(event) => setCourseCode(event.target.value)}
+                    placeholder="e.g. IBA214"
+                  />
                 </label>
                 <label>
-                  Section
-                  <select
+                  Course name
+                  <input
                     required
-                    name="section"
-                    value={courseSection}
-                    disabled={!selectedCourse}
-                    onChange={(event) => setCourseSection(event.target.value)}
-                  >
-                    <option value="">Select a section</option>
-                    {selectedCourse?.sections.map((section) => (
-                      <option key={section} value={section}>
-                        {section}
-                      </option>
-                    ))}
-                  </select>
+                    name="name"
+                    maxLength={160}
+                    value={courseName}
+                    onChange={(event) => setCourseName(event.target.value)}
+                    placeholder="e.g. Technology for Business"
+                  />
                 </label>
-                <input
-                  type="hidden"
-                  name="name"
-                  value={selectedCourse?.name ?? ""}
-                />
+                <label>
+                  Section (optional)
+                  <input
+                    name="section"
+                    maxLength={80}
+                    value={courseSection}
+                    onChange={(event) => setCourseSection(event.target.value)}
+                    placeholder="e.g. 256C"
+                  />
+                </label>
               </div>
             ) : (
               <>

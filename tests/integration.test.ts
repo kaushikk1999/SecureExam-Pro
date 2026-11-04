@@ -1728,6 +1728,56 @@ it("keeps a source-faithful question draft when Ollama is unavailable", async ()
   }
 });
 
+it("normalizes common Ollama question aliases instead of rejecting the whole draft", async () => {
+  login(teacher);
+  const paperExam = randomUUID();
+  await db.execute(
+    sql`INSERT INTO exams(id,course_id,title,status,starts_at,ends_at,duration_minutes,policy,code_secret) VALUES(${paperExam},${course},'AI normalization','DRAFT',now()+interval '1 hour',now()+interval '2 hours',60,${JSON.stringify(policySchema.parse({ camera: false, microphone: false, location: false, fullscreen: false, classroomCode: false }))}::jsonb,'secret')`,
+  );
+  vi.stubEnv("OLLAMA_ENABLED", "true");
+  vi.stubEnv("OLLAMA_API_KEY", "test-key");
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async () =>
+      Response.json({
+        message: {
+          content: JSON.stringify({
+            questions: [
+              {
+                questionType: "multiple choice",
+                question: "Which answer was supplied?",
+                mark: "2",
+                choices: [
+                  { label: "A", text: "First" },
+                  { label: "B", text: "Second" },
+                ],
+                answer: "B",
+              },
+            ],
+          }),
+        },
+      }),
+    ),
+  );
+  try {
+    const response = await request(`exams/${paperExam}/ai-paper-draft`, {
+      source: "Extract this unnumbered question with supplied choices.",
+    });
+    expect(response.status).toBe(200);
+    expect((await response.json()).questions[0]).toMatchObject({
+      type: "MCQ",
+      prompt: "Which answer was supplied?",
+      marks: 2,
+      options: ["First", "Second"],
+      solution: "B",
+    });
+  } finally {
+    vi.unstubAllGlobals();
+    vi.unstubAllEnvs();
+    login(null);
+  }
+});
+
 it("gates answer saving behind an audited warning acknowledgment and lists live exams", async () => {
   const liveStudent = randomUUID();
   const liveDevice = randomUUID();

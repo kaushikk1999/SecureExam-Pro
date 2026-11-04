@@ -20,13 +20,39 @@ describe("document text extraction", () => {
   });
 
   it("extracts searchable text from a PDF", async () => {
-    const text = await extractPdfText(searchablePdf(["PART A - MULTIPLE CHOICE", "A1. Pick the best answer."]));
+    const text = await extractPdfText(
+      searchablePdf(["PART A - MULTIPLE CHOICE", "A1. Pick the best answer."]),
+    );
     expect(text).toContain("PART A - MULTIPLE CHOICE");
     expect(text).toContain("A1. Pick the best answer.");
   });
 });
 
 describe("structured question extraction", () => {
+  it("recognizes common question labels and a single-section paper", () => {
+    const questions = extractStructuredQuestions(`Section A: Multiple Choice
+Choose the best answer.
+Q1. Which option is correct? (2 marks)
+A) First choice
+B) Second choice
+Answer: B
+Question 2) Explain your choice. (3 marks)`);
+
+    expect(questions).toHaveLength(2);
+    expect(questions?.[0]).toMatchObject({
+      sourceId: "Q1",
+      type: "MCQ",
+      marks: 2,
+      options: ["A) First choice", "B) Second choice"],
+    });
+    expect(questions?.[0].prompt).toContain("Choose the best answer.");
+    expect(questions?.[1]).toMatchObject({
+      sourceId: "Q2",
+      type: "MCQ",
+      marks: 3,
+    });
+  });
+
   it("preserves each source item, answer choices, shared matching list, and case context", () => {
     const source = `PART A — MULTIPLE CHOICE (2 × 1 = 2 marks)
 Type the letter of the best answer.

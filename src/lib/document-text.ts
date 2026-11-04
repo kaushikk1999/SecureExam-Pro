@@ -3,19 +3,25 @@ import { strFromU8, unzipSync } from "fflate";
 const MAX_EXTRACTED_TEXT = 200_000;
 
 function decodeXmlEntities(value: string) {
-  return value.replace(/&(#x[\da-f]+|#\d+|amp|lt|gt|quot|apos);/gi, (entity, code: string) => {
-    if (code[0] === "#") {
-      const point = code[1]?.toLowerCase() === "x"
-        ? Number.parseInt(code.slice(2), 16)
-        : Number.parseInt(code.slice(1), 10);
-      return Number.isInteger(point) && point >= 0 && point <= 0x10ffff
-        ? String.fromCodePoint(point)
-        : entity;
-    }
-    return ({ amp: "&", lt: "<", gt: ">", quot: '"', apos: "'" })[
-      code.toLowerCase()
-    ] ?? entity;
-  });
+  return value.replace(
+    /&(#x[\da-f]+|#\d+|amp|lt|gt|quot|apos);/gi,
+    (entity, code: string) => {
+      if (code[0] === "#") {
+        const point =
+          code[1]?.toLowerCase() === "x"
+            ? Number.parseInt(code.slice(2), 16)
+            : Number.parseInt(code.slice(1), 10);
+        return Number.isInteger(point) && point >= 0 && point <= 0x10ffff
+          ? String.fromCodePoint(point)
+          : entity;
+      }
+      return (
+        { amp: "&", lt: "<", gt: ">", quot: '"', apos: "'" }[
+          code.toLowerCase()
+        ] ?? entity
+      );
+    },
+  );
 }
 
 export function extractDocxText(bytes: Uint8Array) {
@@ -57,7 +63,9 @@ export async function extractPdfText(bytes: Uint8Array) {
 
   if (document.numPages > 80) {
     await loadingTask.destroy();
-    throw new Error("This PDF has more than 80 pages; split it before uploading.");
+    throw new Error(
+      "This PDF has more than 80 pages; split it before uploading.",
+    );
   }
 
   const pages: string[] = [];
@@ -111,7 +119,14 @@ export function extractStructuredQuestions(source: string) {
   let section = "";
   let sectionTitle = "";
   let sectionPreamble: string[] = [];
-  let pending: { sourceId: string; label: string; lines: string[]; section: string; title: string; preamble: string[] } | null = null;
+  let pending: {
+    sourceId: string;
+    label: string;
+    lines: string[];
+    section: string;
+    title: string;
+    preamble: string[];
+  } | null = null;
 
   const savePending = () => {
     if (!pending) return;
@@ -131,7 +146,7 @@ export function extractStructuredQuestions(source: string) {
     const stemLines: string[] = [];
     for (const line of rawLines) {
       const option = line.match(/^([A-D])[).]\s*(.+)$/i);
-      if (option && /MULTIPLE\s+CHOICE/i.test(pending.title)) {
+      if (option) {
         optionLines.push(`${option[1].toUpperCase()}) ${option[2].trim()}`);
       } else if (!/^Answer\s*(?:\([^)]*\))?\s*:/i.test(line)) {
         stemLines.push(line);
@@ -141,17 +156,26 @@ export function extractStructuredQuestions(source: string) {
     const title = pending.title.toUpperCase();
     const intro = pending.preamble.join("\n").trim();
     const sectionMatches = pending.section === "B" && /MATCHING/i.test(title);
-    let prompt = [pending.label, stemLines.join("\n")].filter(Boolean).join(" ");
+    let prompt = [pending.label, stemLines.join("\n")]
+      .filter(Boolean)
+      .join(" ");
     if (sectionMatches) {
-      const meaningsStart = lines.findIndex((line) => /^\s*Meanings\s*:/i.test(line));
-      const sharedMeanings = (meaningsStart >= 0 ? lines.slice(meaningsStart) : [])
+      const meaningsStart = lines.findIndex((line) =>
+        /^\s*Meanings\s*:/i.test(line),
+      );
+      const sharedMeanings = (
+        meaningsStart >= 0 ? lines.slice(meaningsStart) : []
+      )
         .filter((line) => /^\s*[a-h][).]\s*/i.test(line))
         .map((line) => line.trim());
-      if (sharedMeanings.length) prompt += `\n\nMeanings:\n${sharedMeanings.join("\n")}`;
+      if (sharedMeanings.length)
+        prompt += `\n\nMeanings:\n${sharedMeanings.join("\n")}`;
     }
     if (intro) prompt = `${intro}\n\n${prompt}`;
 
-    const explicitMarks = pending.lines.join(" ").match(/\((\d+(?:\.\d+)?)\s*marks?\)/i);
+    const explicitMarks = `${pending.label} ${pending.lines.join(" ")}`.match(
+      /\((\d+(?:\.\d+)?)\s*marks?\)/i,
+    );
     const sectionMarks = pending.title.match(/\d+\s*[×x]\s*(\d+(?:\.\d+)?)/i);
     const marks = Number(explicitMarks?.[1] ?? sectionMarks?.[1] ?? 1);
     let type: StructuredSourceQuestion["type"] = "ESSAY";
@@ -175,7 +199,9 @@ export function extractStructuredQuestions(source: string) {
 
   for (const originalLine of lines) {
     const line = originalLine.trim();
-    const sectionHeading = line.match(/^PART\s+([A-D])\s*[—–-]\s*(.+)$/i);
+    const sectionHeading = line.match(
+      /^(?:PART|SECTION)\s+([A-Z0-9]+)\s*(?:[—–:-]\s*|\s+)(.+)$/i,
+    );
     if (sectionHeading) {
       savePending();
       section = sectionHeading[1].toUpperCase();
@@ -184,14 +210,20 @@ export function extractStructuredQuestions(source: string) {
       continue;
     }
 
-    const letterLabel = line.match(/^([A-D]\d{1,2})[.)]\s*(.+)$/i);
-    const matchingLabel = section === "B" && /MATCHING/i.test(sectionTitle)
-      ? line.match(/^(\d{1,2})[.)]\s*(.+)$/)
-      : null;
+    const letterLabel = line.match(
+      /^((?:(?:QUESTION|Q)\s*)?[A-Z]?\d{1,3})[.)]\s*(.+)$/i,
+    );
+    const matchingLabel =
+      section === "B" && /MATCHING/i.test(sectionTitle)
+        ? line.match(/^(\d{1,2})[.)]\s*(.+)$/)
+        : null;
     const match = letterLabel ?? matchingLabel;
     if (match) {
       savePending();
-      const sourceId = match[1].toUpperCase();
+      const sourceId = match[1]
+        .toUpperCase()
+        .replace(/^QUESTION\s*/, "Q")
+        .replace(/\s+/g, "");
       const cleanLabel = match[2]
         .split("\t", 1)[0]
         .replace(/\s+Your answer.*$/i, "")
@@ -210,10 +242,9 @@ export function extractStructuredQuestions(source: string) {
     }
 
     if (pending) pending.lines.push(originalLine);
-    else if (section) sectionPreamble.push(originalLine);
+    else sectionPreamble.push(originalLine);
   }
   savePending();
 
-  const hasMultipleSections = new Set(questions.map((question) => question.sourceId[0])).size > 1;
-  return questions.length >= 2 && hasMultipleSections ? questions : null;
+  return questions.length ? questions : null;
 }

@@ -590,7 +590,7 @@ export async function syncSheets(rows: unknown[][]) {
     data: { values: rows },
   });
 }
-export async function ai(prompt: string) {
+export async function ai(prompt: string, options: { format?: "json" } = {}) {
   if (process.env.OLLAMA_ENABLED !== "true" || !process.env.OLLAMA_API_KEY)
     throw new HttpError(
       503,
@@ -611,6 +611,7 @@ export async function ai(prompt: string) {
     },
     body: JSON.stringify({
       model: process.env.OLLAMA_MODEL || "gemma4:31b",
+      ...(options.format ? { format: options.format } : {}),
       stream: false,
       messages: [
         {

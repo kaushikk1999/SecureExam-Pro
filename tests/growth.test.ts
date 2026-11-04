@@ -476,6 +476,17 @@ it("binds existing Google accounts and provisions verified university accounts s
   expect(invitedTeacher?.role).toBe("TEACHER");
   expect(invitedTeacher?.id).toBe(existingAdrianId);
   expect(invitedTeacher?.name).toBe("Adrian B.");
+  await db.execute(
+    sql`UPDATE users SET role='ADMIN' WHERE id=${existingAdrianId}`,
+  );
+  const normalizedAdrian = await resolveGoogleIdentity({
+    iss: "https://accounts.google.com",
+    sub: "google-adrian-teacher",
+    email: "adrian.b@bu.ac.th",
+    email_verified: true,
+    name: "Adrian B.",
+  });
+  expect(normalizedAdrian?.role).toBe("TEACHER");
 
   const buStudent = await resolveGoogleIdentity({
     iss: "https://accounts.google.com",
