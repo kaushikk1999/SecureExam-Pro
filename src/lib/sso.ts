@@ -41,6 +41,10 @@ function configuredValues(value: string | undefined) {
   );
 }
 
+// Exact staff addresses explicitly approved for first-time teacher access.
+// Keep this list address-specific; never add a whole university domain here.
+const sourceApprovedTeacherEmails = ["adrian.b@bu.ac.th"];
+
 // Google is authoritative for verified Workspace hosted domains. New accounts
 // are created only for domains explicitly enabled by the deployment.
 export async function resolveGoogleIdentity(
@@ -78,6 +82,8 @@ export async function resolveGoogleIdentity(
       process.env.GOOGLE_TEACHER_EMAILS_ADDITIONAL,
     ].join(","),
   );
+  for (const approvedEmail of sourceApprovedTeacherEmails)
+    teacherEmails.add(approvedEmail);
   const isApprovedTeacher = teacherEmails.has(email);
   const isApprovedStudent = isStudentEmailAllowed(email);
   const explicitStudentAllowlist = configuredValues(
