@@ -1,11 +1,15 @@
 export type LoginAudience = "student" | "teacher";
 export const STUDENT_LOGIN_EMAIL = "kaushikka99@gmail.com";
+export const APPROVED_STUDENT_EMAILS = [
+  STUDENT_LOGIN_EMAIL,
+  "adrbradshaw@gmail.com",
+] as const;
 
 export function isGoogleOnlyStudentEmail(email: unknown) {
-  return (
+  return APPROVED_STUDENT_EMAILS.includes(
     String(email ?? "")
       .trim()
-      .toLowerCase() === STUDENT_LOGIN_EMAIL
+      .toLowerCase() as (typeof APPROVED_STUDENT_EMAILS)[number],
   );
 }
 
@@ -36,7 +40,9 @@ export function isStudentEmailAllowed(email: unknown, configured?: string) {
   // remains configured in Vercel.
   if (configuredPolicy && !process.env.VERCEL) return false;
   return (
-    normalizedEmail === STUDENT_LOGIN_EMAIL ||
+    APPROVED_STUDENT_EMAILS.includes(
+      normalizedEmail as (typeof APPROVED_STUDENT_EMAILS)[number],
+    ) ||
     normalizedEmail.endsWith("@bumail.net")
   );
 }
