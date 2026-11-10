@@ -2091,6 +2091,24 @@ export default function ExamRoom({
     (attempt.policy.fullscreen && !fullscreen) ||
     tabHold ||
     (deviceClass === "tablet" && tabletWindowConstrained);
+  const submitExam = async () => {
+    if (active.current?.pendingWarnings?.length) return;
+    if (wordPaper && !attempt.documentSubmission) {
+      setError(
+        "Upload your completed Word question paper before submitting the exam.",
+      );
+      return;
+    }
+    if (
+      confirm(
+        `Answered: ${answered}\nUnanswered: ${questions.length - answered}\n${wordPaper ? `Word paper: ${attempt.documentSubmission ? "uploaded" : "not uploaded"}\n` : ""}Flagged for review: ${flagged.length}\n\nSubmit your examination? This locks editing.`,
+      )
+    ) {
+      await synchronize(true);
+    }
+  };
+  const isLastQuestion =
+    questions.length > 0 && index >= questions.length - 1;
   return (
     <div className="exam-shell">
       <header className="exam-top">
@@ -2114,22 +2132,7 @@ export default function ExamRoom({
         <button
           className="primary"
           disabled={pendingWarnings.length > 0}
-          onClick={async () => {
-            if (active.current?.pendingWarnings?.length) return;
-            if (wordPaper && !attempt.documentSubmission) {
-              setError(
-                "Upload your completed Word question paper before submitting the exam.",
-              );
-              return;
-            }
-            if (
-              confirm(
-                `Answered: ${answered}\nUnanswered: ${questions.length - answered}\n${wordPaper ? `Word paper: ${attempt.documentSubmission ? "uploaded" : "not uploaded"}\n` : ""}Flagged for review: ${flagged.length}\n\nSubmit your examination? This locks editing.`,
-              )
-            ) {
-              await synchronize(true);
-            }
-          }}
+          onClick={submitExam}
         >
           <Send size={16} /> Submit exam
         </button>
@@ -2496,15 +2499,22 @@ export default function ExamRoom({
                   >
                     <ChevronLeft size={16} /> Previous
                   </button>
-                  <button
-                    disabled={
-                      pendingWarnings.length > 0 ||
-                      index === questions.length - 1
-                    }
-                    onClick={() => setIndex(index + 1)}
-                  >
-                    Next question <ChevronRight size={16} />
-                  </button>
+                  {isLastQuestion ? (
+                    <button
+                      className="primary"
+                      disabled={pendingWarnings.length > 0}
+                      onClick={submitExam}
+                    >
+                      <Send size={16} /> Submit exam
+                    </button>
+                  ) : (
+                    <button
+                      disabled={pendingWarnings.length > 0}
+                      onClick={() => setIndex(index + 1)}
+                    >
+                      Next question <ChevronRight size={16} />
+                    </button>
+                  )}
                 </div>
               </>
             )
