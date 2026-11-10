@@ -61,7 +61,10 @@ import {
 } from "@/lib/document-text";
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
-export const maxDuration = 30;
+// The Ollama client allows up to 45 seconds for longer question papers. Keep
+// this route alive long enough for that request to time out and return the
+// source-extraction fallback instead of Vercel terminating it at 30 seconds.
+export const maxDuration = 60;
 const json = (data: unknown) =>
   NextResponse.json(data, { headers: { "Cache-Control": "no-store" } });
 const questionTypes = [
