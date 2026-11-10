@@ -1279,41 +1279,70 @@ async function dispatch(req: Request, parts: string[]) {
         ...q,
         position,
       }));
-      await db.transaction(async (tx) => {
-        const [locked] = await query(
-          sql`SELECT status FROM exams WHERE id=${id} FOR UPDATE`,
-          tx,
-        );
-        if (locked.status !== "DRAFT")
-          throw new HttpError(
-            409,
-            "Only draft exams can change the question paper.",
+      try {
+        await db.transaction(async (tx) => {
+          const [locked] = await query(
+            sql`SELECT status FROM exams WHERE id=${id} FOR UPDATE`,
+            tx,
           );
-        const [offset] = await query(
-          sql`SELECT COALESCE(max(position),-1)+1 AS position FROM exam_questions WHERE exam_id=${id}`,
-          tx,
-        );
-        const payload = created.map((q) => ({
-          ...q,
-          position: Number(offset.position) + q.position,
-        }));
-        const records = JSON.stringify(payload);
-        await tx.execute(
-          sql`INSERT INTO questions(id,teacher_id,type,prompt,marks,options,solution,rubric,topic,difficulty,deleted_at) SELECT q.id::uuid,${u.id},q.type,q.prompt,q.marks,q.options,q.solution,q.rubric,q.topic,q.difficulty,now() FROM jsonb_to_recordset(${records}::jsonb) AS q(id text,type text,prompt text,marks numeric,options jsonb,solution jsonb,rubric text,topic text,difficulty text,position int)`,
-        );
-        await tx.execute(
-          sql`INSERT INTO exam_questions(exam_id,question_id,position) SELECT ${id},q.id::uuid,q.position FROM jsonb_to_recordset(${records}::jsonb) AS q(id text,position int)`,
-        );
-        await audit(tx, {
-          userId: u.id,
-          examId: id,
-          type: "AI_PAPER_ADDED",
-          metadata: {
-            count: created.length,
-            questionIds: created.map((q) => q.id),
-          },
+          if (!locked || locked.status !== "DRAFT")
+            throw new HttpError(
+              409,
+              "Only draft exams can change the question paper.",
+            );
+          const [offset] = await query(
+            sql`SELECT COALESCE(max(position),-1)+1 AS position FROM exam_questions WHERE exam_id=${id}`,
+            tx,
+          );
+          const payload = created.map((q) => ({
+            ...q,
+            position: Number(offset.position) + q.position,
+          }));
+          // Insert each validated row with explicit parameters. This avoids
+          // relying on PostgreSQL's JSON recordset coercion for large drafts
+          // (especially JSON null answer keys and long Unicode prompts).
+          for (const q of payload) {
+            await tx.execute(sql`
+              INSERT INTO questions(
+                id,teacher_id,type,prompt,marks,options,solution,rubric,topic,difficulty,deleted_at
+              ) VALUES(
+                ${q.id},${u.id},${q.type},${q.prompt},${q.marks},
+                ${JSON.stringify(q.options)}::jsonb,${JSON.stringify(q.solution)}::jsonb,
+                ${q.rubric},${q.topic},${q.difficulty},now()
+              )
+            `);
+            await tx.execute(sql`
+              INSERT INTO exam_questions(exam_id,question_id,position)
+              VALUES(${id},${q.id},${q.position})
+            `);
+          }
+          await audit(tx, {
+            userId: u.id,
+            examId: id,
+            type: "AI_PAPER_ADDED",
+            metadata: {
+              count: created.length,
+              questionIds: created.map((q) => q.id),
+            },
+          });
         });
-      });
+      } catch (error) {
+        const dbError = error as {
+          code?: string;
+          constraint?: string;
+        };
+        console.error("AI question paper save failed", {
+          examId: id,
+          questionCount: created.length,
+          code: dbError.code,
+          constraint: dbError.constraint,
+        });
+        if (error instanceof HttpError) throw error;
+        throw new HttpError(
+          500,
+          "The formatted questions could not be saved. Your review draft is still available; retry the save.",
+        );
+      }
       return json({ ok: true, count: created.length });
     }
     if (action === "room-code") {

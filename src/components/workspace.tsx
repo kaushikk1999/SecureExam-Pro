@@ -1283,6 +1283,7 @@ function ExamDetail({ id }: { id: string }) {
   const [paperBusy, setPaperBusy] = useState(false);
   const [paperSaving, setPaperSaving] = useState(false);
   const [paperError, setPaperError] = useState("");
+  const [paperSaveError, setPaperSaveError] = useState("");
   const [paperNotice, setPaperNotice] = useState("");
   function localDateTime(value: string) {
     const date = new Date(value);
@@ -1664,6 +1665,7 @@ function ExamDetail({ id }: { id: string }) {
                   onClick={() => {
                     setPaperOpen(!paperOpen);
                     setPaperError("");
+                    setPaperSaveError("");
                     setPaperNotice("");
                   }}
                 >
@@ -1717,6 +1719,7 @@ function ExamDetail({ id }: { id: string }) {
                     onClick={async () => {
                       setPaperBusy(true);
                       setPaperError("");
+                      setPaperSaveError("");
                       setPaperNotice("");
                       setPaperDrafts([]);
                       try {
@@ -1724,6 +1727,7 @@ function ExamDetail({ id }: { id: string }) {
                           source: paperSource,
                         });
                         setPaperDrafts(result.questions);
+                        setPaperError("");
                         setPaperNotice(result.notice ?? "");
                       } catch (err) {
                         setPaperError((err as Error).message);
@@ -1759,6 +1763,7 @@ function ExamDetail({ id }: { id: string }) {
                           onClick={async () => {
                             setPaperSaving(true);
                             setPaperError("");
+                            setPaperSaveError("");
                             try {
                               const result = await api(`exams/${id}/paper`, {
                                 questions: paperDrafts,
@@ -1771,7 +1776,7 @@ function ExamDetail({ id }: { id: string }) {
                                 `${result.count} questions added to this exam.`,
                               );
                             } catch (err) {
-                              setPaperError((err as Error).message);
+                              setPaperSaveError((err as Error).message);
                             } finally {
                               setPaperSaving(false);
                             }
@@ -1781,6 +1786,7 @@ function ExamDetail({ id }: { id: string }) {
                             ? "Adding questions…"
                             : "Add questions to this exam"}
                         </button>
+                        <ErrorBox message={paperSaveError} />
                       </div>
                       {paperDrafts.map((question, index) => (
                         <section className="panel ai-question-card" key={index}>
