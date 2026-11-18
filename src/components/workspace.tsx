@@ -475,7 +475,7 @@ const standard = {
   camera: true,
   aiCameraMonitoring: false,
   microphone: true,
-  location: true,
+  location: false,
   screen: true,
   fullscreen: true,
   classroomCode: true,
@@ -1096,7 +1096,8 @@ function ExamForm({ done, initial }: { done: () => void; initial?: any }) {
           <legend>Choose student checks</legend>
           <p className="small muted">
             Select the additional checks for this exam. Entire-screen sharing is
-            required for every exam and cannot be turned off.
+            required for every exam and cannot be turned off. Classroom location
+            is optional and only required when selected.
           </p>
           <div className="check-grid">
             {[
@@ -1117,8 +1118,8 @@ function ExamForm({ done, initial }: { done: () => void; initial?: any }) {
               ],
               [
                 "location",
-                "Classroom location",
-                "Check the student is within the selected classroom radius.",
+                "Classroom location (optional)",
+                "When selected, require students to be within the selected classroom radius. Leave unchecked to allow entry without location access.",
               ],
               [
                 "screen",

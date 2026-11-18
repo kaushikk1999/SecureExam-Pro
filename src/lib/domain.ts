@@ -5,7 +5,7 @@ export const policySchema = z.object({
   camera: z.boolean().default(true),
   aiCameraMonitoring: z.boolean().default(false),
   microphone: z.boolean().default(true),
-  location: z.boolean().default(true),
+  location: z.boolean().default(false),
   screen: z.boolean().default(false),
   fullscreen: z.boolean().default(true),
   classroomCode: z.boolean().default(true),
