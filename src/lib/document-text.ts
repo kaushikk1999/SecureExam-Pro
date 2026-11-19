@@ -99,7 +99,14 @@ export async function extractPdfText(bytes: Uint8Array) {
 
 export type StructuredSourceQuestion = {
   sourceId: string;
-  type: "MCQ" | "MATCHING" | "SHORT_ANSWER" | "CASE_STUDY" | "ESSAY";
+  type:
+    | "MCQ"
+    | "TRUE_FALSE"
+    | "FILL_BLANK"
+    | "MATCHING"
+    | "SHORT_ANSWER"
+    | "CASE_STUDY"
+    | "ESSAY";
   prompt: string;
   marks: number;
   options: string[];
@@ -113,6 +120,9 @@ export type StructuredSourceQuestion = {
 export function extractStructuredQuestions(source: string) {
   const lines = source
     .replace(/\r\n?/g, "\n")
+    .replace(/([^\n])\s+(?=(?:SECTION|PART)\s+[A-Z0-9]+\s*[—–:-])/gi, "$1\n")
+    .replace(/([^\n])\s+(?=(?:(?:QUESTION|Q)\s*)?\d{1,3}[.)]\s+)/gi, "$1\n")
+    .replace(/([^\n])\s+(?=QUESTION\s+\d{1,3}\s*[—–:-]\s+)/gi, "$1\n")
     .replace(/([^\n])\s+Meanings:\s*/gi, "$1\nMeanings:\n")
     .split("\n");
   const questions: StructuredSourceQuestion[] = [];
@@ -130,10 +140,11 @@ export function extractStructuredQuestions(source: string) {
 
   const savePending = () => {
     if (!pending) return;
+    const caseSection = /CASE/i.test(pending.title);
     const rawLines = pending.lines
       .map((line) => line.trim())
       .filter(Boolean)
-      .filter((line) => !/END OF RETEST/i.test(line))
+      .filter((line) => !/END OF (?:RETEST|EXAM)/i.test(line))
       .filter(
         (line) =>
           !(
@@ -144,8 +155,29 @@ export function extractStructuredQuestions(source: string) {
       );
     const optionLines: string[] = [];
     const stemLines: string[] = [];
-    for (const line of rawLines) {
-      const option = line.match(/^([A-D])[).]\s*(.+)$/i);
+    const questionLines = [pending.label, ...rawLines];
+    for (const line of questionLines) {
+      const inlineMarkers = caseSection
+        ? []
+        : [...line.matchAll(/(?:^|\s)([A-D])[).]\s*/gi)];
+      if (inlineMarkers.length >= 2) {
+        const firstMarker = inlineMarkers[0];
+        const firstStart =
+          (firstMarker.index ?? 0) + firstMarker[0].search(/[A-D]/i);
+        const stem = line.slice(0, firstStart).trim();
+        if (stem) stemLines.push(stem);
+        for (let index = 0; index < inlineMarkers.length; index += 1) {
+          const marker = inlineMarkers[index];
+          const optionStart = (marker.index ?? 0) + marker[0].search(/[A-D]/i);
+          const contentStart = optionStart + marker[0].trimStart().length;
+          const next = inlineMarkers[index + 1];
+          const optionEnd = next?.index ?? line.length;
+          const text = line.slice(contentStart, optionEnd).trim();
+          if (text) optionLines.push(`${marker[1].toUpperCase()}) ${text}`);
+        }
+        continue;
+      }
+      const option = !caseSection && line.match(/^([A-D])[).]\s*(.+)$/i);
       if (option) {
         optionLines.push(`${option[1].toUpperCase()}) ${option[2].trim()}`);
       } else if (!/^Answer\s*(?:\([^)]*\))?\s*:/i.test(line)) {
@@ -174,16 +206,22 @@ export function extractStructuredQuestions(source: string) {
     if (intro) prompt = `${intro}\n\n${prompt}`;
 
     const explicitMarks = `${pending.label} ${pending.lines.join(" ")}`.match(
-      /\((\d+(?:\.\d+)?)\s*marks?\)/i,
+      /\[(\d+(?:\.\d+)?)\]|\((\d+(?:\.\d+)?)\s*marks?\)/i,
     );
     const sectionMarks = pending.title.match(/\d+\s*[×x]\s*(\d+(?:\.\d+)?)/i);
-    const marks = Number(explicitMarks?.[1] ?? sectionMarks?.[1] ?? 1);
+    const marks = Number(
+      explicitMarks?.[1] ?? explicitMarks?.[2] ?? sectionMarks?.[1] ?? 1,
+    );
     let type: StructuredSourceQuestion["type"] = "ESSAY";
-    if (/MULTIPLE\s+CHOICE/i.test(title)) type = "MCQ";
+    if (/TRUE\s*(?:OR|\/)\s*FALSE/i.test(title)) type = "TRUE_FALSE";
+    else if (/FILL.*BLANK/i.test(title)) type = "FILL_BLANK";
+    else if (/MULTIPLE\s+CHOICE/i.test(title)) type = "MCQ";
     else if (sectionMatches) type = "MATCHING";
     else if (/SHORT\s+ANSWER/i.test(title)) type = "SHORT_ANSWER";
-    else if (/CASE\s+STUDY/i.test(title)) type = "CASE_STUDY";
+    else if (/CASE/i.test(title)) type = "CASE_STUDY";
     else if (optionLines.length) type = "MCQ";
+    if (type === "TRUE_FALSE" && !optionLines.length)
+      optionLines.push("True", "False");
 
     if (prompt.trim()) {
       questions.push({
@@ -211,7 +249,7 @@ export function extractStructuredQuestions(source: string) {
     }
 
     const letterLabel = line.match(
-      /^((?:(?:QUESTION|Q)\s*)?[A-Z]?\d{1,3})[.)]\s*(.+)$/i,
+      /^(?:(?:QUESTION|Q)\s*)?([A-Z]?\d{1,3})(?:[.)]\s*|\s*[—–:-]\s*|\s+)(.+)$/i,
     );
     const matchingLabel =
       section === "B" && /MATCHING/i.test(sectionTitle)
@@ -220,19 +258,11 @@ export function extractStructuredQuestions(source: string) {
     const match = letterLabel ?? matchingLabel;
     if (match) {
       savePending();
-      const sourceId = match[1]
-        .toUpperCase()
-        .replace(/^QUESTION\s*/, "Q")
-        .replace(/\s+/g, "");
-      const cleanLabel = match[2]
-        .split("\t", 1)[0]
-        .replace(/\s+Your answer.*$/i, "")
-        .replace(/\s+Meanings:\s*$/i, "")
-        .trim();
-      const label = `${sourceId}. ${cleanLabel}`;
+      const questionNumber = match[1].toUpperCase().replace(/\s+/g, "");
+      const sourceId = `${section || "Q"}-${questionNumber}`;
       pending = {
         sourceId,
-        label,
+        label: originalLine.trim(),
         lines: [],
         section,
         title: sectionTitle,

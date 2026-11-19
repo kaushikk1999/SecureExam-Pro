@@ -866,6 +866,24 @@ function ExamForm({ done, initial }: { done: () => void; initial?: any }) {
     [busy, setBusy] = useState(false),
     [roomId, setRoomId] = useState(""),
     [locationStatus, setLocationStatus] = useState("");
+  function date(v?: string) {
+    const d = v ? new Date(v) : new Date(formNow);
+    return new Date(d.getTime() - d.getTimezoneOffset() * 60000)
+      .toISOString()
+      .slice(0, 16);
+  }
+  const [startsAt, setStartsAt] = useState(() => date(initial?.starts_at));
+  const [duration, setDuration] = useState(
+    String(initial?.duration_minutes ?? 90),
+  );
+  const [endsAt, setEndsAt] = useState(() =>
+    date(
+      initial?.ends_at ??
+        new Date(
+          formNow + (initial?.duration_minutes ?? 90) * 60000,
+        ).toISOString(),
+    ),
+  );
   useEffect(() => {
     if (!rooms?.length || roomId) return;
     let cancelled = false;
@@ -930,12 +948,6 @@ function ExamForm({ done, initial }: { done: () => void; initial?: any }) {
       cancelled = true;
     };
   }, [rooms, initial, roomId]);
-  function date(v?: string) {
-    const d = v ? new Date(v) : new Date();
-    return new Date(d.getTime() - d.getTimezoneOffset() * 60000)
-      .toISOString()
-      .slice(0, 16);
-  }
   return (
     <section className="panel form-panel">
       <h2>{initial ? "Edit draft" : "A new examination"}</h2>
@@ -950,9 +962,9 @@ function ExamForm({ done, initial }: { done: () => void; initial?: any }) {
               {
                 title: f.get("title"),
                 courseId: f.get("course"),
-                startsAt: new Date(String(f.get("start"))).toISOString(),
-                endsAt: new Date(String(f.get("end"))).toISOString(),
-                duration: Number(f.get("duration")),
+                startsAt: new Date(startsAt).toISOString(),
+                endsAt: new Date(endsAt).toISOString(),
+                duration: Number(duration),
                 passingScore: Number(f.get("pass")),
                 instructions,
                 policy,
@@ -999,7 +1011,19 @@ function ExamForm({ done, initial }: { done: () => void; initial?: any }) {
               required
               name="start"
               type="datetime-local"
-              defaultValue={date(initial?.starts_at)}
+              value={startsAt}
+              onChange={(event) => {
+                const nextStart = event.target.value;
+                setStartsAt(nextStart);
+                const startMs = new Date(nextStart).getTime();
+                const currentDuration = Number(duration);
+                if (Number.isFinite(startMs) && currentDuration > 0)
+                  setEndsAt(
+                    date(
+                      new Date(startMs + currentDuration * 60000).toISOString(),
+                    ),
+                  );
+              }}
             />
           </label>
           <label>
@@ -1008,9 +1032,34 @@ function ExamForm({ done, initial }: { done: () => void; initial?: any }) {
               required
               name="end"
               type="datetime-local"
-              defaultValue={date(
-                initial?.ends_at ?? new Date(formNow + 7200000).toISOString(),
-              )}
+              value={endsAt}
+              onChange={(event) => {
+                const nextEnd = event.target.value;
+                setEndsAt(nextEnd);
+                const startMs = new Date(startsAt).getTime();
+                const endMs = new Date(nextEnd).getTime();
+                if (!Number.isFinite(startMs) || !Number.isFinite(endMs))
+                  return;
+                const currentDuration = Number(duration) || 90;
+                if (endMs <= startMs) {
+                  setStartsAt(
+                    date(
+                      new Date(endMs - currentDuration * 60000).toISOString(),
+                    ),
+                  );
+                  return;
+                }
+                const nextDuration = Math.min(
+                  600,
+                  Math.max(1, Math.round((endMs - startMs) / 60000)),
+                );
+                setDuration(String(nextDuration));
+                setEndsAt(
+                  date(
+                    new Date(startMs + nextDuration * 60000).toISOString(),
+                  ),
+                );
+              }}
             />
           </label>
           <label>
@@ -1021,7 +1070,23 @@ function ExamForm({ done, initial }: { done: () => void; initial?: any }) {
               min={1}
               max={600}
               name="duration"
-              defaultValue={initial?.duration_minutes ?? 90}
+              value={duration}
+              onChange={(event) => {
+                const rawValue = event.target.value;
+                setDuration(rawValue);
+                if (!rawValue) return;
+                const rawDuration = Number(rawValue);
+                if (!Number.isFinite(rawDuration)) return;
+                const nextDuration = Math.min(600, Math.max(1, rawDuration));
+                setDuration(String(nextDuration));
+                const startMs = new Date(startsAt).getTime();
+                if (Number.isFinite(startMs))
+                  setEndsAt(
+                    date(
+                      new Date(startMs + nextDuration * 60000).toISOString(),
+                    ),
+                  );
+              }}
             />
           </label>
           <label>
