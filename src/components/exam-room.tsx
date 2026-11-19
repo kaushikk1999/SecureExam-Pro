@@ -1464,7 +1464,7 @@ export default function ExamRoom({
         ? [
             [
               "Ollama camera review",
-              "During the exam, two small, low-resolution camera samples are sent to Ollama about once every 20 seconds. If no face is clearly visible in either sample, or two or more distinct faces are clearly visible, that detection counts as a security warning and can contribute to automatic submission at the exam's warning limit. Possible mouth movement or a phone/extra screen produce advisory signals only. Samples are transient and are not stored by this app. Automated results can be mistaken and do not prove misconduct; instructors can review the signal and time.",
+              "During the exam, two small, low-resolution camera samples are sent to Ollama about once every 5 seconds. If no face is clearly visible in either sample, or two or more distinct faces are clearly visible, that detection counts as a security warning and can contribute to automatic submission at the exam's warning limit. Possible mouth movement or a phone/extra screen produce advisory signals only. Samples are transient and are not stored by this app. Automated results can be mistaken and do not prove misconduct; instructors can review the signal and time.",
             ],
           ]
         : []),
@@ -1992,7 +1992,7 @@ export default function ExamRoom({
                 onChange={(event) => setAiCameraAccepted(event.target.checked)}
               />{" "}
               I understand and agree that two reduced camera samples are sent to
-              Ollama about once every 20 seconds. If no face is clearly visible
+              Ollama about once every 5 seconds. If no face is clearly visible
               in either sample, or two or more distinct faces are clearly
               visible, that detection counts as a security warning and may
               contribute to automatic submission at the exam warning limit.

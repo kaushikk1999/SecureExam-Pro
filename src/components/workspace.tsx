@@ -1174,7 +1174,7 @@ function ExamForm({ done, initial }: { done: () => void; initial?: any }) {
               [
                 "aiCameraMonitoring",
                 "Ollama camera review (optional)",
-                "Send two small, temporary camera samples to Ollama about every 20 seconds. A missing-face or two-or-more-faces detection counts as a warning strike; other signals are advisory. False detections are possible.",
+                "Send two small, temporary camera samples to Ollama about every 5 seconds. A missing-face or two-or-more-faces detection counts as a warning strike; other signals are advisory. False detections are possible.",
               ],
               [
                 "microphone",
