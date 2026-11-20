@@ -46,6 +46,8 @@ import {
   syncSheets,
   storePrivateFile,
   archiveWarningEvidenceToDrive,
+  assertDriveRecordingReady,
+  storeScreenRecordingPart,
   readPrivateFile,
   deletePrivateFile,
 } from "@/lib/integrations";
@@ -54,6 +56,7 @@ import {
   processStorageCleanupJobs,
 } from "@/lib/storage-cleanup";
 import { examRequestDeviceAllowed } from "@/lib/exam-device";
+import { screenIceConfiguration } from "@/lib/screen-ice";
 import {
   extractDocxText,
   extractPdfText,
@@ -828,6 +831,12 @@ async function dispatch(req: Request, parts: string[]) {
             403,
             "This exam can only be taken on a laptop or tablet. Phones are not allowed.",
           );
+        if (input.deviceClass === "laptop" && input.screenRecordingAccepted) {
+          const [existingAttempt] = await query(
+            sql`SELECT id FROM attempts WHERE exam_id=${id} AND user_id=${u.id}`,
+          );
+          if (!existingAttempt) await assertDriveRecordingReady();
+        }
         return json(await startAttempt(id, u, input));
       } catch (e) {
         await record({
@@ -1109,10 +1118,21 @@ async function dispatch(req: Request, parts: string[]) {
     }
     if (action === "ai-paper-draft") {
       if (method !== "POST") throw new HttpError(405, "POST required.");
-      if (e.status !== "DRAFT")
+      if (e.status === "ARCHIVED")
         throw new HttpError(
           409,
-          "Only draft exams can build a question paper.",
+          "Archived examinations are read-only.",
+        );
+      if (
+        (
+          await query(
+            sql`SELECT id FROM attempts WHERE exam_id=${id} AND status='ACTIVE' LIMIT 1`,
+          )
+        ).length
+      )
+        throw new HttpError(
+          409,
+          "Question editing is locked while students have active attempts.",
         );
       const v = z
         .object({ source: z.string().trim().min(10).max(30000) })
@@ -1266,14 +1286,14 @@ async function dispatch(req: Request, parts: string[]) {
     }
     if (action === "paper") {
       if (method !== "POST") throw new HttpError(405, "POST required.");
-      if (e.status !== "DRAFT")
-        throw new HttpError(
-          409,
-          "Only draft exams can change the question paper.",
-        );
       const v = z
-        .object({ questions: z.array(questionSchema).min(1).max(40) })
+        .object({
+          questions: z.array(questionSchema).min(1).max(40),
+          replace: z.boolean().default(false),
+        })
         .parse(await body(req));
+      if (e.status === "ARCHIVED")
+        throw new HttpError(409, "Archived examinations are read-only.");
       const created = v.questions.map((q, position) => ({
         id: randomUUID(),
         ...q,
@@ -1285,10 +1305,23 @@ async function dispatch(req: Request, parts: string[]) {
             sql`SELECT status FROM exams WHERE id=${id} FOR UPDATE`,
             tx,
           );
-          if (!locked || locked.status !== "DRAFT")
+          if (!locked || locked.status === "ARCHIVED")
             throw new HttpError(
               409,
-              "Only draft exams can change the question paper.",
+              "Archived examinations are read-only.",
+            );
+          const [active] = await query(
+            sql`SELECT id FROM attempts WHERE exam_id=${id} AND status='ACTIVE' LIMIT 1`,
+            tx,
+          );
+          if (active)
+            throw new HttpError(
+              409,
+              "Question editing is locked while students have active attempts.",
+            );
+          if (v.replace)
+            await tx.execute(
+              sql`DELETE FROM exam_questions WHERE exam_id=${id}`,
             );
           const [offset] = await query(
             sql`SELECT COALESCE(max(position),-1)+1 AS position FROM exam_questions WHERE exam_id=${id}`,
@@ -1322,6 +1355,7 @@ async function dispatch(req: Request, parts: string[]) {
             type: "AI_PAPER_ADDED",
             metadata: {
               count: created.length,
+              replaced: v.replace,
               questionIds: created.map((q) => q.id),
             },
           });
@@ -1343,7 +1377,7 @@ async function dispatch(req: Request, parts: string[]) {
           "The formatted questions could not be saved. Your review draft is still available; retry the save.",
         );
       }
-      return json({ ok: true, count: created.length });
+      return json({ ok: true, count: created.length, replaced: v.replace });
     }
     if (action === "room-code") {
       const nowMs = Date.now();
@@ -1461,8 +1495,8 @@ async function dispatch(req: Request, parts: string[]) {
       const v = z
         .object({ questionId: uuid, remove: z.boolean().default(false) })
         .parse(await body(req));
-      if (e.status !== "DRAFT")
-        throw new HttpError(409, "Only draft exams can change questions.");
+      if (e.status === "ARCHIVED")
+        throw new HttpError(409, "Archived examinations are read-only.");
       const [q] = await query(
         sql`SELECT id FROM questions WHERE id=${v.questionId} AND deleted_at IS NULL AND (${u.role === "ADMIN"} OR teacher_id=${u.id})`,
       );
@@ -1472,8 +1506,17 @@ async function dispatch(req: Request, parts: string[]) {
           sql`SELECT status FROM exams WHERE id=${id} FOR UPDATE`,
           tx,
         );
-        if (locked.status !== "DRAFT")
-          throw new HttpError(409, "Only drafts can change questions.");
+        if (!locked || locked.status === "ARCHIVED")
+          throw new HttpError(409, "Archived examinations are read-only.");
+        const [active] = await query(
+          sql`SELECT id FROM attempts WHERE exam_id=${id} AND status='ACTIVE' LIMIT 1`,
+          tx,
+        );
+        if (active)
+          throw new HttpError(
+            409,
+            "Question editing is locked while students have active attempts.",
+          );
         if (v.remove)
           await tx.execute(
             sql`DELETE FROM exam_questions WHERE exam_id=${id} AND question_id=${v.questionId}`,
@@ -1665,18 +1708,62 @@ async function dispatch(req: Request, parts: string[]) {
       return json({ ok: true });
     }
     if (method === "PATCH") {
-      if (e.status !== "DRAFT")
-        throw new HttpError(409, "Only drafts can be edited.");
       const v = examSchema.parse(await body(req));
-      await courseAccess(v.courseId, u);
-      await query(
-        sql`UPDATE exams SET title=${v.title},instructions=${v.instructions},course_id=${v.courseId},starts_at=${v.startsAt},ends_at=${v.endsAt},duration_minutes=${v.duration},policy=${JSON.stringify(v.policy)}::jsonb,classroom=${JSON.stringify(v.classroom)}::jsonb,passing_score=${v.passingScore} WHERE id=${id}`,
-      );
-      await record({ userId: u.id, examId: id, type: "EXAM_UPDATED" });
+      await db.transaction(async (tx) => {
+        const [locked] = await query(
+          sql`SELECT * FROM exams WHERE id=${id} FOR UPDATE`,
+          tx,
+        );
+        if (!locked || locked.status === "ARCHIVED")
+          throw new HttpError(409, "Archived examinations are read-only.");
+        if (locked.status === "DRAFT") await courseAccess(v.courseId, u);
+        else if (v.courseId !== locked.course_id)
+          throw new HttpError(
+            409,
+            "The course cannot be changed after an examination is published.",
+          );
+        const [active] = await query(
+          sql`SELECT id FROM attempts WHERE exam_id=${id} AND status='ACTIVE' LIMIT 1`,
+          tx,
+        );
+        const policyChanged =
+          JSON.stringify(v.policy) !== JSON.stringify(locked.policy);
+        const classroomChanged =
+          JSON.stringify(v.classroom) !== JSON.stringify(locked.classroom);
+        const scheduleChanged =
+          new Date(v.startsAt).getTime() !==
+            new Date(locked.starts_at).getTime() ||
+          new Date(v.endsAt).getTime() !== new Date(locked.ends_at).getTime() ||
+          v.duration !== Number(locked.duration_minutes);
+        if (active && (policyChanged || classroomChanged || scheduleChanged))
+          throw new HttpError(
+            409,
+            "Students have active attempts. Schedule, time limit, classroom, and security checks cannot change until they finish. Use Edit schedule for an approved schedule adjustment.",
+          );
+        await tx.execute(sql`
+          UPDATE exams SET
+            title=${v.title},instructions=${v.instructions},
+            course_id=${v.courseId},starts_at=${v.startsAt},ends_at=${v.endsAt},
+            duration_minutes=${v.duration},policy=${JSON.stringify(v.policy)}::jsonb,
+            classroom=${JSON.stringify(v.classroom)}::jsonb,
+            passing_score=${v.passingScore}
+          WHERE id=${id}
+        `);
+      });
+      await record({
+        userId: u.id,
+        examId: id,
+        type: "EXAM_UPDATED",
+        metadata: { status: e.status },
+      });
       return json({ ok: true });
     }
     const safe = { ...e };
     delete safe.code_secret;
+    const [activeCountRow] = await query<{ count: number }>(
+      sql`SELECT count(*)::int AS count FROM attempts WHERE exam_id=${id} AND status='ACTIVE'`,
+    );
+    const activeAttemptCount = activeCountRow?.count ?? 0;
     const [questions, files, availableQuestions] = await Promise.all([
       query(
         sql`SELECT q.* FROM exam_questions eq JOIN questions q ON q.id=eq.question_id WHERE eq.exam_id=${id} ORDER BY position`,
@@ -1684,7 +1771,7 @@ async function dispatch(req: Request, parts: string[]) {
       query(
         sql`SELECT id,name,mime,extracted_text FROM files WHERE exam_id=${id} AND attempt_id IS NULL`,
       ),
-      e.status === "DRAFT"
+      e.status !== "ARCHIVED" && activeAttemptCount === 0
         ? query(
             sql`SELECT * FROM questions WHERE deleted_at IS NULL AND (${u.role === "ADMIN"} OR teacher_id=${u.id}) ORDER BY created_at DESC`,
           )
@@ -1692,6 +1779,7 @@ async function dispatch(req: Request, parts: string[]) {
     ]);
     return json({
       ...safe,
+      activeAttemptCount,
       questions,
       files,
       availableQuestions,
@@ -1700,6 +1788,123 @@ async function dispatch(req: Request, parts: string[]) {
   if (resource === "attempts") {
     uuid.parse(id);
     const device = req.headers.get("x-exam-device") ?? undefined;
+    if (action === "recordings") {
+      if (method === "GET") {
+        const [attempt] = await query<any>(
+          sql`SELECT a.exam_id,a.user_id,a.device_state,e.title FROM attempts a JOIN exams e ON e.id=a.exam_id WHERE a.id=${id}`,
+        );
+        if (!attempt) throw new HttpError(404, "Attempt not found.");
+        if (u.role === "STUDENT") {
+          if (attempt.user_id !== u.id)
+            throw new HttpError(403, "Attempt access denied.");
+        } else await ownedExam(attempt.exam_id, u);
+        if (attempt.device_state?.screenRecordingAccepted !== true)
+          throw new HttpError(404, "No consented screen recording exists.");
+        const parts = await query(
+          sql`SELECT id,name,size,created_at FROM files WHERE attempt_id=${id} AND mime='video/webm' AND name LIKE ${`SCREEN_RECORDING::${id}::%`} ORDER BY name`,
+        );
+        return json({ title: attempt.title, parts });
+      }
+      if (method !== "POST") throw new HttpError(405, "GET or POST required.");
+      if (u.role !== "STUDENT")
+        throw new HttpError(403, "Student attempt access required.");
+      if (!(await rateLimit(`recording:${id}`, 20, 60)))
+        throw new HttpError(
+          429,
+          "Recording upload is temporarily rate limited; it will retry.",
+        );
+      const sequence = Number(req.headers.get("x-recording-sequence"));
+      if (
+        !Number.isSafeInteger(sequence) ||
+        sequence < 0 ||
+        sequence > 10_000_000_000_000
+      )
+        throw new HttpError(400, "Invalid recording segment number.");
+      const mime = req.headers.get("content-type")?.split(";")[0].trim();
+      if (mime !== "video/webm")
+        throw new HttpError(415, "Screen recording must use WebM video.");
+      const contentLength = Number(req.headers.get("content-length") ?? 0);
+      if (contentLength > 3_500_000)
+        throw new HttpError(413, "Recording segment exceeds 3.5 MB.");
+      const bytes = Buffer.from(await req.arrayBuffer());
+      if (!bytes.length || bytes.length > 3_500_000)
+        throw new HttpError(
+          413,
+          "Recording segment must be between 1 byte and 3.5 MB.",
+        );
+      const partName = `SCREEN_RECORDING::${id}::${String(sequence).padStart(13, "0")}.webm`;
+      const [alreadyStored] = await query<any>(
+        sql`SELECT id FROM files WHERE attempt_id=${id} AND name=${partName}`,
+      );
+      if (alreadyStored) return json({ id: alreadyStored.id, duplicate: true });
+      let examId = "";
+      let examTitle = "";
+      await db.transaction(async (tx) => {
+        const a = await lockedAttempt(id, u, tx, device);
+        examId = a.exam_id;
+        const [exam] = await query<{ title: string }>(
+          sql`SELECT title FROM exams WHERE id=${a.exam_id}`,
+          tx,
+        );
+        examTitle = exam?.title ?? "Exam";
+        if (
+          a.device_state?.deviceClass !== "laptop" ||
+          a.device_state?.screenRecordingAccepted !== true
+        )
+          throw new HttpError(
+            403,
+            "Screen recording was not accepted for this attempt.",
+          );
+        const isRecentCompletion =
+          a.status !== "ACTIVE" &&
+          a.submitted_at &&
+          new Date(a.submitted_at).getTime() > Date.now() - 15 * 60_000;
+        if (a.status !== "ACTIVE" && !isRecentCompletion)
+          throw new HttpError(
+            409,
+            "This screen recording upload window has ended.",
+          );
+      });
+      const reference = await storeScreenRecordingPart({
+        attemptId: id,
+        examId,
+        examTitle,
+        studentName: u.name,
+        studentId: u.student_id,
+        name: partName,
+        bytes,
+      });
+      let inserted = false;
+      try {
+        await db.transaction(async (tx) => {
+          const a = await lockedAttempt(id, u, tx, device);
+          if (
+            a.exam_id !== examId ||
+            a.device_state?.screenRecordingAccepted !== true
+          )
+            throw new HttpError(
+              409,
+              "Recording attempt changed during upload.",
+            );
+          const [existingPart] = await query<any>(
+            sql`SELECT id FROM files WHERE attempt_id=${id} AND name=${partName}`,
+            tx,
+          );
+          if (existingPart) return;
+          const fileId = randomUUID();
+          await tx.execute(sql`
+            INSERT INTO files(id,exam_id,attempt_id,owner_id,name,mime,url,size,extracted_text)
+            VALUES(${fileId},${examId},${id},${u.id},${partName},'video/webm',${reference},${bytes.length},'')
+          `);
+          inserted = true;
+        });
+      } catch (error) {
+        await deletePrivateFile(reference).catch(() => undefined);
+        throw error;
+      }
+      if (!inserted) await deletePrivateFile(reference).catch(() => undefined);
+      return json({ ok: true, sequence, bytes: bytes.length });
+    }
     if (action === "vision-review") {
       if (method !== "POST") throw new HttpError(405, "POST required.");
       if (u.role !== "STUDENT")
@@ -1818,6 +2023,35 @@ async function dispatch(req: Request, parts: string[]) {
     }
     if (action === "screen") {
       const operation = parts[3];
+      if (method === "GET" && operation === "ice") {
+        const [attempt] = await query<any>(
+          sql`SELECT a.id,a.user_id,a.exam_id,a.status,a.device_state,e.policy FROM attempts a JOIN exams e ON e.id=a.exam_id WHERE a.id=${id}`,
+        );
+        if (!attempt) throw new HttpError(404, "Attempt not found.");
+        if (u.role === "STUDENT") {
+          if (attempt.user_id !== u.id)
+            throw new HttpError(403, "Attempt access denied.");
+        } else await ownedExam(attempt.exam_id, u);
+        const screenSharingEnabled =
+          attempt.device_state?.deviceClass === "laptop" ||
+          (!attempt.device_state?.deviceClass && !!attempt.policy?.screen);
+        if (
+          attempt.status !== "ACTIVE" ||
+          !screenSharingEnabled ||
+          attempt.device_state?.deviceClass === "tablet"
+        )
+          throw new HttpError(
+            409,
+            "Live screen sharing is not available for this attempt.",
+          );
+        return json(
+          screenIceConfiguration(
+            process.env.SCREEN_TURN_URLS,
+            process.env.SCREEN_TURN_SHARED_SECRET,
+            `${attempt.id}:${u.id}`,
+          ),
+        );
+      }
       if (method === "GET") {
         const [attempt] = await query<any>(
           sql`SELECT a.id,a.user_id,a.exam_id,a.status,a.device_state,e.policy FROM attempts a JOIN exams e ON e.id=a.exam_id WHERE a.id=${id}`,
@@ -2648,8 +2882,19 @@ async function dispatch(req: Request, parts: string[]) {
         });
       } else {
         const exam = await ownedExam(examId, u);
-        if (exam.status !== "DRAFT")
-          throw new HttpError(409, "Materials can only be added to a draft.");
+        if (exam.status === "ARCHIVED")
+          throw new HttpError(409, "Archived examinations are read-only.");
+        if (
+          (
+            await query(
+              sql`SELECT id FROM attempts WHERE exam_id=${examId} AND status='ACTIVE' LIMIT 1`,
+            )
+          ).length
+        )
+          throw new HttpError(
+            409,
+            "Exam materials are locked while students have active attempts.",
+          );
       }
       const ext = file.name.split(".").pop()?.toLowerCase();
       const types: Record<string, string> = {
@@ -2792,14 +3037,6 @@ async function dispatch(req: Request, parts: string[]) {
           "Only a teacher's exam material can be deleted here.",
         );
       const e = await ownedExam(f.exam_id, u);
-      if (
-        !["DRAFT", "CLOSED", "ARCHIVED"].includes(e.status) &&
-        new Date(e.ends_at).getTime() > Date.now()
-      )
-        throw new HttpError(
-          409,
-          "Question papers can be removed after the exam ends or is closed.",
-        );
       const activeAttempts = await query(
         sql`SELECT id FROM attempts WHERE exam_id=${e.id} AND status='ACTIVE' LIMIT 1`,
       );

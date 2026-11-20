@@ -6,6 +6,7 @@ import { query } from "./db";
 import { HttpError } from "./auth";
 
 const DRIVE_SCOPE = "https://www.googleapis.com/auth/drive";
+const recordingFolderCache = new Map<string, string>();
 
 function googleAuth(scopes: string[]) {
   const projectNumber = process.env.GCP_PROJECT_NUMBER;
@@ -171,6 +172,21 @@ async function ensureDriveFolder(
   if (!result.id)
     throw new HttpError(502, "Google Drive returned no folder ID.");
   return result.id;
+}
+
+async function cachedDriveFolder(
+  token: string,
+  parentId: string,
+  name: string,
+) {
+  const key = `${parentId}:${name}`;
+  const cached = recordingFolderCache.get(key);
+  if (cached) return cached;
+  const folderId = await ensureDriveFolder(token, parentId, name);
+  if (recordingFolderCache.size >= 1000)
+    recordingFolderCache.delete(recordingFolderCache.keys().next().value!);
+  recordingFolderCache.set(key, folderId);
+  return folderId;
 }
 
 async function uploadDriveFile(
@@ -502,6 +518,79 @@ export async function storePrivateFile(
   const result = (await response.json()) as { id?: string };
   if (!result.id) throw new HttpError(502, "Google Drive returned no file ID.");
   return `gdrive:${result.id}`;
+}
+
+/** Store a screen-recording segment in Google Drive only; recordings must not silently fall back to another provider. */
+export async function storeScreenRecordingPart(input: {
+  attemptId: string;
+  examId: string;
+  examTitle: string;
+  studentName: string;
+  studentId: string | null;
+  name: string;
+  bytes: Buffer;
+}) {
+  const folderId = process.env.GDRIVE_FOLDER_ID;
+  if (!folderId)
+    throw new HttpError(
+      503,
+      "Google Drive recording storage is not configured. Ask your administrator to configure the Secure Exam Drive folder.",
+    );
+  const token = await driveToken();
+  const rootId = await cachedDriveFolder(token, folderId, "Secure Exam");
+  const examFolderId = await cachedDriveFolder(
+    token,
+    rootId,
+    `${safeDriveName(input.examTitle, "Exam")} (${input.examId.slice(0, 8)})`,
+  );
+  const studentName = `${safeDriveName(input.studentName, "Student")} (${safeDriveName(input.studentId ?? input.attemptId.slice(0, 8), "no-id")})`;
+  const studentFolderId = await cachedDriveFolder(
+    token,
+    examFolderId,
+    studentName,
+  );
+  const id = await uploadDriveFile(
+    token,
+    studentFolderId,
+    input.name,
+    "video/webm",
+    input.bytes,
+  );
+  return `gdrive:${id}`;
+}
+
+/** Confirm that a new exam recording can be written before allowing the exam to begin. */
+export async function assertDriveRecordingReady() {
+  const folderId = process.env.GDRIVE_FOLDER_ID;
+  if (!folderId)
+    throw new HttpError(
+      503,
+      "This exam requires Google Drive screen recording, but Drive storage is not configured. Ask your administrator to configure the Secure Exam Drive folder.",
+    );
+  const token = await driveToken();
+  const response = await fetch(
+    `https://www.googleapis.com/drive/v3/files/${encodeURIComponent(folderId)}?fields=id,mimeType,capabilities(canAddChildren)`,
+    { headers: { Authorization: `Bearer ${token}` }, cache: "no-store" },
+  );
+  if (!response.ok)
+    throw new HttpError(
+      503,
+      "Secure Exam cannot verify access to its Google Drive folder. Ask your administrator to check Drive sharing and try again.",
+    );
+  const folder = (await response.json()) as {
+    id?: string;
+    mimeType?: string;
+    capabilities?: { canAddChildren?: boolean };
+  };
+  if (
+    folder.id !== folderId ||
+    folder.mimeType !== "application/vnd.google-apps.folder" ||
+    folder.capabilities?.canAddChildren === false
+  )
+    throw new HttpError(
+      503,
+      "The configured Google Drive location is not a writable folder. Ask your administrator to correct the Secure Exam Drive settings.",
+    );
 }
 
 export async function readPrivateFile(reference: string) {

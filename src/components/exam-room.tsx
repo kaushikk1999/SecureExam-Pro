@@ -4,7 +4,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import dynamic from "next/dynamic";
 import { loader } from "@monaco-editor/react";
-import { get, set, del } from "idb-keyval";
+import { get, set, del, keys } from "idb-keyval";
 import {
   ShieldCheck,
   Camera,
@@ -112,6 +112,8 @@ export default function ExamRoom({
     }),
     [deviceClass, setDeviceClass] = useState<ExamDeviceClass>("unsupported"),
     [accepted, setAccepted] = useState(false),
+    [screenRecordingAccepted, setScreenRecordingAccepted] = useState(false),
+    [screenRecordingStatus, setScreenRecordingStatus] = useState(""),
     [aiCameraAccepted, setAiCameraAccepted] = useState(false),
     [cameraEvidenceAccepted, setCameraEvidenceAccepted] = useState(false),
     [studentId, setStudentId] = useState(user.student_id ?? ""),
@@ -867,6 +869,7 @@ export default function ExamRoom({
         deviceSessionId: device.current,
         deviceClass,
         accepted,
+        screenRecordingAccepted,
         aiCameraAccepted,
         cameraEvidenceAccepted,
         checks: {
@@ -893,6 +896,173 @@ export default function ExamRoom({
       setBusy(false);
     }
   }
+  useEffect(() => {
+    const attemptId = attempt?.id;
+    if (
+      !attemptId ||
+      !attempt.device_state?.screenRecordingAccepted ||
+      attempt.device_state?.deviceClass !== "laptop"
+    )
+      return;
+
+    const prefix = `exam-screen-recording:${attemptId}:`;
+    const headers = {
+      "x-exam-device": device.current,
+      "Content-Type": "video/webm",
+    };
+    let recorder: MediaRecorder | null = null;
+    let nextSequence = Date.now();
+    let draining = false;
+    let disposed = false;
+    const drain = async () => {
+      if (draining || disposed || !navigator.onLine) return;
+      draining = true;
+      try {
+        const pending = (await keys())
+          .filter(
+            (key): key is string =>
+              typeof key === "string" && key.startsWith(prefix),
+          )
+          .sort();
+        for (const key of pending) {
+          const blob = await get<Blob>(key);
+          if (!blob) {
+            await del(key);
+            continue;
+          }
+          const sequence = Number(key.slice(prefix.length));
+          const response = await fetch(
+            `/api/platform/attempts/${attemptId}/recordings`,
+            {
+              method: "POST",
+              headers: {
+                ...headers,
+                "x-recording-sequence": String(sequence),
+              },
+              body: blob,
+              cache: "no-store",
+            },
+          );
+          if (!response.ok) {
+            const result = await response.json().catch(() => null);
+            throw new Error(
+              result?.error ||
+                "Drive could not save a screen recording segment.",
+            );
+          }
+          await del(key);
+        }
+        setScreenRecordingStatus(
+          "Recording continues; all queued segments are saved in Google Drive.",
+        );
+      } catch (cause) {
+        setScreenRecordingStatus(
+          `Recording is safely queued on this device and will retry: ${(cause as Error).message}`,
+        );
+      } finally {
+        draining = false;
+      }
+    };
+
+    const enqueue = async (blob: Blob) => {
+      if (!blob.size) return;
+      const sequence = nextSequence++;
+      const key = `${prefix}${String(sequence).padStart(13, "0")}`;
+      try {
+        await set(key, blob);
+        setScreenRecordingStatus(
+          navigator.onLine
+            ? "Recording screen; saving segments to Google Drive."
+            : "Internet is unavailable; recording segments are queued in this browser for retry.",
+        );
+      } catch {
+        setScreenRecordingStatus(
+          "Recording storage is full or unavailable on this device. Contact your instructor immediately.",
+        );
+        recorder?.stop();
+        return;
+      }
+      void drain();
+    };
+
+    const startRecording = async () => {
+      await drain();
+      if (!screenStream.current || typeof MediaRecorder === "undefined") {
+        if (active.current?.status === "ACTIVE")
+          setScreenRecordingStatus(
+            "This browser cannot record the shared screen.",
+          );
+        return;
+      }
+      const videoTrack = screenStream.current.getVideoTracks()[0];
+      if (!captureTrackIsActive(videoTrack)) {
+        setScreenRecordingStatus(
+          "Screen recording is waiting for the full-screen share.",
+        );
+        return;
+      }
+      const existingKeys = (await keys()).filter(
+        (key): key is string =>
+          typeof key === "string" && key.startsWith(prefix),
+      );
+      nextSequence = existingKeys.reduce((largest, key) => {
+        const value = Number(key.slice(prefix.length));
+        return Number.isSafeInteger(value)
+          ? Math.max(largest, value + 1)
+          : largest;
+      }, Date.now());
+      const mimeType = [
+        "video/webm;codecs=vp9",
+        "video/webm;codecs=vp8",
+        "video/webm",
+      ].find((candidate) => MediaRecorder.isTypeSupported(candidate));
+      try {
+        recorder = new MediaRecorder(screenStream.current, {
+          ...(mimeType ? { mimeType } : {}),
+          videoBitsPerSecond: 1_000_000,
+        });
+        recorder.ondataavailable = (event) => void enqueue(event.data);
+        recorder.onerror = () =>
+          setScreenRecordingStatus(
+            "Screen recording stopped unexpectedly. Contact your instructor before continuing.",
+          );
+        recorder.start(10_000);
+        setScreenRecordingStatus(
+          "Recording full screen; Google Drive saving is active.",
+        );
+      } catch (cause) {
+        setScreenRecordingStatus(
+          `This browser could not start screen recording: ${(cause as Error).message}`,
+        );
+      }
+    };
+
+    const retryTimer = setInterval(() => void drain(), 8000);
+    void startRecording();
+    const retry = () => void drain();
+    window.addEventListener("online", retry);
+    const terminalCheck = setInterval(() => {
+      if (
+        active.current?.status !== "ACTIVE" &&
+        recorder?.state === "recording"
+      )
+        recorder.stop();
+    }, 3000);
+    return () => {
+      if (retryTimer) clearInterval(retryTimer);
+      clearInterval(terminalCheck);
+      window.removeEventListener("online", retry);
+      if (recorder && recorder.state !== "inactive") recorder.stop();
+      void drain();
+      window.setTimeout(() => {
+        disposed = true;
+      }, 30_000);
+    };
+  }, [
+    attempt?.id,
+    attempt?.device_state?.deviceClass,
+    attempt?.device_state?.screenRecordingAccepted,
+  ]);
   useEffect(() => {
     if (!attempt?.id || attempt.status !== "ACTIVE") return;
     const tick = setInterval(() => {
@@ -1305,9 +1475,11 @@ export default function ExamRoom({
           return;
         }
         if (signal.requestId !== requestId) {
+          const iceConfig = await api(path + "/ice");
+          if (disposed) return;
           peer?.close();
           peer = new RTCPeerConnection({
-            iceServers: [{ urls: "stun:stun.l.google.com:19302" }],
+            iceServers: iceConfig.iceServers,
           });
           requestId = signal.requestId;
           const screenTracks = screenStream.current?.getVideoTracks() ?? [];
@@ -1330,6 +1502,9 @@ export default function ExamRoom({
           await peer.setRemoteDescription(signal.answer);
       } catch {
         sendingOffer = false;
+        peer?.close();
+        peer = null;
+        requestId = "";
         // A dropped signaling poll should not interrupt the exam.
       } finally {
         pollBusy = false;
@@ -1567,6 +1742,8 @@ export default function ExamRoom({
       identitySaved &&
       identityConfirmed &&
       accepted &&
+      (!examScreenSharingRequired(p.screen, deviceClass) ||
+        (screenRecordingAccepted && typeof MediaRecorder !== "undefined")) &&
       (!p.aiCameraMonitoring || !p.camera || aiCameraAccepted) &&
       (deviceClass !== "tablet" || !p.camera || cameraEvidenceAccepted) &&
       online &&
@@ -1631,7 +1808,7 @@ export default function ExamRoom({
             screenShareUnsupported
               ? " Full-screen sharing has not passed. You cannot start until the browser confirms that Entire screen is being shared."
               : examScreenSharingRequired(p.screen, deviceClass)
-                ? " This exam requires your entire screen to remain shared. A small screenshot may be saved with a monitored activity event while sharing is active. If evidence archiving is configured, warning screenshots and a timestamped activity report are stored in the instructor’s Secure Exam Google Drive folder. Authorized instructors can review them while the exam record is retained; deleting the exam also removes its stored files and archive."
+                ? " This exam requires your entire screen to remain shared and recorded from the moment the exam begins until it ends. The recording is uploaded as short, ordered video segments to the instructor’s private Google Drive folder and kept until the exam is deleted. Authorized instructors can review it; deleting the exam queues its recording segments and related files for removal from Drive, with retries if Drive is temporarily unavailable."
                 : deviceClass === "tablet" && p.screen
                   ? " Screen sharing is not used on tablets."
                   : " Screen sharing is required on laptops only."}{" "}
@@ -1763,7 +1940,7 @@ export default function ExamRoom({
               answers and server timestamps are stored for authorized instructor
               review under a {p.retentionDays}-day retention policy.{" "}
               {p.camera || p.microphone
-                ? "Raw video and microphone recordings are not uploaded. "
+                ? "Camera and microphone recordings are not uploaded. "
                 : "Camera and microphone access are not requested for this exam. "}
               {p.camera
                 ? "On tablets, a camera still may be captured when a monitored activity event occurs. If Ollama reports that your face is not visible, a timestamped camera still is attached to that warning and archived in Google Drive when Drive storage is configured. Camera movement is checked locally. "
@@ -1784,7 +1961,7 @@ export default function ExamRoom({
               screenShareUnsupported
                 ? "This browser/device cannot currently provide verified full-screen sharing, so you cannot start this exam here."
                 : examScreenSharingRequired(p.screen, deviceClass)
-                  ? "Your shared entire screen may be viewed live by your instructor, and a screenshot may be stored when a monitored activity event occurs, as explained above."
+                  ? "Your shared entire screen is recorded continuously during the exam and uploaded in segments to Google Drive. The recording includes everything visible on the shared screen and is kept until the exam is deleted. If upload is interrupted, segments are queued in this browser and retried; the exam screen shows the save status."
                   : "Your instructor cannot view a live screen share from this tablet."}{" "}
               A browser cannot prevent switching apps; if you leave this tab,
               the exam screen is held until you acknowledge the signal.
@@ -1969,6 +2146,29 @@ export default function ExamRoom({
             />{" "}
             I have read the monitoring notice and examination instructions.
           </label>
+          {examScreenSharingRequired(p.screen, deviceClass) && (
+            <>
+              {typeof MediaRecorder === "undefined" && (
+                <p className="error" role="alert">
+                  This browser cannot record video. Use a supported browser to
+                  take this exam.
+                </p>
+              )}
+              <label className="check consent">
+                <input
+                  type="checkbox"
+                  checked={screenRecordingAccepted}
+                  onChange={(event) =>
+                    setScreenRecordingAccepted(event.target.checked)
+                  }
+                />{" "}
+                I understand and agree that my entire shared screen will be
+                continuously recorded during the exam, uploaded in video
+                segments to the instructor’s private Google Drive, and deleted
+                with the exam when the exam is deleted.
+              </label>
+            </>
+          )}
           {deviceClass === "tablet" && p.camera && (
             <label className="check consent">
               <input
@@ -2107,8 +2307,7 @@ export default function ExamRoom({
       await synchronize(true);
     }
   };
-  const isLastQuestion =
-    questions.length > 0 && index >= questions.length - 1;
+  const isLastQuestion = questions.length > 0 && index >= questions.length - 1;
   return (
     <div className="exam-shell">
       <header className="exam-top">
@@ -2139,6 +2338,9 @@ export default function ExamRoom({
       </header>
       <div className="exam-status">
         <span>{saveStatus}</span>
+        {screenRecordingStatus && (
+          <span role="status">{screenRecordingStatus}</span>
+        )}
         <span>
           Warnings {attempt.warnings} / {attempt.policy.maxWarnings}
         </span>

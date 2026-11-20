@@ -20,7 +20,7 @@ Mutations require matching Origin. Authentication has NextAuth CSRF protection. 
 
 ## Proctoring interpretation
 
-Camera/microphone permission and live tracks are checked in the browser. Stream end and sustained mute events are reported. The server cannot independently prove a webcam is live or that client telemetry has not been tampered with. There is no face recognition, person detection, gaze scoring, emotion inference, audio transcription or raw recording.
+Camera/microphone permission and live tracks are checked in the browser. Stream end and sustained mute events are reported. With separate consent, the shared laptop monitor is recorded by the browser and uploaded in ordered WebM segments to the private Google Drive folder. Segments are linked to the attempt and removed through the exam deletion cleanup queue. The server cannot independently prove the browser captured every displayed frame or that client telemetry has not been tampered with; this is not a tamper-proof screen recorder. Camera and microphone media are not recorded or uploaded. There is no face recognition, person detection, gaze scoring, emotion inference or audio transcription.
 
 Location uses haversine distance and reported accuracy. Before entry, an inaccurate or outside location is rejected with a corrective message. During the exam, a warning needs consecutive accurate readings that are clearly outside even after accounting for uncertainty. Accepted samples are at least 15 seconds apart. Poor accuracy, inability to obtain location and network interruption are recorded without warning escalation.
 

@@ -141,6 +141,9 @@ export async function startAttempt(
 ) {
   return db.transaction(async (tx) => {
     await tx.execute(sql`SELECT id FROM users WHERE id=${u.id} FOR UPDATE`);
+    // Serialize attempt creation with teacher edits to a live examination.
+    // The teacher's configuration and paper mutations take an exclusive lock.
+    await query(sql`SELECT id FROM exams WHERE id=${examId} FOR SHARE`, tx);
     const [registered] = await query(
       sql`SELECT d.id FROM exam_devices d JOIN users u ON u.id=d.user_id WHERE d.id=${input.deviceSessionId} AND d.user_id=${u.id} AND d.session_version=u.session_version`,
       tx,
@@ -182,6 +185,15 @@ export async function startAttempt(
       );
     if (!input.accepted)
       throw new HttpError(400, "Accept the monitoring notice.");
+    const recordingRequired = examScreenSharingRequired(
+      true,
+      input.deviceClass,
+    );
+    if (recordingRequired && !input.screenRecordingAccepted)
+      throw new HttpError(
+        400,
+        "Accept the full-screen recording notice before starting this exam.",
+      );
     if (p.aiCameraMonitoring && !input.aiCameraAccepted)
       throw new HttpError(400, "Accept the Ollama camera-review notice.");
     if (
@@ -271,6 +283,8 @@ export async function startAttempt(
       microphone: !!input.checks.microphone,
       screen: !!input.checks.screen,
       screenShareUnavailable: !!input.screenShareUnavailable,
+      screenRecordingAccepted:
+        recordingRequired && !!input.screenRecordingAccepted,
       deviceClass: input.deviceClass,
       fullscreen: !!input.checks.fullscreen,
       online: true,
@@ -285,6 +299,8 @@ export async function startAttempt(
       type: "EXAM_STARTED",
       metadata: {
         noticeAccepted: true,
+        screenRecordingAccepted:
+          recordingRequired && input.screenRecordingAccepted === true,
         aiCameraNoticeAccepted: p.aiCameraMonitoring && input.aiCameraAccepted,
         tabletCameraEvidenceAccepted:
           input.deviceClass === "tablet" &&

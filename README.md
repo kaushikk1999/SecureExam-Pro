@@ -14,17 +14,17 @@ A Next.js examination workspace for Bangkok University, with PostgreSQL as the a
 
 ## 2. Architecture
 
-| Layer          | Implementation                                                                                                                                 |
-| -------------- | ---------------------------------------------------------------------------------------------------------------------------------------------- |
-| Frontend       | Next.js App Router, React, responsive custom component system, reduced-motion CSS, Lucide, Markdown/GFM/LaTeX, locally hosted Monaco           |
-| Backend        | Node.js route handlers, Zod input schemas, origin validation, per-user rate limiting                                                           |
-| Database       | PostgreSQL + Drizzle parameterized SQL and numbered transactional migrations                                                                   |
-| Authentication | NextAuth encrypted session cookies, bcrypt, database role/active/session-version validation; encrypted TOTP secrets and replay protection      |
-| Live updates   | Authenticated HTTPS polling: teacher 3 seconds, student 5 seconds, heartbeat 15 seconds; PostgreSQL remains authoritative                      |
-| Storage        | Private Vercel Blob or a service-account-shared Google Drive folder, authenticated streaming, bounded file sizes and content checks            |
-| Proctoring     | Browser focus/fullscreen/device events, 30-second location samples, fresh 10-minute checkpoints, accuracy checks, consecutive outside readings |
-| AI             | Optional server-side Ollama draft endpoint; no autonomous misconduct decisions                                                                 |
-| Sheets         | Optional service-account batch export; never used for transactional data                                                                       |
+| Layer          | Implementation                                                                                                                                                                         |
+| -------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Frontend       | Next.js App Router, React, responsive custom component system, reduced-motion CSS, Lucide, Markdown/GFM/LaTeX, locally hosted Monaco                                                   |
+| Backend        | Node.js route handlers, Zod input schemas, origin validation, per-user rate limiting                                                                                                   |
+| Database       | PostgreSQL + Drizzle parameterized SQL and numbered transactional migrations                                                                                                           |
+| Authentication | NextAuth encrypted session cookies, bcrypt, database role/active/session-version validation; encrypted TOTP secrets and replay protection                                              |
+| Live updates   | Authenticated HTTPS polling: teacher 3 seconds, student 5 seconds, heartbeat 15 seconds; PostgreSQL remains authoritative                                                              |
+| Storage        | Private Vercel Blob or a service-account-shared Google Drive folder; consented full-screen WebM recordings are stored in Drive in ordered segments and tied to the attempt for cleanup |
+| Proctoring     | Browser focus/fullscreen/device events, 30-second location samples, fresh 10-minute checkpoints, accuracy checks, consecutive outside readings                                         |
+| AI             | Optional server-side Ollama draft endpoint; no autonomous misconduct decisions                                                                                                         |
+| Sheets         | Optional service-account batch export; never used for transactional data                                                                                                               |
 
 Polling is intentional: it works within Vercel request lifecycles without maintaining unsupported long-running socket servers. Alerts are near-real-time, with roughly three-second teacher latency. Load-test your anticipated classroom size against the database pool and deployment plan.
 
@@ -63,7 +63,7 @@ Copy [.env.example](.env.example). Never commit `.env`, database files, exports 
 
 Required production settings: `DATABASE_PROVIDER=postgres`, `DATABASE_URL`, `AUTH_SECRET`, `NEXTAUTH_URL`, `NEXT_PUBLIC_APP_URL`, `CRON_SECRET`. Use a strong random secret, and HTTPS public URLs with exactly the same origin.
 
-Optional file storage: configure `BLOB_READ_WRITE_TOKEN`, or enable Google Drive API, create a private Drive folder shared as Editor with `GCP_SERVICE_ACCOUNT_EMAIL`, and set its ID as `GDRIVE_FOLDER_ID`. Drive uses the existing Vercel OIDC federation variables. Google Sheets export also uses that federation, plus `GOOGLE_SHEET_ID` (the spreadsheet needs a `SecureExam` tab shared with the service account as Editor). Ollama uses `OLLAMA_ENABLED`, `OLLAMA_BASE_URL`, `OLLAMA_API_KEY`, and `OLLAMA_MODEL`; teacher MFA uses `MFA_ENCRYPTION_KEY` and `REQUIRE_TEACHER_MFA`.
+For private file storage, configure `BLOB_READ_WRITE_TOKEN`, or enable Google Drive API, create a private Drive folder shared as Editor with `GCP_SERVICE_ACCOUNT_EMAIL`, and set its ID as `GDRIVE_FOLDER_ID`. New laptop exam attempts require a writable Google Drive folder because the full-screen recording must be saved there; Drive access is checked before the attempt starts. Drive uses the existing Vercel OIDC federation variables. Google Sheets export also uses that federation, plus `GOOGLE_SHEET_ID` (the spreadsheet needs a `SecureExam` tab shared with the service account as Editor). Ollama uses `OLLAMA_ENABLED`, `OLLAMA_BASE_URL`, `OLLAMA_API_KEY`, and `OLLAMA_MODEL`; teacher MFA uses `MFA_ENCRYPTION_KEY` and `REQUIRE_TEACHER_MFA`.
 
 `SEED_PASSWORD` is local-only. Bootstrap variables are one-time administrator provisioning inputs and must be removed afterward.
 
@@ -164,7 +164,7 @@ Tests and their exact coverage are listed in [docs/VERIFICATION.md](docs/VERIFIC
 
 See [docs/SECURITY.md](docs/SECURITY.md). Browser signals are untrusted observations. Fullscreen can be exited; geolocation can be spoofed; another camera or device, screenshots, OS shortcuts and modified browser code cannot be reliably blocked. Indoor location cannot reliably distinguish floors. Missing/low-accuracy readings are evidence for review, not automatic cheating findings.
 
-Raw camera/microphone recordings are never uploaded. No facial identity, sensitive attribute, gaze, emotional, or personality inference is implemented. Face/person counting and audio conversation analysis are intentionally not enabled without a validated, accessible local model. Coding responses are manually graded; arbitrary student code is never executed.
+Camera and microphone recordings are not uploaded. With specific student consent, laptop exams record the entire shared screen continuously and upload ordered WebM segments to the private Google Drive folder. The segments are linked to their attempt; deleting the exam queues them and related private files for Drive deletion, with retries after storage outages. A one-hour screen recording at the configured 1 Mbps target is approximately 450 MB before compression variance; plan Drive capacity accordingly. No facial identity, sensitive attribute, gaze, emotional, or personality inference is implemented. Face/person counting and audio conversation analysis are intentionally not enabled without a validated, accessible local model. Coding responses are manually graded; arbitrary student code is never executed.
 
 The retention setting is a policy/disclosure setting, not an automatic destructive deletion job. Immutable dispute evidence must be archived/deleted through an institution-approved privileged process, including backups. Do not promise automatic deletion at the configured day count. Course enrollment QR codes are implemented. Exam room-code check-in, automated code execution, image OCR, and AI-driven paper conversion are not enabled; rotating numeric codes, browser alerts, manual grading, document previews and editable AI drafts cover the corresponding core workflows.
 

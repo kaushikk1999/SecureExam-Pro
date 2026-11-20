@@ -121,8 +121,20 @@ export function extractStructuredQuestions(source: string) {
   const lines = source
     .replace(/\r\n?/g, "\n")
     .replace(/([^\n])\s+(?=(?:SECTION|PART)\s+[A-Z0-9]+\s*[—–:-])/gi, "$1\n")
-    .replace(/([^\n])\s+(?=(?:(?:QUESTION|Q)\s*)?\d{1,3}[.)]\s+)/gi, "$1\n")
-    .replace(/([^\n])\s+(?=QUESTION\s+\d{1,3}\s*[—–:-]\s+)/gi, "$1\n")
+    // Pasted papers often lose their line breaks. Split before common numbered
+    // labels without splitting decimal numbers or marks embedded in a stem.
+    .replace(
+      /([^\n])\s+(?=(?:(?:QUESTION|Q)\s*(?:NO\.?\s*)?#?\s*)?[A-Z]?\d{1,3}(?:[.)]|[—–:-])\s+)/gi,
+      "$1\n",
+    )
+    .replace(
+      /([^\n])\s+(?=QUESTION\s+(?:NO\.?\s*)?#?\s*\d{1,3}\s+)/gi,
+      "$1\n",
+    )
+    .replace(
+      /([^\n])\s+(?=(?:QUESTION|Q)\s+(?:NO\.?\s*)?#?\s*\d{1,3}(?:\s|$))/gi,
+      "$1\n",
+    )
     .replace(/([^\n])\s+Meanings:\s*/gi, "$1\nMeanings:\n")
     .split("\n");
   const questions: StructuredSourceQuestion[] = [];
@@ -185,9 +197,9 @@ export function extractStructuredQuestions(source: string) {
       }
     }
 
-    const title = pending.title.toUpperCase();
+    const title = `${pending.title} ${pending.label}`.toUpperCase();
     const intro = pending.preamble.join("\n").trim();
-    const sectionMatches = pending.section === "B" && /MATCHING/i.test(title);
+    const sectionMatches = /MATCHING/i.test(title);
     let prompt = [pending.label, stemLines.join("\n")]
       .filter(Boolean)
       .join(" ");
@@ -206,7 +218,7 @@ export function extractStructuredQuestions(source: string) {
     if (intro) prompt = `${intro}\n\n${prompt}`;
 
     const explicitMarks = `${pending.label} ${pending.lines.join(" ")}`.match(
-      /\[(\d+(?:\.\d+)?)\]|\((\d+(?:\.\d+)?)\s*marks?\)/i,
+      /\[(\d+(?:\.\d+)?)(?:\s*marks?)?\]|\((\d+(?:\.\d+)?)(?:\s*marks?)?\)/i,
     );
     const sectionMarks = pending.title.match(/\d+\s*[×x]\s*(\d+(?:\.\d+)?)/i);
     const marks = Number(
@@ -215,9 +227,10 @@ export function extractStructuredQuestions(source: string) {
     let type: StructuredSourceQuestion["type"] = "ESSAY";
     if (/TRUE\s*(?:OR|\/)\s*FALSE/i.test(title)) type = "TRUE_FALSE";
     else if (/FILL.*BLANK/i.test(title)) type = "FILL_BLANK";
-    else if (/MULTIPLE\s+CHOICE/i.test(title)) type = "MCQ";
+    else if (/MULTIPLE\s+CHOICE|\bMCQ\b/i.test(title)) type = "MCQ";
     else if (sectionMatches) type = "MATCHING";
-    else if (/SHORT\s+ANSWER/i.test(title)) type = "SHORT_ANSWER";
+    else if (/SHORT|BRIEF/i.test(title)) type = "SHORT_ANSWER";
+    else if (/LONG\s+ANSWER|ESSAY/i.test(title)) type = "ESSAY";
     else if (/CASE/i.test(title)) type = "CASE_STUDY";
     else if (optionLines.length) type = "MCQ";
     if (type === "TRUE_FALSE" && !optionLines.length)
@@ -249,7 +262,7 @@ export function extractStructuredQuestions(source: string) {
     }
 
     const letterLabel = line.match(
-      /^(?:(?:QUESTION|Q)\s*)?([A-Z]?\d{1,3})(?:[.)]\s*|\s*[—–:-]\s*|\s+)(.+)$/i,
+      /^(?:(?:QUESTION|Q)\s*(?:NO\.?\s*)?#?\s*)?([A-Z]?\d{1,3})(?:(?:[.)]|[—–:-])\s*(.*)|\s+(.+)|$)$/i,
     );
     const matchingLabel =
       section === "B" && /MATCHING/i.test(sectionTitle)

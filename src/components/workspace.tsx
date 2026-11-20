@@ -211,7 +211,8 @@ export default function Workspace({
   }, [settings?.timezone]);
   const [open, setOpen] = useState(false);
   const page = view[0] ?? "";
-  const isExamList = user.role !== "STUDENT" && page === "exams" && view.length === 1;
+  const isExamList =
+    user.role !== "STUDENT" && page === "exams" && view.length === 1;
   const [consoleClock, setConsoleClock] = useState("");
   useEffect(() => {
     if (!isExamList) return;
@@ -363,7 +364,8 @@ export default function Workspace({
           </span>
           {isExamList && (
             <span className="exam-topbar-node">
-              <i aria-hidden="true" /> Bangkok University <b>·</b> Exam workspace
+              <i aria-hidden="true" /> Bangkok University <b>·</b> Exam
+              workspace
             </span>
           )}
           <div>
@@ -525,12 +527,22 @@ function ExamList() {
   const normalizedSearch = search.trim().toLowerCase();
   const filteredExams = examRows.filter((exam: any) => {
     const status = String(exam.status ?? "").toUpperCase();
-    const matchesSearch = [exam.title, exam.course_code, exam.course_name, status]
-      .some((value) => String(value ?? "").toLowerCase().includes(normalizedSearch));
+    const matchesSearch = [
+      exam.title,
+      exam.course_code,
+      exam.course_name,
+      status,
+    ].some((value) =>
+      String(value ?? "")
+        .toLowerCase()
+        .includes(normalizedSearch),
+    );
     const matchesStatus =
       statusFilter === "all" ||
       (statusFilter === "active" &&
-        ["LIVE", "PUBLISHED", "SCHEDULED", "PAUSED", "ACTIVE"].includes(status)) ||
+        ["LIVE", "PUBLISHED", "SCHEDULED", "PAUSED", "ACTIVE"].includes(
+          status,
+        )) ||
       (statusFilter === "draft" && status === "DRAFT") ||
       (statusFilter === "closed" &&
         ["CLOSED", "ARCHIVED", "COMPLETED"].includes(status));
@@ -568,10 +580,19 @@ function ExamList() {
         description="A home for every assessment, from first draft to final marks."
       >
         <div className="exam-header-actions">
-          <div className="exam-telemetry-chip" aria-label={`${examRows.length} examinations and ${assignedSeats} exam assignments`}>
-            <div><span>TOTAL ASSIGNED</span><strong>{assignedSeats}</strong></div>
+          <div
+            className="exam-telemetry-chip"
+            aria-label={`${examRows.length} examinations and ${assignedSeats} exam assignments`}
+          >
+            <div>
+              <span>TOTAL ASSIGNED</span>
+              <strong>{assignedSeats}</strong>
+            </div>
             <i aria-hidden="true" />
-            <div><span>ACTIVE EXAMS</span><strong>{activeExams}</strong></div>
+            <div>
+              <span>ACTIVE EXAMS</span>
+              <strong>{activeExams}</strong>
+            </div>
           </div>
           <button
             className="primary exam-create-button"
@@ -596,7 +617,10 @@ function ExamList() {
           }}
         />
       )}
-      <section className="exam-toolbar" aria-label="Search and filter examinations">
+      <section
+        className="exam-toolbar"
+        aria-label="Search and filter examinations"
+      >
         <div className="exam-search">
           <Search size={17} aria-hidden="true" />
           <input
@@ -607,7 +631,11 @@ function ExamList() {
           />
           <span>{filteredExams.length} shown</span>
         </div>
-        <div className="exam-filter-group" role="group" aria-label="Filter by status">
+        <div
+          className="exam-filter-group"
+          role="group"
+          aria-label="Filter by status"
+        >
           {filters.map(([value, label]) => (
             <button
               type="button"
@@ -622,7 +650,9 @@ function ExamList() {
         </div>
       </section>
       {!exams ? (
-        <div className="exam-loading"><Loading /></div>
+        <div className="exam-loading">
+          <Loading />
+        </div>
       ) : filteredExams.length > 0 ? (
         <section className="exam-console-grid" aria-label="Examinations">
           {filteredExams.map((e: any, index: number) => {
@@ -631,16 +661,23 @@ function ExamList() {
             const draft = status === "DRAFT";
             const startsAt = Date.parse(e.starts_at);
             const endsAt = Date.parse(e.ends_at);
-            const live = status === "LIVE" ||
-              (!closed && !draft && Number.isFinite(startsAt) && Number.isFinite(endsAt) &&
-                currentTime !== null && startsAt <= currentTime && endsAt > currentTime);
+            const live =
+              status === "LIVE" ||
+              (!closed &&
+                !draft &&
+                Number.isFinite(startsAt) &&
+                Number.isFinite(endsAt) &&
+                currentTime !== null &&
+                startsAt <= currentTime &&
+                endsAt > currentTime);
             const enrolled = Number(e.enrolled ?? 0);
             const checkedIn = Number(e.checked_in ?? 0);
             const submitted = Number(e.submitted ?? 0);
             const progressTotal = closed ? submitted : checkedIn;
-            const progressPercent = enrolled > 0
-              ? Math.min(100, Math.round((progressTotal / enrolled) * 100))
-              : 0;
+            const progressPercent =
+              enrolled > 0
+                ? Math.min(100, Math.round((progressTotal / enrolled) * 100))
+                : 0;
             const stateClass = live
               ? "live"
               : draft
@@ -652,57 +689,84 @@ function ExamList() {
               ? "Live"
               : status.replaceAll("_", " ").toLowerCase();
             return (
-            <Link
-              className={`exam-card exam-console-card exam-console-card-${stateClass}`}
-              key={e.id}
-              href={"/workspace/exams/" + e.id}
-              style={{ "--exam-index": index } as React.CSSProperties}
-            >
-              <div className="exam-console-card-main">
-                <div className="exam-console-card-top">
-                  <div className="exam-console-course">
-                    <span className="course-tag">{e.course_code || "COURSE"}</span>
-                    {e.course_name && <span>{e.course_name}</span>}
+              <Link
+                className={`exam-card exam-console-card exam-console-card-${stateClass}`}
+                key={e.id}
+                href={"/workspace/exams/" + e.id}
+                style={{ "--exam-index": index } as React.CSSProperties}
+              >
+                <div className="exam-console-card-main">
+                  <div className="exam-console-card-top">
+                    <div className="exam-console-course">
+                      <span className="course-tag">
+                        {e.course_code || "COURSE"}
+                      </span>
+                      {e.course_name && <span>{e.course_name}</span>}
+                    </div>
+                    <span
+                      className={`exam-console-status exam-console-status-${stateClass}`}
+                    >
+                      <i aria-hidden="true" />
+                      {stateLabel}
+                    </span>
                   </div>
-                  <span className={`exam-console-status exam-console-status-${stateClass}`}>
-                    <i aria-hidden="true" />{stateLabel}
+                  <h2>{e.title || "Untitled examination"}</h2>
+                  <div className="exam-console-details">
+                    <div>
+                      <span>
+                        <Clock3 size={14} /> Starts
+                      </span>
+                      <strong>{time(e.starts_at)}</strong>
+                    </div>
+                    <div>
+                      <span>
+                        <Clock3 size={14} /> Ends
+                      </span>
+                      <strong>{time(e.ends_at)}</strong>
+                    </div>
+                    <div>
+                      <span>
+                        <Activity size={14} /> Duration
+                      </span>
+                      <strong>{Number(e.duration_minutes ?? 0)} minutes</strong>
+                    </div>
+                    <div>
+                      <span>
+                        <CheckCircle2 size={14} /> Submissions
+                      </span>
+                      <strong>{submitted} students</strong>
+                    </div>
+                  </div>
+                  <div className="exam-console-progress">
+                    <div>
+                      <span>
+                        {closed ? "Submissions received" : "Check-in progress"}
+                      </span>
+                      <strong>
+                        {progressTotal} / {enrolled}
+                        {enrolled ? ` · ${progressPercent}%` : ""}
+                      </strong>
+                    </div>
+                    <div
+                      className="exam-console-progress-track"
+                      aria-label={`${progressTotal} of ${enrolled} students ${closed ? "submitted" : "checked in"}`}
+                    >
+                      <span style={{ width: `${progressPercent}%` }} />
+                    </div>
+                  </div>
+                </div>
+                <div className="exam-console-card-footer">
+                  <span>
+                    <Users size={15} /> {enrolled} assigned · {checkedIn}{" "}
+                    checked in
+                  </span>
+                  <span className="exam-console-open" aria-hidden="true">
+                    <ArrowUpRight size={17} />
                   </span>
                 </div>
-                <h2>{e.title || "Untitled examination"}</h2>
-                <div className="exam-console-details">
-                  <div>
-                    <span><Clock3 size={14} /> Starts</span>
-                    <strong>{time(e.starts_at)}</strong>
-                  </div>
-                  <div>
-                    <span><Clock3 size={14} /> Ends</span>
-                    <strong>{time(e.ends_at)}</strong>
-                  </div>
-                  <div>
-                    <span><Activity size={14} /> Duration</span>
-                    <strong>{Number(e.duration_minutes ?? 0)} minutes</strong>
-                  </div>
-                  <div>
-                    <span><CheckCircle2 size={14} /> Submissions</span>
-                    <strong>{submitted} students</strong>
-                  </div>
-                </div>
-                <div className="exam-console-progress">
-                  <div>
-                    <span>{closed ? "Submissions received" : "Check-in progress"}</span>
-                    <strong>{progressTotal} / {enrolled}{enrolled ? ` · ${progressPercent}%` : ""}</strong>
-                  </div>
-                  <div className="exam-console-progress-track" aria-label={`${progressTotal} of ${enrolled} students ${closed ? "submitted" : "checked in"}`}>
-                    <span style={{ width: `${progressPercent}%` }} />
-                  </div>
-                </div>
-              </div>
-              <div className="exam-console-card-footer">
-                <span><Users size={15} /> {enrolled} assigned · {checkedIn} checked in</span>
-                <span className="exam-console-open" aria-hidden="true"><ArrowUpRight size={17} /></span>
-              </div>
-            </Link>
-          );})}
+              </Link>
+            );
+          })}
         </section>
       ) : examRows.length === 0 ? (
         <Empty
@@ -717,10 +781,14 @@ function ExamList() {
       )}
       <section className="exam-console-cta">
         <div>
-          <span className="exam-console-cta-icon"><Sparkles size={17} /></span>
+          <span className="exam-console-cta-icon">
+            <Sparkles size={17} />
+          </span>
           <div>
             <strong>Ready to prepare your next assessment?</strong>
-            <p>Create an examination, add questions, and assign it to a course.</p>
+            <p>
+              Create an examination, add questions, and assign it to a course.
+            </p>
           </div>
         </div>
         <button type="button" onClick={() => setCreating(true)}>
@@ -873,6 +941,8 @@ function ExamForm({ done, initial }: { done: () => void; initial?: any }) {
       .slice(0, 16);
   }
   const [startsAt, setStartsAt] = useState(() => date(initial?.starts_at));
+  const hasActiveAttempts = Number(initial?.activeAttemptCount ?? 0) > 0;
+  const published = Boolean(initial && initial.status !== "DRAFT");
   const [duration, setDuration] = useState(
     String(initial?.duration_minutes ?? 90),
   );
@@ -950,7 +1020,15 @@ function ExamForm({ done, initial }: { done: () => void; initial?: any }) {
   }, [rooms, initial, roomId]);
   return (
     <section className="panel form-panel">
-      <h2>{initial ? "Edit draft" : "A new examination"}</h2>
+      <h2>{initial ? "Edit examination" : "A new examination"}</h2>
+      {hasActiveAttempts && (
+        <p className="notice" role="status">
+          Students are taking this exam. You can update its title, instructions,
+          and passing score. The course, schedule, time limit, classroom,
+          security checks, and question paper are locked until active attempts
+          finish.
+        </p>
+      )}
       <form
         onSubmit={async (e) => {
           e.preventDefault();
@@ -961,7 +1039,7 @@ function ExamForm({ done, initial }: { done: () => void; initial?: any }) {
               "exams" + (initial ? "/" + initial.id : ""),
               {
                 title: f.get("title"),
-                courseId: f.get("course"),
+                courseId: f.get("course") ?? initial?.course_id,
                 startsAt: new Date(startsAt).toISOString(),
                 endsAt: new Date(endsAt).toISOString(),
                 duration: Number(duration),
@@ -996,7 +1074,12 @@ function ExamForm({ done, initial }: { done: () => void; initial?: any }) {
           </label>
           <label>
             Course / section
-            <select required name="course" defaultValue={initial?.course_id}>
+            <select
+              required
+              name="course"
+              defaultValue={initial?.course_id}
+              disabled={published}
+            >
               <option value="">Select course</option>
               {courses?.map((c: any) => (
                 <option key={c.id} value={c.id}>
@@ -1012,6 +1095,7 @@ function ExamForm({ done, initial }: { done: () => void; initial?: any }) {
               name="start"
               type="datetime-local"
               value={startsAt}
+              disabled={hasActiveAttempts}
               onChange={(event) => {
                 const nextStart = event.target.value;
                 setStartsAt(nextStart);
@@ -1033,6 +1117,7 @@ function ExamForm({ done, initial }: { done: () => void; initial?: any }) {
               name="end"
               type="datetime-local"
               value={endsAt}
+              disabled={hasActiveAttempts}
               onChange={(event) => {
                 const nextEnd = event.target.value;
                 setEndsAt(nextEnd);
@@ -1055,9 +1140,7 @@ function ExamForm({ done, initial }: { done: () => void; initial?: any }) {
                 );
                 setDuration(String(nextDuration));
                 setEndsAt(
-                  date(
-                    new Date(startMs + nextDuration * 60000).toISOString(),
-                  ),
+                  date(new Date(startMs + nextDuration * 60000).toISOString()),
                 );
               }}
             />
@@ -1071,6 +1154,7 @@ function ExamForm({ done, initial }: { done: () => void; initial?: any }) {
               max={600}
               name="duration"
               value={duration}
+              disabled={hasActiveAttempts}
               onChange={(event) => {
                 const rawValue = event.target.value;
                 setDuration(rawValue);
@@ -1104,6 +1188,7 @@ function ExamForm({ done, initial }: { done: () => void; initial?: any }) {
             <select
               name="room"
               value={roomId}
+              disabled={hasActiveAttempts}
               onChange={(e) => setRoomId(e.target.value)}
             >
               <option value="">
@@ -1127,6 +1212,7 @@ function ExamForm({ done, initial }: { done: () => void; initial?: any }) {
             Security preset
             <select
               value={preset}
+              disabled={hasActiveAttempts}
               onChange={(e) => {
                 const selected = e.target.value;
                 setPreset(selected);
@@ -1157,7 +1243,7 @@ function ExamForm({ done, initial }: { done: () => void; initial?: any }) {
             </select>
           </label>
         </div>
-        <fieldset className="exam-checks">
+        <fieldset className="exam-checks" disabled={hasActiveAttempts}>
           <legend>Choose student checks</legend>
           <p className="small muted">
             Select the additional checks for this exam. Entire-screen sharing is
@@ -1275,9 +1361,10 @@ function ExamForm({ done, initial }: { done: () => void; initial?: any }) {
               )
               .map(([key, value]) => (
                 <label key={key} className="check">
-                  <input
+                <input
                     type="checkbox"
                     checked={Boolean(value)}
+                  disabled={hasActiveAttempts}
                     onChange={(e) =>
                       setPolicy({ ...policy, [key]: e.target.checked })
                     }
@@ -1307,6 +1394,7 @@ function ExamForm({ done, initial }: { done: () => void; initial?: any }) {
                   type="number"
                   min={key === "maxWarnings" ? 1 : 0}
                   value={policy[key]}
+                  disabled={hasActiveAttempts}
                   onChange={(e) =>
                     setPolicy({ ...policy, [key]: Number(e.target.value) })
                   }
@@ -1318,7 +1406,7 @@ function ExamForm({ done, initial }: { done: () => void; initial?: any }) {
         <ErrorBox message={error} />
         <div className="actions">
           <button className="primary" disabled={busy}>
-            {busy ? "Saving…" : "Save draft"}
+            {busy ? "Saving…" : "Save changes"}
           </button>
           <button type="button" onClick={done}>
             Cancel
@@ -1332,6 +1420,8 @@ function ExamDetail({ id }: { id: string }) {
   const router = useRouter();
   const { data: e, error, refresh } = useData("exams/" + id);
   const bank = e?.availableQuestions;
+  const canEditPaper =
+    e && e.status !== "ARCHIVED" && Number(e.activeAttemptCount ?? 0) === 0;
   const [tab, setTab] = useState("questions"),
     [message, setMessage] = useState(""),
     [editing, setEditing] = useState(false),
@@ -1425,9 +1515,9 @@ function ExamDetail({ id }: { id: string }) {
             section={e.course_section}
           />
         )}
-        {e.status === "DRAFT" && (
+        {e.status !== "ARCHIVED" && (
           <button onClick={() => setEditing(!editing)}>
-            Edit configuration
+            {editing ? "Close editor" : "Edit examination"}
           </button>
         )}
         <button
@@ -1714,7 +1804,7 @@ function ExamDetail({ id }: { id: string }) {
       </div>
       {tab === "questions" ? (
         <>
-          {e.status === "DRAFT" && (
+          {canEditPaper && (
             <section className="panel form-panel ai-question-builder">
               <div className="panel-heading">
                 <div>
@@ -1775,9 +1865,12 @@ function ExamDetail({ id }: { id: string }) {
                     />
                   </label>
                   <p className="small muted">
-                    Generated questions are added only to this draft exam and
-                    stay hidden from the question bank. AI answer keys and
-                    rubrics are suggestions; check them before saving.
+                    The extractor keeps each recognized question in its pasted
+                    order with its original wording, section, choices, and
+                    marks. AI only suggests answer keys and rubrics; review the
+                    extracted list before saving. On a published exam, saving
+                    replaces the paper for future attempts; existing attempts
+                    retain their original questions.
                   </p>
                   <button
                     className="primary"
@@ -1833,13 +1926,16 @@ function ExamDetail({ id }: { id: string }) {
                             try {
                               const result = await api(`exams/${id}/paper`, {
                                 questions: paperDrafts,
+                                replace: e.status !== "DRAFT",
                               });
                               await refresh();
                               setPaperDrafts([]);
                               setPaperSource("");
                               setPaperOpen(false);
                               setMessage(
-                                `${result.count} questions added to this exam.`,
+                                e.status === "DRAFT"
+                                  ? `${result.count} questions added to this exam.`
+                                  : `Question paper updated with ${result.count} questions.`,
                               );
                             } catch (err) {
                               setPaperSaveError((err as Error).message);
@@ -1850,7 +1946,9 @@ function ExamDetail({ id }: { id: string }) {
                         >
                           {paperSaving
                             ? "Adding questions…"
-                            : "Add questions to this exam"}
+                            : e.status === "DRAFT"
+                              ? "Add questions to this exam"
+                              : "Replace question paper"}
                         </button>
                         <ErrorBox message={paperSaveError} />
                       </div>
@@ -2015,6 +2113,12 @@ function ExamDetail({ id }: { id: string }) {
                 <span className="muted">{e.questions.length} questions</span>
               </h2>
               <Markdown text={e.instructions} />
+              {!canEditPaper && e.status !== "ARCHIVED" && (
+                <p className="notice" role="status">
+                  Question editing is paused while students have active
+                  attempts. You can edit the paper after they finish.
+                </p>
+              )}
               {e.questions.map((q: any, i: number) => (
                 <div key={q.id} className="question-preview">
                   <div className="eyebrow">
@@ -2022,7 +2126,7 @@ function ExamDetail({ id }: { id: string }) {
                     MARKS
                   </div>
                   <Markdown text={q.prompt} />
-                  {e.status === "DRAFT" && (
+                  {canEditPaper && (
                     <button
                       onClick={async () => {
                         await api(`exams/${id}/questions`, {
@@ -2048,10 +2152,13 @@ function ExamDetail({ id }: { id: string }) {
               <section className="panel form-panel">
                 <h2>Add from question bank</h2>
                 <p className="muted">
-                  Published papers are immutable. Duplicate an exam to revise
-                  it.
+                  {canEditPaper
+                    ? "You can update this exam’s paper. Changes apply to future attempts; existing submissions retain their original questions."
+                    : e.status === "ARCHIVED"
+                      ? "Archived examinations are read-only."
+                      : "Question editing is locked while students have active attempts."}
                 </p>
-                {e.status === "DRAFT" && (
+                {canEditPaper && (
                   <select
                     aria-label="Attach question"
                     value=""
@@ -2093,7 +2200,7 @@ function ExamDetail({ id }: { id: string }) {
                   Image-only PDFs can be shared, but their text cannot be
                   imported into the AI question builder.
                 </p>
-                {e.status === "DRAFT" && (
+                {canEditPaper && (
                   <Upload examId={id} done={() => void refresh()} />
                 )}
                 {e.files.map((f: any) => (
@@ -3796,9 +3903,16 @@ function Monitor({ id, policy }: { id: string; policy?: any }) {
                               event.metadata?.evidenceFileId ??
                               event.evidence_file_id;
                             return (
-                              <div className="monitor-warning-event" key={event.id}>
+                              <div
+                                className="monitor-warning-event"
+                                key={event.id}
+                              >
                                 <strong>
-                                  Warning {event.metadata?.count ?? index + 1}: {String(event.metadata?.reason ?? "Security warning").replaceAll("_", " ")}
+                                  Warning {event.metadata?.count ?? index + 1}:{" "}
+                                  {String(
+                                    event.metadata?.reason ??
+                                      "Security warning",
+                                  ).replaceAll("_", " ")}
                                 </strong>
                                 <small>
                                   {time(event.created_at)} · {event.severity}
@@ -3991,6 +4105,8 @@ function LiveScreenViewer({
     let peer: RTCPeerConnection | null = null;
     let requestId = "";
     let expectedRequestId = "";
+    let iceServers: RTCIceServer[] | null = null;
+    let turnAvailable = false;
     const videoElement = video.current;
     const path = `attempts/${id}/screen`;
     async function gatherIce(connection: RTCPeerConnection) {
@@ -4016,11 +4132,15 @@ function LiveScreenViewer({
           setStatus("Waiting for the student's browser to connect…");
           return;
         }
+        if (!iceServers) {
+          setStatus("Preparing a secure screen connection…");
+          return;
+        }
         if (signal.requestId === requestId) return;
         requestId = signal.requestId;
         peer?.close();
         peer = new RTCPeerConnection({
-          iceServers: [{ urls: "stun:stun.l.google.com:19302" }],
+          iceServers,
         });
         peer.ontrack = (event) => {
           if (videoElement) {
@@ -4033,7 +4153,9 @@ function LiveScreenViewer({
         peer.onconnectionstatechange = () => {
           if (peer?.connectionState === "failed")
             setError(
-              "The connection could not be established on this network. Ask the student to check screen sharing and retry.",
+              turnAvailable
+                ? "The network could not establish a direct or relay connection. Ask the student to keep screen sharing enabled, then stop and request the screen again."
+                : "This network blocked the direct screen connection, and no TURN relay is configured. Ask an administrator to configure secure TURN relaying, then request the screen again.",
             );
         };
         await peer.setRemoteDescription(signal.offer);
@@ -4055,11 +4177,14 @@ function LiveScreenViewer({
       }
     }
     void api(path + "/request", {})
-      .then((result) => {
-        if (!disposed) {
-          expectedRequestId = result.requestId;
-          setStatus("Waiting for the student's browser to connect…");
-        }
+      .then(async (result) => {
+        if (disposed) return;
+        expectedRequestId = result.requestId;
+        const iceConfig = await api(path + "/ice");
+        if (disposed) return;
+        iceServers = iceConfig.iceServers;
+        turnAvailable = iceConfig.turnAvailable === true;
+        setStatus("Waiting for the student's browser to connect…");
       })
       .catch((cause) => !disposed && setError((cause as Error).message));
     const timer = setInterval(() => void poll(), 1600);
@@ -4107,7 +4232,24 @@ function AttemptReview({ id, close }: { id: string; close: () => void }) {
   const { data: a, error, refresh } = useData("attempts/" + id);
   const [message, setMessage] = useState(""),
     [archiveBusy, setArchiveBusy] = useState(false),
-    [archiveMessage, setArchiveMessage] = useState("");
+    [archiveMessage, setArchiveMessage] = useState(""),
+    [recordingParts, setRecordingParts] = useState<any[]>([]),
+    [recordingMessage, setRecordingMessage] = useState(""),
+    [recordingBusy, setRecordingBusy] = useState(false);
+  useEffect(() => {
+    if (!a?.device_state?.screenRecordingAccepted) return;
+    let cancelled = false;
+    void api(`attempts/${id}/recordings`, undefined, "GET")
+      .then((result) => {
+        if (!cancelled) setRecordingParts(result.parts ?? []);
+      })
+      .catch((cause) => {
+        if (!cancelled) setRecordingMessage((cause as Error).message);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [a?.device_state?.screenRecordingAccepted, id]);
   if (!a) return <ErrorBox message={error} />;
   async function control(action: string, eventId?: string) {
     const note = prompt("Reason / review note (required)");
@@ -4139,6 +4281,38 @@ function AttemptReview({ id, close }: { id: string; close: () => void }) {
       setArchiveBusy(false);
     }
   }
+  async function downloadRecording() {
+    if (!recordingParts.length) return;
+    setRecordingBusy(true);
+    setRecordingMessage("Downloading and joining recording segments in order…");
+    try {
+      const blobs: Blob[] = [];
+      for (let index = 0; index < recordingParts.length; index++) {
+        const part = recordingParts[index];
+        const response = await fetch(`/api/platform/files/${part.id}`, {
+          cache: "no-store",
+        });
+        if (!response.ok)
+          throw new Error(`Could not download recording segment ${index + 1}.`);
+        blobs.push(await response.blob());
+        setRecordingMessage(
+          `Downloaded segment ${index + 1} of ${recordingParts.length}…`,
+        );
+      }
+      const video = new Blob(blobs, { type: "video/webm" });
+      const url = URL.createObjectURL(video);
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = `screen-recording-${id}.webm`;
+      link.click();
+      URL.revokeObjectURL(url);
+      setRecordingMessage("Screen recording downloaded as one WebM video.");
+    } catch (cause) {
+      setRecordingMessage((cause as Error).message);
+    } finally {
+      setRecordingBusy(false);
+    }
+  }
   return (
     <section className="panel form-panel review-panel">
       <div className="panel-heading">
@@ -4151,6 +4325,42 @@ function AttemptReview({ id, close }: { id: string; close: () => void }) {
       <p>
         Score: {a.score ?? "Pending manual grading"} · Warnings: {a.warnings}
       </p>
+      {a.device_state?.screenRecordingAccepted && (
+        <section className="notice" aria-label="Student screen recording">
+          <strong>Full-screen recording · Google Drive</strong>
+          <p>
+            {recordingParts.length
+              ? `${recordingParts.length} saved segment${recordingParts.length === 1 ? "" : "s"} · ${recordingParts.reduce((total, part) => total + Number(part.size ?? 0), 0).toLocaleString()} bytes`
+              : "No uploaded recording segments are available yet."}
+          </p>
+          <div className="actions">
+            <button
+              type="button"
+              className="primary"
+              disabled={recordingBusy || !recordingParts.length}
+              onClick={() => void downloadRecording()}
+            >
+              {recordingBusy
+                ? "Preparing recording…"
+                : "Download full recording"}
+            </button>
+            {recordingParts.map((part, index) => (
+              <a
+                key={part.id}
+                className="button"
+                href={`/api/platform/files/${part.id}?download=1`}
+              >
+                Segment {index + 1}
+              </a>
+            ))}
+          </div>
+          {recordingMessage && <p role="status">{recordingMessage}</p>}
+          <p className="small muted">
+            Segments are joined in browser memory for the full download; very
+            long recordings may require substantial available memory.
+          </p>
+        </section>
+      )}
       <div className="actions">
         {[
           "force-submit",
@@ -4476,7 +4686,7 @@ function Audit() {
                   </summary>
                   {students.length ? (
                     <div className="live-audit-students">
-                      {students.map((student: any) => (
+                      {students.map((student: any) =>
                         (() => {
                           const warnings = (data ?? []).filter(
                             (event: any) =>
@@ -4505,7 +4715,8 @@ function Audit() {
                               <span>
                                 {student.answered}/{student.total_questions}{" "}
                                 answered · {student.warnings} warnings
-                                {student.warnings > 0 && " · select name for details"}
+                                {student.warnings > 0 &&
+                                  " · select name for details"}
                               </span>
                               <small>
                                 Started {time(student.started_at)} · last signal{" "}
@@ -4517,46 +4728,58 @@ function Audit() {
                                 <div className="live-audit-warning-list">
                                   <strong>Warning history</strong>
                                   {warnings.length ? (
-                                    warnings.map((event: any, index: number) => {
-                                      const evidenceId =
-                                        event.metadata?.evidenceFileId ??
-                                        event.evidence_file_id;
-                                      return (
-                                        <div
-                                          className="monitor-warning-event"
-                                          key={event.id}
-                                        >
-                                          <strong>
-                                            Warning {event.metadata?.count ?? index + 1}: {String(event.metadata?.reason ?? "Security warning").replaceAll("_", " ")}
-                                          </strong>
-                                          <small>
-                                            {time(event.created_at)} · {event.severity}
-                                            {event.acknowledgement_count != null &&
-                                              ` · acknowledged ${event.acknowledgement_count} times`}
-                                          </small>
-                                          {typeof evidenceId === "string" && (
-                                            <a
-                                              href={`/api/platform/files/${encodeURIComponent(evidenceId)}`}
-                                              target="_blank"
-                                              rel="noreferrer"
-                                            >
-                                              View warning evidence
-                                            </a>
-                                          )}
-                                        </div>
-                                      );
-                                    })
+                                    warnings.map(
+                                      (event: any, index: number) => {
+                                        const evidenceId =
+                                          event.metadata?.evidenceFileId ??
+                                          event.evidence_file_id;
+                                        return (
+                                          <div
+                                            className="monitor-warning-event"
+                                            key={event.id}
+                                          >
+                                            <strong>
+                                              Warning{" "}
+                                              {event.metadata?.count ??
+                                                index + 1}
+                                              :{" "}
+                                              {String(
+                                                event.metadata?.reason ??
+                                                  "Security warning",
+                                              ).replaceAll("_", " ")}
+                                            </strong>
+                                            <small>
+                                              {time(event.created_at)} ·{" "}
+                                              {event.severity}
+                                              {event.acknowledgement_count !=
+                                                null &&
+                                                ` · acknowledged ${event.acknowledgement_count} times`}
+                                            </small>
+                                            {typeof evidenceId === "string" && (
+                                              <a
+                                                href={`/api/platform/files/${encodeURIComponent(evidenceId)}`}
+                                                target="_blank"
+                                                rel="noreferrer"
+                                              >
+                                                View warning evidence
+                                              </a>
+                                            )}
+                                          </div>
+                                        );
+                                      },
+                                    )
                                   ) : (
                                     <small className="muted">
-                                      No warning events are recorded for this attempt.
+                                      No warning events are recorded for this
+                                      attempt.
                                     </small>
                                   )}
                                 </div>
                               )}
                             </div>
                           );
-                        })()
-                      ))}
+                        })(),
+                      )}
                     </div>
                   ) : (
                     <p className="muted">
