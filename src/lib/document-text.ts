@@ -152,7 +152,9 @@ export function extractStructuredQuestions(source: string) {
 
   const savePending = () => {
     if (!pending) return;
-    const caseSection = /CASE/i.test(pending.title);
+    const title = `${pending.title} ${pending.label} ${pending.preamble.join(" ")}`.toUpperCase();
+    const caseSection = /CASE/.test(title);
+    const matchingSection = /MATCHING/.test(title);
     const rawLines = pending.lines
       .map((line) => line.trim())
       .filter(Boolean)
@@ -160,8 +162,7 @@ export function extractStructuredQuestions(source: string) {
       .filter(
         (line) =>
           !(
-            pending?.section === "B" &&
-            /MATCHING/i.test(pending.title) &&
+            matchingSection &&
             (/^Meanings\s*:/i.test(line) || /^[a-h][).]\s*/i.test(line))
           ),
       );
@@ -197,13 +198,9 @@ export function extractStructuredQuestions(source: string) {
       }
     }
 
-    const title = `${pending.title} ${pending.label}`.toUpperCase();
     const intro = pending.preamble.join("\n").trim();
-    const sectionMatches = /MATCHING/i.test(title);
-    let prompt = [pending.label, stemLines.join("\n")]
-      .filter(Boolean)
-      .join(" ");
-    if (sectionMatches) {
+    let prompt = stemLines.join("\n").trim();
+    if (matchingSection) {
       const meaningsStart = lines.findIndex((line) =>
         /^\s*Meanings\s*:/i.test(line),
       );
@@ -224,15 +221,25 @@ export function extractStructuredQuestions(source: string) {
     const marks = Number(
       explicitMarks?.[1] ?? explicitMarks?.[2] ?? sectionMarks?.[1] ?? 1,
     );
-    let type: StructuredSourceQuestion["type"] = "ESSAY";
+    let type: StructuredSourceQuestion["type"] = "SHORT_ANSWER";
     if (/TRUE\s*(?:OR|\/)\s*FALSE/i.test(title)) type = "TRUE_FALSE";
-    else if (/FILL.*BLANK/i.test(title)) type = "FILL_BLANK";
+    else if (/FILL.*BLANK|_{2,}/i.test(title)) type = "FILL_BLANK";
     else if (/MULTIPLE\s+CHOICE|\bMCQ\b/i.test(title)) type = "MCQ";
-    else if (sectionMatches) type = "MATCHING";
-    else if (/SHORT|BRIEF/i.test(title)) type = "SHORT_ANSWER";
-    else if (/LONG\s+ANSWER|ESSAY/i.test(title)) type = "ESSAY";
+    else if (matchingSection) type = "MATCHING";
     else if (/CASE/i.test(title)) type = "CASE_STUDY";
     else if (optionLines.length) type = "MCQ";
+    else if (/LONG\s+ANSWER|ESSAY/i.test(title))
+      type = "ESSAY";
+    else if (
+      /SHORT|BRIEF|ONE\s+OR\s+TWO\s+(?:LINES|SENTENCES)/i.test(title) ||
+      (marks <= 3 && !/DISCUSS|EVALUATE|IN\s+DETAIL|ELABORATE/i.test(title))
+    )
+      type = "SHORT_ANSWER";
+    else if (
+      /DISCUSS|EVALUATE|IN\s+DETAIL|ELABORATE/i.test(title) ||
+      marks >= 5
+    )
+      type = "ESSAY";
     if (type === "TRUE_FALSE" && !optionLines.length)
       optionLines.push("True", "False");
 

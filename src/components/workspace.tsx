@@ -1912,8 +1912,22 @@ function ExamDetail({ id }: { id: string }) {
                         <div>
                           <h3>Review question paper</h3>
                           <p className="small muted">
-                            {paperDrafts.length} questions · edits are saved
-                            only to this exam
+                            {paperDrafts.length} questions ·{" "}
+                            {Object.entries(
+                              paperDrafts.reduce(
+                                (counts: Record<string, number>, question: any) => {
+                                  counts[question.type] =
+                                    (counts[question.type] ?? 0) + 1;
+                                  return counts;
+                                },
+                                {},
+                              ),
+                            )
+                              .map(
+                                ([type, count]) =>
+                                  `${count} ${type.replaceAll("_", " ").toLowerCase()}`,
+                              )
+                              .join(" · ")} · edits are saved only to this exam
                           </p>
                         </div>
                         <button
