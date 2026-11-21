@@ -2,14 +2,18 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({
   auth: { getAccessToken: vi.fn(async () => ({ token: "test-token" })) },
-  fromJSON: vi.fn(() => mocks.auth),
+  fromJSON: vi.fn((config: unknown) => {
+    void config;
+    return mocks.auth;
+  }),
+  getVercelOidcToken: vi.fn(async () => "test-subject-token"),
   put: vi.fn(),
   get: vi.fn(),
   query: vi.fn(async () => []),
 }));
 
 vi.mock("@vercel/oidc", () => ({
-  getVercelOidcToken: vi.fn(async () => "test-subject-token"),
+  getVercelOidcToken: mocks.getVercelOidcToken,
 }));
 vi.mock("google-auth-library", () => ({
   ExternalAccountClient: { fromJSON: mocks.fromJSON },
@@ -58,8 +62,22 @@ describe("private exam file storage", () => {
     expect(mocks.fromJSON).toHaveBeenCalledWith(
       expect.objectContaining({
         scopes: ["https://www.googleapis.com/auth/drive"],
+        audience:
+          "//iam.googleapis.com/projects/347634395141/locations/global/workloadIdentityPools/exam-pool/providers/vercel-production",
       }),
     );
+    const authConfig = mocks.fromJSON.mock.calls[0]?.[0] as unknown as {
+      subject_token_supplier: {
+        getSubjectToken: () => Promise<string>;
+      };
+    };
+    await expect(
+      authConfig.subject_token_supplier.getSubjectToken(),
+    ).resolves.toBe("test-subject-token");
+    expect(mocks.getVercelOidcToken).toHaveBeenCalledWith({
+      audience:
+        "https://iam.googleapis.com/projects/347634395141/locations/global/workloadIdentityPools/exam-pool/providers/vercel-production",
+    });
     expect(fetchMock).toHaveBeenCalledTimes(2);
     expect(fetchMock.mock.calls[0][0]).toContain("upload/drive/v3/files");
     expect(String(fetchMock.mock.calls[0][1]?.body)).toContain(

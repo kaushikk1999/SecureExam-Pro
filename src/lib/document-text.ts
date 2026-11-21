@@ -120,6 +120,9 @@ export type StructuredSourceQuestion = {
 export function extractStructuredQuestions(source: string) {
   const lines = source
     .replace(/\r\n?/g, "\n")
+    // Keep the number in a "Question 2" label attached to its prefix during
+    // the packed-text split below; otherwise it can split as a bare "2".
+    .replace(/\b((?:QUESTION|Q)\s*(?:NO\.?\s*)?#?)\s*(?=[A-Z]?\d{1,3}(?:[.)]|[—–:-]|\s|$))/gi, "$1\uE000")
     .replace(/([^\n])\s+(?=(?:SECTION|PART)\s+[A-Z0-9]+\s*[—–:-])/gi, "$1\n")
     // Pasted papers often lose their line breaks. Split before common numbered
     // labels without splitting decimal numbers or marks embedded in a stem.
@@ -136,7 +139,8 @@ export function extractStructuredQuestions(source: string) {
       "$1\n",
     )
     .replace(/([^\n])\s+Meanings:\s*/gi, "$1\nMeanings:\n")
-    .split("\n");
+    .split("\n")
+    .map((line) => line.replaceAll("\uE000", " "));
   const questions: StructuredSourceQuestion[] = [];
   let section = "";
   let sectionTitle = "";
@@ -272,14 +276,19 @@ export function extractStructuredQuestions(source: string) {
       /^(?:(?:QUESTION|Q)\s*(?:NO\.?\s*)?#?\s*)?([A-Z]?\d{1,3})(?:(?:[.)]|[—–:-])\s*(.*)|\s+(.+)|$)$/i,
     );
     const matchingLabel =
-      section === "B" && /MATCHING/i.test(sectionTitle)
+      /MATCHING/i.test(sectionTitle)
         ? line.match(/^(\d{1,2})[.)]\s*(.+)$/)
         : null;
     const match = letterLabel ?? matchingLabel;
     if (match) {
       savePending();
       const questionNumber = match[1].toUpperCase().replace(/\s+/g, "");
-      const sourceId = `${section || "Q"}-${questionNumber}`;
+      const hasQuestionPrefix = /^(?:QUESTION\b|Q(?=\s|\d))/i.test(line);
+      const sourceId = /^[A-Z]/i.test(questionNumber)
+        ? questionNumber
+        : hasQuestionPrefix
+          ? `Q${questionNumber}`
+          : questionNumber;
       pending = {
         sourceId,
         label: originalLine.trim(),

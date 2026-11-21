@@ -12,6 +12,9 @@ const blob = vi.hoisted(() => ({
   get: vi.fn(),
   del: vi.fn(async () => undefined),
 }));
+const drive = vi.hoisted(() => ({
+  assertRecordingReady: vi.fn(async () => undefined),
+}));
 vi.mock("next-auth", () => ({
   getServerSession: async () => {
     const id = requestSession.getStore();
@@ -19,6 +22,15 @@ vi.mock("next-auth", () => ({
   },
 }));
 vi.mock("@vercel/blob", () => blob);
+vi.mock("../src/lib/integrations", async (importOriginal) => {
+  const actual = await importOriginal<
+    typeof import("../src/lib/integrations")
+  >();
+  return {
+    ...actual,
+    assertDriveRecordingReady: drive.assertRecordingReady,
+  };
+});
 process.env.DATABASE_PROVIDER = "pglite";
 process.env.PGLITE_PATH = "./.data/test-" + randomUUID();
 process.env.NEXTAUTH_URL = "http://localhost:3000";
@@ -112,6 +124,7 @@ const start = {
   deviceSessionId: device,
   deviceClass: "laptop",
   accepted: true,
+  screenRecordingAccepted: true,
   checks: {
     camera: false,
     microphone: false,
@@ -1197,6 +1210,9 @@ it("authenticates cron and expires an offline attempt", async () => {
 
 it("permanently removes an exam and every related result and private file", async () => {
   login(teacher);
+  await db.execute(
+    sql`UPDATE attempts SET status='ACTIVE' WHERE id=${attempt}`,
+  );
   const fileId = randomUUID();
   await db.execute(
     sql`INSERT INTO files(id,exam_id,owner_id,name,mime,url,size) VALUES(${fileId},${exam},${teacher},'Old paper.docx','application/vnd.openxmlformats-officedocument.wordprocessingml.document','private-paper',10)`,
@@ -1206,6 +1222,9 @@ it("permanently removes an exam and every related result and private file", asyn
   expect(activePaperDelete.status).toBe(409);
   expect(blob.del).not.toHaveBeenCalled();
 
+  await db.execute(
+    sql`UPDATE attempts SET status='EXPIRED' WHERE id=${attempt}`,
+  );
   await db.execute(sql`UPDATE exams SET status='CLOSED' WHERE id=${exam}`);
   const deletedFile = await deleteRequest(`files/${fileId}`);
   expect(deletedFile.status).toBe(200);

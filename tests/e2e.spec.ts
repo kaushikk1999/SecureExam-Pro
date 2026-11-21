@@ -18,6 +18,11 @@ test.beforeEach(async () => {
 async function login(page: Page, email: string) {
   if (email !== "teacher@example.test") {
     await page.addInitScript(() => {
+      Object.defineProperty(navigator, "userAgent", {
+        configurable: true,
+        get: () =>
+          "Mozilla/5.0 (iPad; CPU OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1",
+      });
       const mediaDevices = navigator.mediaDevices;
       if (!mediaDevices) return;
       Object.defineProperty(mediaDevices, "getDisplayMedia", {
@@ -167,7 +172,7 @@ test("teacher workspace, authoring, audit and responsive layout", async ({
   await expect(microphoneCheck).toBeChecked();
   await page.getByLabel("Security preset").selectOption("practice");
   await expect(microphoneCheck).not.toBeChecked();
-  await page.getByRole("button", { name: "Save draft", exact: true }).click();
+  await page.getByRole("button", { name: "Save changes", exact: true }).click();
   await expect(
     page.getByRole("heading", { name: title, exact: true }),
   ).toBeVisible();
@@ -426,6 +431,9 @@ test("strict preflight with simulated devices, location checkpoint and fifth-war
     })
     .check();
   await page.getByRole("checkbox", { name: /I have read/ }).check();
+  await page
+    .getByRole("checkbox", { name: /a still image from my camera/i })
+    .check();
   await page.getByRole("button", { name: "Begin secure exam" }).click();
   await expect(page.getByText("QUESTION 1 OF 1")).toBeVisible();
   await page.getByRole("radio", { name: "O(log n)", exact: true }).check();
@@ -705,7 +713,7 @@ test("student appeal submission and instructor decision complete through the UI"
     await page.request.get("/api/platform/questions")
   ).json();
   const suffix = Date.now();
-  const email = `appeal-${suffix}@example.test`,
+  const email = `appeal-${suffix}@bumail.net`,
     title = `Appeal workflow ${suffix}`;
   const student = await page.request.post("/api/platform/students", {
     headers,
@@ -766,7 +774,7 @@ test("student appeal submission and instructor decision complete through the UI"
       headers,
       data: {
         deviceSessionId: device.id,
-        deviceClass: "laptop",
+        deviceClass: "tablet",
         accepted: true,
         checks: {
           camera: false,

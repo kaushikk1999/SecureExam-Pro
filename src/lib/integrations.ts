@@ -19,14 +19,21 @@ function googleAuth(scopes: string[]) {
       "Google Cloud file storage is not configured. Set the Workload Identity federation variables and GDRIVE_FOLDER_ID, or configure Vercel Blob storage.",
     );
 
+  const workforceAudience = `//iam.googleapis.com/projects/${projectNumber}/locations/global/workloadIdentityPools/${poolId}/providers/${providerId}`;
+  const oidcAudience = `https:${workforceAudience}`;
   const auth = ExternalAccountClient.fromJSON({
     type: "external_account",
-    audience: `//iam.googleapis.com/projects/${projectNumber}/locations/global/workloadIdentityPools/${poolId}/providers/${providerId}`,
+    audience: workforceAudience,
     subject_token_type: "urn:ietf:params:oauth:token-type:jwt",
     token_url: "https://sts.googleapis.com/v1/token",
     service_account_impersonation_url: `https://iamcredentials.googleapis.com/v1/projects/-/serviceAccounts/${serviceAccountEmail}:generateAccessToken`,
     scopes,
-    subject_token_supplier: { getSubjectToken: getVercelOidcToken },
+    // Google’s default OIDC audience is the HTTPS provider URL. Ask Vercel
+    // to mint that audience explicitly; its default team audience does not
+    // match a Google provider configured with the recommended default.
+    subject_token_supplier: {
+      getSubjectToken: () => getVercelOidcToken({ audience: oidcAudience }),
+    },
   });
   if (!auth)
     throw new HttpError(503, "Google Cloud federation is misconfigured.");
@@ -39,10 +46,25 @@ async function driveToken() {
   try {
     ({ token } = await auth.getAccessToken());
   } catch (error) {
-    const code = (error as { code?: string })?.code;
+    const authError = error as {
+      code?: string | number;
+      response?: {
+        status?: number;
+        data?: { error?: string; error_description?: string };
+      };
+    };
     console.error("Google Drive token exchange failed", {
       name: error instanceof Error ? error.name : "Error",
-      code,
+      code: authError.code,
+      httpStatus: authError.response?.status,
+      oauthError:
+        typeof authError.response?.data?.error === "string"
+          ? authError.response.data.error.slice(0, 100)
+          : undefined,
+      oauthDescription:
+        typeof authError.response?.data?.error_description === "string"
+          ? authError.response.data.error_description.slice(0, 200)
+          : undefined,
     });
     throw new HttpError(
       503,
