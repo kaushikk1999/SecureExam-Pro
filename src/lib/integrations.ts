@@ -53,17 +53,30 @@ async function driveToken() {
       code?: string | number;
       response?: {
         status?: number;
-        data?: { error?: string; error_description?: string };
+        data?: {
+          error?: string | { message?: string; status?: string };
+          error_description?: string;
+        };
+        config?: { url?: string | URL };
       };
     };
+    const nestedError =
+      typeof authError.response?.data?.error === "object"
+        ? authError.response.data.error
+        : undefined;
+    const failedUrl = authError.response?.config?.url;
     console.error("Google Drive token exchange failed", {
       name: error instanceof Error ? error.name : "Error",
       code: authError.code,
       httpStatus: authError.response?.status,
+      // STS failures name sts.googleapis.com; impersonation failures name
+      // iamcredentials.googleapis.com and nest their reason under `error`.
+      endpoint: failedUrl ? new URL(String(failedUrl)).host : undefined,
       oauthError:
         typeof authError.response?.data?.error === "string"
           ? authError.response.data.error.slice(0, 100)
-          : undefined,
+          : nestedError?.status?.slice(0, 100),
+      googleMessage: nestedError?.message?.slice(0, 300),
       oauthDescription:
         typeof authError.response?.data?.error_description === "string"
           ? authError.response.data.error_description.slice(0, 200)
