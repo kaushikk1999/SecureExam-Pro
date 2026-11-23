@@ -375,7 +375,9 @@ describe("Vercel Blob storage mode", () => {
 
     expect(reference).toBe("https://blob.example/segment");
     expect(mocks.put).toHaveBeenCalledWith(
-      "exams/exam-1/recordings/attempt-1/SCREEN_RECORDING-attempt-1-0000000000001.webm",
+      expect.stringMatching(
+        /^recordings\/Midterm\/Student - 123\/Student - 123 - \d{4}-\d{2}-\d{2} \d{2}\.\d{2}\.\d{2}\.webm$/,
+      ),
       Buffer.from("webm"),
       expect.objectContaining({ access: "private", contentType: "video/webm" }),
     );

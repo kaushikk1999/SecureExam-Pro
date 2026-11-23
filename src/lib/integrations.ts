@@ -652,6 +652,28 @@ export async function storePrivateFile(
 }
 
 /** Store a screen-recording segment in Google Drive only; recordings must not silently fall back to another provider. */
+/** Readable recording names: exam folder, then "Name - ID" per student. */
+function recordingNames(input: {
+  attemptId: string;
+  examTitle: string;
+  studentName: string;
+  studentId: string | null;
+  at?: Date;
+}) {
+  const student = `${safeDriveName(input.studentName, "Student")} - ${safeDriveName(input.studentId ?? input.attemptId.slice(0, 8), "no-id")}`;
+  // Bangkok time (UTC+7, no daylight saving), so files sort in recording order.
+  const stamp = new Date((input.at ?? new Date()).getTime() + 7 * 3600_000)
+    .toISOString()
+    .slice(0, 19)
+    .replace("T", " ")
+    .replaceAll(":", ".");
+  return {
+    exam: safeDriveName(input.examTitle, "Exam"),
+    student,
+    file: `${student} - ${stamp}.webm`,
+  };
+}
+
 export async function storeScreenRecordingPart(input: {
   attemptId: string;
   examId: string;
@@ -661,23 +683,24 @@ export async function storeScreenRecordingPart(input: {
   name: string;
   bytes: Buffer;
 }) {
+  const names = recordingNames(input);
   // Prefer the exam owner's own Google Drive when they have connected it.
   const owner = await examOwnerDriveAccess(input.examId);
   if (owner) {
     const examFolderId = await cachedDriveFolder(
       owner.token,
       owner.rootFolderId,
-      `${safeDriveName(input.examTitle, "Exam")} (${input.examId.slice(0, 8)})`,
+      names.exam,
     );
     const studentFolderId = await cachedDriveFolder(
       owner.token,
       examFolderId,
-      `${safeDriveName(input.studentName, "Student")} (${safeDriveName(input.studentId ?? input.attemptId.slice(0, 8), "no-id")})`,
+      names.student,
     );
     const id = await uploadDriveFile(
       owner.token,
       studentFolderId,
-      input.name,
+      names.file,
       "video/webm",
       input.bytes,
     );
@@ -685,7 +708,7 @@ export async function storeScreenRecordingPart(input: {
   }
   if (blobStorageEnabled())
     return storePrivateFile(
-      `exams/${input.examId}/recordings/${input.attemptId}/${input.name.replaceAll("::", "-")}`,
+      `recordings/${names.exam}/${names.student}/${names.file}`,
       input.bytes,
       "video/webm",
     );
@@ -697,21 +720,16 @@ export async function storeScreenRecordingPart(input: {
     );
   const token = await driveToken();
   const rootId = await cachedDriveFolder(token, folderId, "Secure Exam");
-  const examFolderId = await cachedDriveFolder(
-    token,
-    rootId,
-    `${safeDriveName(input.examTitle, "Exam")} (${input.examId.slice(0, 8)})`,
-  );
-  const studentName = `${safeDriveName(input.studentName, "Student")} (${safeDriveName(input.studentId ?? input.attemptId.slice(0, 8), "no-id")})`;
+  const examFolderId = await cachedDriveFolder(token, rootId, names.exam);
   const studentFolderId = await cachedDriveFolder(
     token,
     examFolderId,
-    studentName,
+    names.student,
   );
   const id = await uploadDriveFile(
     token,
     studentFolderId,
-    input.name,
+    names.file,
     "video/webm",
     input.bytes,
   );

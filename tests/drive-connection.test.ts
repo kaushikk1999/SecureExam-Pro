@@ -193,5 +193,15 @@ describe("teacher Google Drive connection", () => {
       Authorization: "Bearer owner-access",
     });
     expect(String(upload[1]?.body)).toContain('"parents":["student-folder"]');
+    // Folders: exam title, then "Student - ID"; file named by student and time.
+    expect(String(fetchMock.mock.calls[2][1]?.body)).toContain(
+      '"name":"Midterm"',
+    );
+    expect(String(fetchMock.mock.calls[4][1]?.body)).toContain(
+      '"name":"Student - 123"',
+    );
+    expect(String(upload[1]?.body)).toMatch(
+      /"name":"Student - 123 - \d{4}-\d{2}-\d{2} \d{2}\.\d{2}\.\d{2}\.webm"/,
+    );
   });
 });
