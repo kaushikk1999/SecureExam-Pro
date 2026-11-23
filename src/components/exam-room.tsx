@@ -37,6 +37,20 @@ const Editor = dynamic(() => import("@monaco-editor/react"), { ssr: false });
 loader.config({ paths: { vs: "/monaco/vs" } });
 type QueuedAnswer = { questionId: string; value: any; version: number };
 type QueuedEvent = { id: string; type: string; metadata: Record<string, any> };
+const FILE_DIALOG_GRACE_MS = 60_000;
+
+/** Publish the sticky exam header's height so the sidebar can stick below it. */
+function observeExamHead(element: HTMLDivElement | null) {
+  const shell = element?.parentElement;
+  if (!element || !shell || typeof ResizeObserver === "undefined") return;
+  const update = () =>
+    shell.style.setProperty("--exam-head-h", `${element.offsetHeight}px`);
+  update();
+  const observer = new ResizeObserver(update);
+  observer.observe(element);
+  return () => observer.disconnect();
+}
+
 function captureTrackIsActive(track?: MediaStreamTrack) {
   return (
     !!track && track.readyState === "live" && track.enabled && !track.muted
@@ -154,6 +168,13 @@ export default function ExamRoom({
     events = useRef<QueuedEvent[]>([]),
     versions = useRef<Record<string, number>>({}),
     lastEvent = useRef<Record<string, number>>({}),
+    // Opening a file picker or a download "Save as" dialog moves focus to the
+    // operating system. Those dialogs are part of the exam page itself, so the
+    // resulting window blur must not be scored as leaving the exam.
+    expectedFocusLossUntil = useRef(0),
+    focusGraceTimer = useRef<ReturnType<typeof setTimeout> | undefined>(
+      undefined,
+    ),
     lastEvidenceCapture = useRef(0),
     syncing = useRef(false),
     location = useRef<any>(null),
@@ -1129,7 +1150,30 @@ export default function ExamRoom({
       }
     };
     const blur = () => {
-      if (document.activeElement?.tagName !== "IFRAME") emit("WINDOW_BLUR");
+      if (document.activeElement?.tagName === "IFRAME") return;
+      if (performance.now() < expectedFocusLossUntil.current) {
+        expectedFocusLossUntil.current = 0;
+        clearTimeout(focusGraceTimer.current);
+        // Still record a warning if focus never comes back to the exam.
+        focusGraceTimer.current = setTimeout(() => {
+          if (!document.hasFocus())
+            emit("WINDOW_BLUR", {
+              reason:
+                "focus did not return within 60 seconds of a file or download dialog",
+            });
+        }, FILE_DIALOG_GRACE_MS);
+        return;
+      }
+      emit("WINDOW_BLUR");
+    };
+    const expectDialog = (e: MouseEvent) => {
+      const target = e.target as Element | null;
+      if (
+        target?.closest?.(
+          'input[type="file"], a[href*="download=1"], a[download]',
+        )
+      )
+        expectedFocusLossUntil.current = performance.now() + 3000;
     };
     const full = () => {
       if (
@@ -1154,6 +1198,7 @@ export default function ExamRoom({
       void synchronize();
     };
     const focus = () => {
+      clearTimeout(focusGraceTimer.current);
       if (events.current.length) void synchronize();
     };
     const leave = (e: BeforeUnloadEvent) => {
@@ -1172,6 +1217,7 @@ export default function ExamRoom({
     document.addEventListener("visibilitychange", visibility);
     window.addEventListener("blur", blur);
     window.addEventListener("focus", focus);
+    document.addEventListener("click", expectDialog, true);
     document.addEventListener("fullscreenchange", full);
     window.addEventListener("offline", off);
     window.addEventListener("online", on);
@@ -1412,6 +1458,8 @@ export default function ExamRoom({
       document.removeEventListener("visibilitychange", visibility);
       window.removeEventListener("blur", blur);
       window.removeEventListener("focus", focus);
+      document.removeEventListener("click", expectDialog, true);
+      clearTimeout(focusGraceTimer.current);
       document.removeEventListener("fullscreenchange", full);
       window.removeEventListener("offline", off);
       window.removeEventListener("online", on);
@@ -2310,41 +2358,43 @@ export default function ExamRoom({
   const isLastQuestion = questions.length > 0 && index >= questions.length - 1;
   return (
     <div className="exam-shell">
-      <header className="exam-top">
-        <div>
-          <ShieldCheck size={24} />
-          <span>
-            <strong>{attempt.title}</strong>
-            <small>
-              {user.name} · {user.student_id}
-            </small>
+      <div className="exam-sticky-head" ref={observeExamHead}>
+        <header className="exam-top">
+          <div>
+            <ShieldCheck size={24} />
+            <span>
+              <strong>{attempt.title}</strong>
+              <small>
+                {user.name} · {user.student_id}
+              </small>
+            </span>
+          </div>
+          <div className="exam-clock">
+            <Clock3 size={20} />
+            {String(Math.floor(seconds / 60)).padStart(2, "0")}:
+            {String(seconds % 60).padStart(2, "0")}
+          </div>
+          <span className={online ? "save-indicator" : "danger-text"}>
+            {online ? "● Connected" : "● Offline"}
           </span>
+          <button
+            className="primary"
+            disabled={pendingWarnings.length > 0}
+            onClick={submitExam}
+          >
+            <Send size={16} /> Submit exam
+          </button>
+        </header>
+        <div className="exam-status">
+          <span>{saveStatus}</span>
+          {screenRecordingStatus && (
+            <span role="status">{screenRecordingStatus}</span>
+          )}
+          <span>
+            Warnings {attempt.warnings} / {attempt.policy.maxWarnings}
+          </span>
+          <span>{attempt.location_status.replaceAll("_", " ")}</span>
         </div>
-        <div className="exam-clock">
-          <Clock3 size={20} />
-          {String(Math.floor(seconds / 60)).padStart(2, "0")}:
-          {String(seconds % 60).padStart(2, "0")}
-        </div>
-        <span className={online ? "save-indicator" : "danger-text"}>
-          {online ? "● Connected" : "● Offline"}
-        </span>
-        <button
-          className="primary"
-          disabled={pendingWarnings.length > 0}
-          onClick={submitExam}
-        >
-          <Send size={16} /> Submit exam
-        </button>
-      </header>
-      <div className="exam-status">
-        <span>{saveStatus}</span>
-        {screenRecordingStatus && (
-          <span role="status">{screenRecordingStatus}</span>
-        )}
-        <span>
-          Warnings {attempt.warnings} / {attempt.policy.maxWarnings}
-        </span>
-        <span>{attempt.location_status.replaceAll("_", " ")}</span>
       </div>
       {pendingWarnings.length > 0 && (
         <div className="warning-ack-backdrop" role="presentation">
@@ -2494,13 +2544,16 @@ export default function ExamRoom({
             <br />• = flagged for review
           </p>
           {attempt.policy.camera && (
-            <video
-              ref={video}
-              className="camera-preview"
-              autoPlay
-              muted
-              playsInline
-            />
+            <figure className="camera-dock">
+              <video
+                ref={video}
+                className="camera-preview"
+                autoPlay
+                muted
+                playsInline
+              />
+              <figcaption>Keep your face inside this frame</figcaption>
+            </figure>
           )}
           <div className="device-labels">
             <span>
