@@ -4722,3 +4722,7 @@ fieldset {
     padding-bottom: 120px;
   }
 }
+/* A general muted-text rule above would otherwise grey this out. */
+.exam-shell .save-indicator {
+  color: #34d399;
+}

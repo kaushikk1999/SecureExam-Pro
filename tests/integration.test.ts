@@ -1021,6 +1021,29 @@ describe("server authorization and exam lifecycle", () => {
     const r = await (await request("attempts/" + attempt)).json();
     expect(r.answers[0].value).toBe("SECRET_KEY");
   });
+  it("keeps screen-recording consent when a heartbeat updates the device state", async () => {
+    const [before] = await query<any>(
+      sql`SELECT device_state FROM attempts WHERE id=${attempt}`,
+    );
+    expect(before.device_state.screenRecordingAccepted).toBe(true);
+    const response = await request("attempts/" + attempt + "/sync", {
+      deviceState: {
+        camera: false,
+        microphone: false,
+        screen: true,
+        deviceClass: "laptop",
+        fullscreen: false,
+        online: true,
+      },
+    });
+    expect(response.status).toBe(200);
+    const [after] = await query<any>(
+      sql`SELECT device_state FROM attempts WHERE id=${attempt}`,
+    );
+    expect(after.device_state.screenRecordingAccepted).toBe(true);
+    expect(after.device_state.deviceClass).toBe("laptop");
+    expect(after.device_state.online).toBe(true);
+  });
   it("logs local audio and camera activity for instructor review without auto-penalizing", async () => {
     const path = "attempts/" + attempt + "/sync";
     const response = await request(path, {

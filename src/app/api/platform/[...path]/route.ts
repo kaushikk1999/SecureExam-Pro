@@ -2708,10 +2708,21 @@ async function dispatch(req: Request, parts: string[]) {
           a.status = "SUBMITTED";
         }
       }
-      if (v.deviceState)
+      if (v.deviceState) {
+        // Merge, never replace: consent and device class are recorded once at
+        // exam start and must survive heartbeats (the client does not resend
+        // them, so replacing dropped recording consent after the first sync).
+        const deviceState = {
+          ...(a.device_state ?? {}),
+          ...v.deviceState,
+          screenRecordingAccepted:
+            a.device_state?.screenRecordingAccepted === true,
+          deviceClass: a.device_state?.deviceClass ?? v.deviceState.deviceClass,
+        };
         await tx.execute(
-          sql`UPDATE attempts SET device_state=${JSON.stringify(v.deviceState)}::jsonb,last_heartbeat_at=now() WHERE id=${id}`,
+          sql`UPDATE attempts SET device_state=${JSON.stringify(deviceState)}::jsonb,last_heartbeat_at=now() WHERE id=${id}`,
         );
+      }
       return {
         status: a.status,
         warnings: a.warnings,
