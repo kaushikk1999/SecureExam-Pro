@@ -32,7 +32,10 @@ function googleAuth(scopes: string[]) {
     // with that provider setting; `workforceAudience` above is the separate
     // Google STS target resource.
     subject_token_supplier: {
-      getSubjectToken: getVercelOidcToken,
+      // google-auth-library calls suppliers with its own context object. Do
+      // not pass that object to getVercelOidcToken: its `audience` option would
+      // replace the Vercel token audience with Google's STS target resource.
+      getSubjectToken: () => getVercelOidcToken(),
     },
   });
   if (!auth)

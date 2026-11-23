@@ -68,11 +68,14 @@ describe("private exam file storage", () => {
     );
     const authConfig = mocks.fromJSON.mock.calls[0]?.[0] as unknown as {
       subject_token_supplier: {
-        getSubjectToken: () => Promise<string>;
+        getSubjectToken: (context?: { audience: string }) => Promise<string>;
       };
     };
     await expect(
-      authConfig.subject_token_supplier.getSubjectToken(),
+      authConfig.subject_token_supplier.getSubjectToken({
+        audience:
+          "//iam.googleapis.com/projects/347634395141/locations/global/workloadIdentityPools/exam-pool/providers/vercel-production",
+      }),
     ).resolves.toBe("test-subject-token");
     expect(mocks.getVercelOidcToken).toHaveBeenCalledOnce();
     expect(mocks.getVercelOidcToken).toHaveBeenCalledWith();
