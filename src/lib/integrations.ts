@@ -4,6 +4,7 @@ import { randomUUID } from "node:crypto";
 import { sql } from "drizzle-orm";
 import { query } from "./db";
 import { HttpError } from "./auth";
+import { examOwnerDriveAccess, userDriveAccess } from "./drive-connection";
 
 const DRIVE_SCOPE = "https://www.googleapis.com/auth/drive";
 
@@ -44,6 +45,24 @@ export function driveStorageEnabled() {
 
 const DRIVE_PREFLIGHT_CACHE_MS = 10 * 60_000;
 let drivePreflightPassedAt = { folderId: "", at: 0 };
+const ownerDrivePreflightPassedAt = new Map<string, number>();
+
+/** Reference to a file stored in a teacher's own connected Google Drive. */
+function parseUserDriveReference(reference: string) {
+  const match = reference.match(/^udrive:([0-9a-f-]{36}):([\w-]+)$/i);
+  if (!match) throw new HttpError(404, "File not found.");
+  return { userId: match[1], fileId: match[2] };
+}
+
+async function userDriveToken(userId: string) {
+  const access = await userDriveAccess(userId);
+  if (!access)
+    throw new HttpError(
+      503,
+      "This recording is in an instructor's Google Drive that is no longer connected. Reconnect Google Drive in Settings.",
+    );
+  return access.token;
+}
 
 function googleAuth(scopes: string[]) {
   const projectNumber = process.env.GCP_PROJECT_NUMBER;
@@ -642,6 +661,28 @@ export async function storeScreenRecordingPart(input: {
   name: string;
   bytes: Buffer;
 }) {
+  // Prefer the exam owner's own Google Drive when they have connected it.
+  const owner = await examOwnerDriveAccess(input.examId);
+  if (owner) {
+    const examFolderId = await cachedDriveFolder(
+      owner.token,
+      owner.rootFolderId,
+      `${safeDriveName(input.examTitle, "Exam")} (${input.examId.slice(0, 8)})`,
+    );
+    const studentFolderId = await cachedDriveFolder(
+      owner.token,
+      examFolderId,
+      `${safeDriveName(input.studentName, "Student")} (${safeDriveName(input.studentId ?? input.attemptId.slice(0, 8), "no-id")})`,
+    );
+    const id = await uploadDriveFile(
+      owner.token,
+      studentFolderId,
+      input.name,
+      "video/webm",
+      input.bytes,
+    );
+    return `udrive:${owner.userId}:${id}`;
+  }
   if (blobStorageEnabled())
     return storePrivateFile(
       `exams/${input.examId}/recordings/${input.attemptId}/${input.name.replaceAll("::", "-")}`,
@@ -678,7 +719,30 @@ export async function storeScreenRecordingPart(input: {
 }
 
 /** Confirm that a new exam recording can be written before allowing the exam to begin. */
-export async function assertRecordingStorageReady() {
+export async function assertRecordingStorageReady(examId?: string) {
+  const owner = examId ? await examOwnerDriveAccess(examId) : null;
+  if (owner) {
+    const passedAt = ownerDrivePreflightPassedAt.get(owner.userId) ?? 0;
+    if (Date.now() - passedAt < DRIVE_PREFLIGHT_CACHE_MS) return;
+    let probeId: string;
+    try {
+      probeId = await uploadDriveFile(
+        owner.token,
+        owner.rootFolderId,
+        `.secure-exam-write-check-${randomUUID()}.txt`,
+        "text/plain",
+        Buffer.from("Secure Exam storage check. Safe to delete."),
+      );
+    } catch {
+      throw new HttpError(
+        503,
+        "Secure Exam cannot save recordings to the instructor's Google Drive. Ask the instructor to reconnect Google Drive in Settings.",
+      );
+    }
+    await deleteDriveItem(owner.token, probeId).catch(() => undefined);
+    ownerDrivePreflightPassedAt.set(owner.userId, Date.now());
+    return;
+  }
   // Blob writes need only the project token, which is present when enabled.
   if (blobStorageEnabled()) return;
   const folderId = process.env.GDRIVE_FOLDER_ID;
@@ -763,6 +827,20 @@ export async function readPrivateFile(reference: string) {
       throw new HttpError(404, "File not found.");
     return new Response(Buffer.from(encoded, "base64")).body;
   }
+  if (reference.startsWith("udrive:")) {
+    const { userId, fileId } = parseUserDriveReference(reference);
+    const response = await fetch(
+      driveApi(
+        `https://www.googleapis.com/drive/v3/files/${encodeURIComponent(fileId)}?alt=media`,
+      ),
+      {
+        headers: { Authorization: `Bearer ${await userDriveToken(userId)}` },
+        cache: "no-store",
+        signal: AbortSignal.timeout(30000),
+      },
+    );
+    return response.ok ? response.body : null;
+  }
   if (!reference.startsWith("gdrive:")) {
     const { get } = await import("@vercel/blob");
     const blob = await get(reference, { access: "private" });
@@ -787,6 +865,11 @@ export async function readPrivateFile(reference: string) {
 
 export async function deletePrivateFile(reference: string) {
   if (reference.startsWith("inline:")) return;
+  if (reference.startsWith("udrive:")) {
+    const { userId, fileId } = parseUserDriveReference(reference);
+    await deleteDriveItem(await userDriveToken(userId), fileId);
+    return;
+  }
   if (!reference.startsWith("gdrive:")) {
     const { del } = await import("@vercel/blob");
     await del(reference);

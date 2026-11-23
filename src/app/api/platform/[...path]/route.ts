@@ -41,6 +41,14 @@ import {
 } from "@/lib/validation";
 import { growthRequest } from "@/lib/growth";
 import {
+  authorizationUrl,
+  completeDriveConnection,
+  disconnectDrive,
+  driveConnectionStatus,
+  driveOAuthConfigured,
+  newAuthorizationRequest,
+} from "@/lib/drive-connection";
+import {
   ai,
   aiCameraReview,
   syncSheets,
@@ -176,6 +184,101 @@ const teacher = (u: Actor) => {
   if (u.role === "STUDENT")
     throw new HttpError(403, "Teacher access required.");
 };
+const DRIVE_OAUTH_COOKIE = "secure_exam_drive_oauth";
+/** Connect, check or disconnect the teacher's own Google Drive for recordings. */
+async function driveConnectionRequest(
+  req: Request,
+  step: string | undefined,
+  u: Actor,
+) {
+  teacher(u);
+  const origin = new URL(process.env.NEXT_PUBLIC_APP_URL ?? req.url).origin;
+  const settingsUrl = (result: string) =>
+    `${origin}/workspace/settings?drive=${result}`;
+  if (!step) {
+    if (req.method === "DELETE") {
+      await disconnectDrive(u.id);
+      await record({ userId: u.id, type: "DRIVE_DISCONNECTED" });
+      return json({ ok: true });
+    }
+    if (req.method !== "GET")
+      throw new HttpError(405, "GET or DELETE required.");
+    return json(await driveConnectionStatus(u.id));
+  }
+  if (req.method !== "GET") throw new HttpError(405, "GET required.");
+  if (step === "start") {
+    if (!driveOAuthConfigured())
+      throw new HttpError(503, "Google sign-in is not configured.");
+    const request = newAuthorizationRequest();
+    const response = NextResponse.redirect(
+      authorizationUrl({
+        origin,
+        state: request.state,
+        challenge: request.challenge,
+        loginHint: u.email,
+      }),
+    );
+    response.cookies.set(
+      DRIVE_OAUTH_COOKIE,
+      `${request.state}.${request.verifier}.${u.id}`,
+      {
+        httpOnly: true,
+        secure: origin.startsWith("https:"),
+        sameSite: "lax",
+        path: "/api/platform/drive-connection",
+        maxAge: 600,
+      },
+    );
+    return response;
+  }
+  if (step === "callback") {
+    const url = new URL(req.url);
+    const cookie = req.headers
+      .get("cookie")
+      ?.split(/;\s*/)
+      .find((item) => item.startsWith(DRIVE_OAUTH_COOKIE + "="))
+      ?.slice(DRIVE_OAUTH_COOKIE.length + 1);
+    const [state, verifier, userId] = (cookie ?? "").split(".");
+    let result = "connected";
+    if (url.searchParams.get("error")) result = "denied";
+    else if (
+      !state ||
+      !verifier ||
+      userId !== u.id ||
+      url.searchParams.get("state") !== state ||
+      !url.searchParams.get("code")
+    )
+      result = "expired";
+    else {
+      try {
+        const connection = await completeDriveConnection({
+          userId: u.id,
+          code: url.searchParams.get("code")!,
+          verifier,
+          origin,
+        });
+        await record({
+          userId: u.id,
+          type: "DRIVE_CONNECTED",
+          metadata: { googleEmail: connection.email },
+        });
+      } catch (error) {
+        console.error(
+          "Drive connection callback failed",
+          error instanceof HttpError ? error.message : "unexpected error",
+        );
+        result = "error";
+      }
+    }
+    const response = NextResponse.redirect(settingsUrl(result));
+    response.cookies.set(DRIVE_OAUTH_COOKIE, "", {
+      path: "/api/platform/drive-connection",
+      maxAge: 0,
+    });
+    return response;
+  }
+  throw new HttpError(404, "Resource not found.");
+}
 const admin = (u: Actor) => {
   if (u.role !== "ADMIN")
     throw new HttpError(403, "Administrator access required.");
@@ -357,6 +460,8 @@ async function dispatch(req: Request, parts: string[]) {
     }
     return json(u);
   }
+  if (resource === "drive-connection")
+    return driveConnectionRequest(req, id, u);
   if (resource === "settings") {
     if (method === "GET") {
       const [s] = await query(
@@ -848,7 +953,7 @@ async function dispatch(req: Request, parts: string[]) {
           const [existingAttempt] = await query(
             sql`SELECT id FROM attempts WHERE exam_id=${id} AND user_id=${u.id}`,
           );
-          if (!existingAttempt) await assertRecordingStorageReady();
+          if (!existingAttempt) await assertRecordingStorageReady(id);
         }
         return json(await startAttempt(id, u, input));
       } catch (e) {

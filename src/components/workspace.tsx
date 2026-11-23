@@ -5063,6 +5063,86 @@ function Audit() {
     </>
   );
 }
+const driveResultMessages: Record<string, string> = {
+  connected:
+    "Google Drive connected. New screen recordings for your exams will be saved in your Drive.",
+  denied: "Google Drive access was not granted, so nothing changed.",
+  expired: "The connection request expired or did not match. Please try again.",
+  error:
+    "Google could not complete the connection. Try again; if it keeps failing, your university may block third-party apps for your account.",
+};
+function DriveRecordingPanel() {
+  const { data, error, refresh } = useData("drive-connection");
+  const [busy, setBusy] = useState(false);
+  const [message, setMessage] = useState("");
+  useEffect(() => {
+    const result = new URLSearchParams(window.location.search).get("drive");
+    if (!result) return;
+    setMessage(driveResultMessages[result] ?? "");
+    window.history.replaceState(null, "", window.location.pathname);
+  }, []);
+  return (
+    <section className="panel form-panel">
+      <h2>Screen recordings · Google Drive</h2>
+      <ErrorBox message={error} />
+      {!data ? (
+        <p className="muted">Checking Google Drive connection…</p>
+      ) : !data.available ? (
+        <p className="muted">
+          Google sign-in is not configured for this deployment, so recordings
+          use the app&apos;s private storage.
+        </p>
+      ) : data.connected ? (
+        <>
+          <p>
+            Connected as <strong>{data.email || "your Google account"}</strong>.
+            Recordings for your exams are saved in the “Secure Exam recordings”
+            folder in this account&apos;s Drive. The app can only see files it
+            created there.
+          </p>
+          <button
+            disabled={busy}
+            onClick={async () => {
+              if (
+                !confirm(
+                  "Disconnect Google Drive? New recordings will go to the app's private storage. Recordings already in your Drive stay there, but can't be played in the app until you reconnect.",
+                )
+              )
+                return;
+              setBusy(true);
+              try {
+                await api("drive-connection", {}, "DELETE");
+                setMessage("Google Drive disconnected.");
+                await refresh();
+              } catch (e) {
+                setMessage((e as Error).message);
+              } finally {
+                setBusy(false);
+              }
+            }}
+          >
+            Disconnect Google Drive
+          </button>
+        </>
+      ) : (
+        <>
+          <p>
+            Recordings are currently saved in the app&apos;s private storage.
+            Connect your Google account (for example your university account) to
+            save your exams&apos; screen recordings in your own Drive instead.
+          </p>
+          {/* A full page navigation: this API route redirects to Google. */}
+          <form action="/api/platform/drive-connection/start" method="get">
+            <button className="primary" type="submit">
+              Connect Google Drive
+            </button>
+          </form>
+        </>
+      )}
+      <p role="status">{message}</p>
+    </section>
+  );
+}
 function SettingsPage({ isAdmin }: { isAdmin: boolean }) {
   const { data: s, error, refresh } = useData("settings");
   const [message, setMessage] = useState("");
@@ -5139,6 +5219,7 @@ function SettingsPage({ isAdmin }: { isAdmin: boolean }) {
           </form>
         </section>
         <div>
+          <DriveRecordingPanel />
           <section className="panel form-panel">
             <h2>Integrations</h2>
             {Object.entries(s.integrations).map(([key, v]) => (
