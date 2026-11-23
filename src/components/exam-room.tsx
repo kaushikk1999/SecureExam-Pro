@@ -1229,6 +1229,7 @@ export default function ExamRoom({
     let motionTimer: ReturnType<typeof setInterval> | undefined;
     let visionTimer: ReturnType<typeof setInterval> | undefined;
     let firstVisionCheck: ReturnType<typeof setTimeout> | undefined;
+    let visionRetry: ReturnType<typeof setTimeout> | undefined;
     let visionBusy = false;
     let lastVisionNotice = 0;
     const analyser = microphoneAudio.current?.analyser;
@@ -1413,7 +1414,14 @@ export default function ExamRoom({
               );
           }
         } catch {
-          // Camera review is advisory and must never interrupt exam progress.
+          // Camera review must never interrupt exam progress. If the free AI
+          // service was busy or slow, try once more soon instead of waiting
+          // for the next one-minute check.
+          if (!visionRetry)
+            visionRetry = setTimeout(() => {
+              visionRetry = undefined;
+              void reviewCamera();
+            }, 15000);
         } finally {
           visionBusy = false;
         }
@@ -1465,6 +1473,7 @@ export default function ExamRoom({
       if (motionTimer) clearInterval(motionTimer);
       if (visionTimer) clearInterval(visionTimer);
       clearTimeout(firstVisionCheck);
+      clearTimeout(visionRetry);
       if (locationTimer) clearInterval(locationTimer);
       if (checkpoint) clearInterval(checkpoint);
       if (watch !== undefined) navigator.geolocation.clearWatch(watch);

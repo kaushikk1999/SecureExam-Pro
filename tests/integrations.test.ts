@@ -100,7 +100,10 @@ describe("OpenRouter free-model integration", () => {
       "possiblePhoneOrExtraScreen",
     );
     const body = JSON.parse(String(fetchMock.mock.calls[0][1]?.body));
-    expect(body.models[0]).toBe("nvidia/nemotron-3.5-super-vl:free");
+    expect(body.models).toEqual([
+      "nvidia/nemotron-3-nano-omni-30b-a3b-reasoning:free",
+    ]);
+    expect(body.reasoning).toEqual({ enabled: false });
     expect(body.response_format).toEqual({ type: "json_object" });
     expect(body.messages[1].content).toEqual([
       expect.objectContaining({ type: "text" }),
@@ -113,6 +116,31 @@ describe("OpenRouter free-model integration", () => {
         image_url: { url: "data:image/jpeg;base64,BBBB" },
       },
     ]);
+  });
+
+  it("falls back to the careful model when the fast one times out", async () => {
+    vi.stubEnv("OPENROUTER_API_KEY", "or-test-key");
+    const fetchMock = vi
+      .fn()
+      .mockRejectedValueOnce(
+        Object.assign(new Error("timeout"), { name: "TimeoutError" }),
+      )
+      .mockResolvedValueOnce(
+        Response.json({
+          choices: [
+            { message: { content: '{"possiblePhoneOrExtraScreen":true}' } },
+          ],
+        }),
+      );
+    vi.stubGlobal("fetch", fetchMock);
+
+    await expect(aiCameraReview(["AAAA", "BBBB"])).resolves.toContain(
+      "possiblePhoneOrExtraScreen",
+    );
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    const second = JSON.parse(String(fetchMock.mock.calls[1][1]?.body));
+    expect(second.models).toEqual(["nvidia/nemotron-3.5-super-vl:free"]);
+    expect(second.reasoning).toBeUndefined();
   });
 
   it("reports a free-tier rate limit as a retryable 429", async () => {
