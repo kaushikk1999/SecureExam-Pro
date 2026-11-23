@@ -1259,8 +1259,8 @@ function ExamForm({ done, initial }: { done: () => void; initial?: any }) {
               ],
               [
                 "aiCameraMonitoring",
-                "Ollama camera review (optional)",
-                "Send two small, temporary camera samples to Ollama about every 5 seconds. A missing-face or two-or-more-faces detection counts as a warning strike; other signals are advisory. False detections are possible.",
+                "AI camera review (optional)",
+                "Send two small, temporary camera samples to an AI service (OpenRouter) about once a minute; in large classes students are checked in turns (for example 80 students: each about every 5 minutes). A missing face, two or more faces, or a visible phone or extra screen counts as a warning strike; other signals are advisory. False detections are possible.",
               ],
               [
                 "microphone",
@@ -1324,7 +1324,7 @@ function ExamForm({ done, initial }: { done: () => void; initial?: any }) {
                 </span>
                 <small>
                   {key === "aiCameraMonitoring" && !settings?.integrations?.ai
-                    ? "Unavailable until the Ollama integration (OLLAMA_ENABLED and OLLAMA_API_KEY) is configured. " +
+                    ? "Unavailable until the AI integration (OPENROUTER_API_KEY) is configured. " +
                       description
                     : description}
                 </small>
@@ -2414,7 +2414,7 @@ function QuestionBank() {
         <section className="panel form-panel ai-question-builder">
           <h2>Make question with AI</h2>
           <p className="muted">
-            Paste your full question list. Ollama will split and format it into
+            Paste your full question list. AI will split and format it into
             editable drafts. Review the wording and every answer key before
             saving them to your question bank.
           </p>
@@ -2451,7 +2451,7 @@ function QuestionBank() {
               }}
             >
               <Sparkles size={16} />
-              {bulkBusy ? "Formatting questions…" : "Format with Ollama"}
+              {bulkBusy ? "Formatting questions…" : "Format with AI"}
             </button>
             <span className="small muted">
               Up to 40 questions per batch · AI answer keys may be wrong
@@ -3633,7 +3633,7 @@ function Monitor({ id, policy }: { id: string; policy?: any }) {
           ? "sustained voice activity"
           : newest.event_type === "CAMERA_MOTION"
             ? "repeated camera-frame movement"
-            : `Ollama camera review signal (${String(newest.metadata?.signals ?? "").replaceAll(",", ", ")})`;
+            : `AI camera review signal (${String(newest.metadata?.signals ?? "").replaceAll(",", ", ")})`;
       setLiveSignal(
         `${newest.name ?? "A student"}: ${label} signal. Review the event timeline; this signal alone does not establish misconduct.`,
       );
@@ -3807,9 +3807,9 @@ function Monitor({ id, policy }: { id: string; policy?: any }) {
       <section className="panel form-panel">
         <h2>AI supervision summary</h2>
         <p className="muted">
-          Ollama reviews anonymized signal counts when new voice or camera
-          movement signals arrive, at most once per minute. It does not receive
-          audio, images, names or student IDs, and it does not decide whether
+          AI reviews anonymized signal counts when new voice or camera movement
+          signals arrive, at most once per minute. It does not receive audio,
+          images, names or student IDs, and it does not decide whether
           misconduct occurred.
         </p>
         <button onClick={() => void reviewSupervision()} disabled={aiBusy}>
@@ -5231,7 +5231,7 @@ function SettingsPage({ isAdmin }: { isAdmin: boolean }) {
               <div className="integration" key={key}>
                 <strong>
                   {key === "ai"
-                    ? "Ollama · draft assistance"
+                    ? "AI (OpenRouter) · draft assistance"
                     : key === "storage"
                       ? "Vercel Blob · private files"
                       : "Google Sheets · batch exports"}

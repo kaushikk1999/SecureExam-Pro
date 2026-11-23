@@ -4,6 +4,7 @@ import {
   grade,
   policySchema,
   warningDecision,
+  cameraReviewTurn,
   shuffled,
   deadline,
   remaining,
@@ -287,5 +288,28 @@ describe("determinism and grades", () => {
     ).toBe(false);
     expect(validClassroomCode(storedSecret, code, issuedAt - 1)).toBe(false);
     expect(validClassroomCode(storedSecret, "000000", issuedAt)).toBe(false);
+  });
+});
+
+describe("AI camera review turns", () => {
+  it("reviews everyone each minute when the class fits the limit", () => {
+    for (const rank of [0, 10, 17])
+      expect(
+        cameraReviewTurn({ rank, total: 18, perMinute: 18, minute: 7 }).myTurn,
+      ).toBe(true);
+  });
+  it("splits 80 students into groups reviewed one per minute", () => {
+    const turns = (minute: number) =>
+      Array.from({ length: 80 }, (_, rank) =>
+        cameraReviewTurn({ rank, total: 80, perMinute: 20, minute }),
+      );
+    expect(turns(0)[0].groups).toBe(4);
+    for (let minute = 0; minute < 4; minute++) {
+      const reviewed = turns(minute)
+        .map((turn, rank) => (turn.myTurn ? rank : -1))
+        .filter((rank) => rank >= 0);
+      expect(reviewed).toHaveLength(20);
+      expect(reviewed[0]).toBe(minute * 20);
+    }
   });
 });

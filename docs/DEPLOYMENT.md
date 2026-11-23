@@ -21,7 +21,7 @@ Create a `SecureExam` tab, share the spreadsheet with the service-account email,
 
 ## Ollama
 
-Set `OLLAMA_ENABLED=true`, `OLLAMA_BASE_URL`, `OLLAMA_MODEL` (default `gemma3:4b`), and optionally `OLLAMA_API_KEY`. A Vercel function cannot reach your laptop's localhost; supply an authenticated HTTPS gateway reachable from the deployment. Only teacher-entered draft requests are sent. Do not send sensitive student records without institutional approval.
+AI features (question formatting, answer drafts, AI camera review) use OpenRouter when `OPENROUTER_API_KEY` is set: `google/gemma-4-31b-it:free` for text and `nvidia/nemotron-3.5-super-vl:free` for camera images, with the other free Gemma 4 / Nemotron models as fallbacks (override with `OPENROUTER_MODEL` / `OPENROUTER_VISION_MODEL`). Free models are rate limited per key (about 20 requests per minute plus a daily cap), so camera review runs about once a minute per student; large classes need paid OpenRouter credits. Legacy: Set `OLLAMA_ENABLED=true`, `OLLAMA_BASE_URL`, `OLLAMA_MODEL` (default `gemma3:4b`), and optionally `OLLAMA_API_KEY`. A Vercel function cannot reach your laptop's localhost; supply an authenticated HTTPS gateway reachable from the deployment. Only teacher-entered draft requests are sent. Do not send sensitive student records without institutional approval.
 
 ## Capacity and recovery
 

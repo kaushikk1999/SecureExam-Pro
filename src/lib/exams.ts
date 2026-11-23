@@ -195,7 +195,7 @@ export async function startAttempt(
         "Accept the full-screen recording notice before starting this exam.",
       );
     if (p.aiCameraMonitoring && !input.aiCameraAccepted)
-      throw new HttpError(400, "Accept the Ollama camera-review notice.");
+      throw new HttpError(400, "Accept the AI camera-review notice.");
     if (
       input.deviceClass === "tablet" &&
       p.camera &&

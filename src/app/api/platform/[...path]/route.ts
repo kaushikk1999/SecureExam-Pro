@@ -30,6 +30,7 @@ import {
   validCourseEnrollmentInvite,
   csv,
   auditHash,
+  cameraReviewTurn,
 } from "@/lib/domain";
 import {
   examSchema,
@@ -54,6 +55,7 @@ import {
   syncSheets,
   storePrivateFile,
   archiveWarningEvidenceToDrive,
+  aiConfigured,
   assertRecordingStorageReady,
   driveStorageEnabled,
   storeScreenRecordingPart,
@@ -73,7 +75,7 @@ import {
 } from "@/lib/document-text";
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
-// The Ollama client allows up to 45 seconds for longer question papers. Keep
+// The AI client allows up to 45 seconds for longer question papers. Keep
 // this route alive long enough for that request to time out and return the
 // source-extraction fallback instead of Vercel terminating it at 30 seconds.
 export const maxDuration = 60;
@@ -475,9 +477,7 @@ async function dispatch(req: Request, parts: string[]) {
         retentionDays: 90,
         ...s?.value,
         integrations: {
-          ai:
-            process.env.OLLAMA_ENABLED === "true" &&
-            Boolean(process.env.OLLAMA_API_KEY),
+          ai: aiConfigured(),
           storage: !!process.env.BLOB_READ_WRITE_TOKEN,
           sheets: Boolean(
             process.env.GOOGLE_SHEET_ID &&
@@ -1343,7 +1343,7 @@ async function dispatch(req: Request, parts: string[]) {
           }
         } catch {
           notice =
-            "The original questions were extracted exactly. Ollama did not return a complete answer-key draft, so review the questions and add answer suggestions manually if needed.";
+            "The original questions were extracted exactly. The AI service did not return a complete answer-key draft, so review the questions and add answer suggestions manually if needed.";
         }
 
         const questions = sourceQuestions.map((question) => {
@@ -1378,11 +1378,11 @@ async function dispatch(req: Request, parts: string[]) {
           const start = unfenced.indexOf("{");
           const end = unfenced.lastIndexOf("}");
           if (start < 0 || end <= start)
-            throw new Error("Ollama returned unreadable JSON.");
+            throw new Error("The AI service returned unreadable JSON.");
           try {
             decoded = JSON.parse(unfenced.slice(start, end + 1));
           } catch {
-            throw new Error("Ollama returned unreadable JSON.");
+            throw new Error("The AI service returned unreadable JSON.");
           }
         }
       } catch {
@@ -1404,12 +1404,12 @@ async function dispatch(req: Request, parts: string[]) {
             questionSchema.parse({ ...question, solution: null }),
           ),
           notice:
-            "Ollama could not return a complete draft, so the numbered questions were extracted from the source. Review the question wording and add answer suggestions before saving.",
+            "The AI service could not return a complete draft, so the numbered questions were extracted from the source. Review the question wording and add answer suggestions before saving.",
         });
       }
       throw new HttpError(
         502,
-        "Ollama could not format this source, and no clearly numbered questions could be extracted. Add question numbers such as Q1 or 1. and try again.",
+        "The AI service could not format this source, and no clearly numbered questions could be extracted. Add question numbers such as Q1 or 1. and try again.",
       );
     }
     if (action === "paper") {
@@ -2055,7 +2055,7 @@ async function dispatch(req: Request, parts: string[]) {
         if (!policy.aiCameraMonitoring || !policy.camera)
           throw new HttpError(
             403,
-            "Ollama camera review is not enabled for this exam.",
+            "AI camera review is not enabled for this exam.",
           );
         if (a.status !== "ACTIVE" || !a.device_state?.camera)
           throw new HttpError(
@@ -2063,18 +2063,42 @@ async function dispatch(req: Request, parts: string[]) {
             "The active camera is not available for review.",
           );
       });
+      // Share the AI rate limit across all monitored students: review one
+      // group per minute (round robin), and never exceed the per-minute cap.
+      const perMinute = Math.max(
+        1,
+        Number(process.env.AI_CAMERA_REVIEWS_PER_MINUTE) || 18,
+      );
+      const monitored = await query<{ id: string }>(
+        sql`SELECT a.id FROM attempts a JOIN exams e ON e.id=a.exam_id
+            WHERE a.status='ACTIVE' AND e.status<>'PAUSED'
+              AND COALESCE((e.policy->>'aiCameraMonitoring')::boolean,false)
+            ORDER BY a.started_at,a.id`,
+      );
+      const rank = monitored.findIndex((row) => row.id === id);
+      const turn = cameraReviewTurn({
+        rank: rank < 0 ? monitored.length : rank,
+        total: monitored.length,
+        perMinute,
+        minute: Math.floor(Date.now() / 60000),
+      });
+      if (
+        !turn.myTurn ||
+        !(await rateLimit("vision:all-students", perMinute, 60))
+      )
+        return json({ signals: [], skipped: true, groups: turn.groups });
       const raw = await aiCameraReview(input.frames);
       const text = raw.replace(/^```(?:json)?\s*/i, "").replace(/\s*```$/, "");
       let parsed: unknown;
       try {
         parsed = JSON.parse(text);
       } catch {
-        console.error("Ollama camera review was not JSON", {
+        console.error("AI camera review was not JSON", {
           excerpt: text.slice(0, 200),
         });
         throw new HttpError(
           502,
-          "Ollama returned an unreadable camera review.",
+          "The AI service returned an unreadable camera review.",
         );
       }
       const review = z
@@ -2122,7 +2146,7 @@ async function dispatch(req: Request, parts: string[]) {
               {
                 signals: advisorySignals.join(","),
                 measurement:
-                  "Ollama review of two transient low-resolution camera frames; advisory only",
+                  "AI review of two transient low-resolution camera frames; advisory only",
               },
               randomUUID(),
             );

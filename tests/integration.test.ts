@@ -1763,7 +1763,7 @@ it("keeps a source-faithful question draft when Ollama is unavailable", async ()
         (question: { solution: unknown }) => question.solution === null,
       ),
     ).toBe(true);
-    expect(result.notice).toContain("Ollama did not return");
+    expect(result.notice).toContain("The AI service did not return");
   } finally {
     vi.unstubAllGlobals();
     vi.unstubAllEnvs();

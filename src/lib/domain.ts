@@ -291,3 +291,27 @@ export function csv(rows: unknown[][]) {
     )
     .join("\r\n");
 }
+
+/**
+ * AI camera review capacity is shared by every active monitored attempt
+ * (free models are rate limited per key). Split attempts into groups of
+ * `perMinute` and review one group each minute, round robin: with 80
+ * students and 18 per minute, each student is reviewed every 5 minutes.
+ */
+export function cameraReviewTurn(input: {
+  rank: number;
+  total: number;
+  perMinute: number;
+  minute: number;
+}) {
+  const perMinute = Math.max(1, Math.floor(input.perMinute));
+  const total = Math.max(1, input.total, input.rank + 1);
+  const groups = Math.ceil(total / perMinute);
+  const group = Math.floor(Math.max(0, input.rank) / perMinute);
+  return {
+    myTurn:
+      groups <= 1 || ((input.minute % groups) + groups) % groups === group,
+    groups,
+    group,
+  };
+}

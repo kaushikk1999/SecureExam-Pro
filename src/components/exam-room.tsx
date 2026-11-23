@@ -1228,6 +1228,7 @@ export default function ExamRoom({
     let speechTimer: ReturnType<typeof setInterval> | undefined;
     let motionTimer: ReturnType<typeof setInterval> | undefined;
     let visionTimer: ReturnType<typeof setInterval> | undefined;
+    let firstVisionCheck: ReturnType<typeof setTimeout> | undefined;
     let visionBusy = false;
     let lastVisionNotice = 0;
     const analyser = microphoneAudio.current?.analyser;
@@ -1374,19 +1375,19 @@ export default function ExamRoom({
             emit("AI_FACE_NOT_VISIBLE", {
               signals: "FACE_NOT_VISIBLE",
               measurement:
-                "Ollama review of two transient low-resolution camera frames; no face clearly visible in either sample",
+                "AI review of two transient low-resolution camera frames; no face clearly visible in either sample",
             });
           if (signals.includes("MULTIPLE_PEOPLE_VISIBLE"))
             emit("AI_MULTIPLE_FACES_VISIBLE", {
               signals: "MULTIPLE_PEOPLE_VISIBLE",
               measurement:
-                "Ollama review of two transient low-resolution camera frames; two or more distinct faces clearly visible",
+                "AI review of two transient low-resolution camera frames; two or more distinct faces clearly visible",
             });
           if (signals.includes("POSSIBLE_PHONE_OR_EXTRA_SCREEN"))
             emit("AI_PHONE_VISIBLE", {
               signals: "POSSIBLE_PHONE_OR_EXTRA_SCREEN",
               measurement:
-                "Ollama review of two transient low-resolution camera frames; a phone or extra screen clearly visible",
+                "AI review of two transient low-resolution camera frames; a phone or extra screen clearly visible",
             });
           if (Date.now() - lastVisionNotice > 30000) {
             lastVisionNotice = Date.now();
@@ -1417,7 +1418,10 @@ export default function ExamRoom({
           visionBusy = false;
         }
       };
-      visionTimer = setInterval(() => void reviewCamera(), 5000);
+      // The free AI tier is rate limited, so check about once a minute,
+      // starting shortly after the exam begins.
+      firstVisionCheck = setTimeout(() => void reviewCamera(), 10000);
+      visionTimer = setInterval(() => void reviewCamera(), 60000);
     }
     let watch: number | undefined;
     let locationTimer: ReturnType<typeof setInterval> | undefined,
@@ -1460,6 +1464,7 @@ export default function ExamRoom({
       if (speechTimer) clearInterval(speechTimer);
       if (motionTimer) clearInterval(motionTimer);
       if (visionTimer) clearInterval(visionTimer);
+      clearTimeout(firstVisionCheck);
       if (locationTimer) clearInterval(locationTimer);
       if (checkpoint) clearInterval(checkpoint);
       if (watch !== undefined) navigator.geolocation.clearWatch(watch);
@@ -1653,15 +1658,15 @@ export default function ExamRoom({
       );
     if (p.aiCameraMonitoring && p.camera)
       autoSubmitTriggers.push(
-        "Ollama detects no face clearly visible in either camera sample",
+        "The AI camera review detects no face clearly visible in either camera sample",
       );
     if (p.aiCameraMonitoring && p.camera)
       autoSubmitTriggers.push(
-        "Ollama detects two or more faces clearly visible in a camera sample",
+        "The AI camera review detects two or more faces clearly visible in a camera sample",
       );
     if (p.aiCameraMonitoring && p.camera)
       autoSubmitTriggers.push(
-        "Ollama detects a phone or extra screen clearly visible in a camera sample",
+        "The AI camera review detects a phone or extra screen clearly visible in a camera sample",
       );
     if (p.microphone)
       autoSubmitTriggers.push(
@@ -1698,8 +1703,8 @@ export default function ExamRoom({
       ...(p.aiCameraMonitoring && p.camera
         ? [
             [
-              "Ollama camera review",
-              "During the exam, two small, low-resolution camera samples are sent to Ollama about once every 5 seconds. If no face is clearly visible in either sample, or two or more distinct faces are clearly visible, or a phone or extra screen is clearly visible, that detection counts as a security warning and can contribute to automatic submission at the exam's warning limit. Possible mouth movement produces an advisory signal only. Samples are transient and are not stored by this app. Automated results can be mistaken and do not prove misconduct; instructors can review the signal and time.",
+              "AI camera review",
+              "During the exam, two small, low-resolution camera samples are sent to an AI service (OpenRouter) about once a minute (less often in large classes, where students are checked in turn). If no face is clearly visible in either sample, or two or more distinct faces are clearly visible, or a phone or extra screen is clearly visible, that detection counts as a security warning and can contribute to automatic submission at the exam's warning limit. Possible mouth movement produces an advisory signal only. Samples are transient and are not stored by this app. Automated results can be mistaken and do not prove misconduct; instructors can review the signal and time.",
             ],
           ]
         : []),
@@ -2003,7 +2008,7 @@ export default function ExamRoom({
                 ? "Camera and microphone recordings are not uploaded. "
                 : "Camera and microphone access are not requested for this exam. "}
               {p.camera
-                ? "On tablets, a camera still may be captured when a monitored activity event occurs. If Ollama reports that your face is not visible, a timestamped camera still is attached to that warning and archived in Google Drive when Drive storage is configured. Camera movement is checked locally. "
+                ? "On tablets, a camera still may be captured when a monitored activity event occurs. If the AI camera review reports that your face is not visible, a timestamped camera still is attached to that warning and archived in Google Drive when Drive storage is configured. Camera movement is checked locally. "
                 : "Camera monitoring and camera evidence capture are off. "}
               {p.microphone
                 ? "Sustained microphone sound levels are checked in this browser; sound levels cannot identify speech or conversation. No audio or transcript is sent to AI. "
@@ -2012,7 +2017,7 @@ export default function ExamRoom({
                 ? "Browser observations can be incomplete or inaccurate; your instructor reviews the evidence. "
                 : ""}
               {p.aiCameraMonitoring && p.camera
-                ? "Two reduced camera samples are periodically sent to Ollama for the optional camera review described above; samples are not stored by this app."
+                ? "Two reduced camera samples are periodically sent to an AI service (OpenRouter) for the optional camera review described above; samples are not stored by this app."
                 : "No camera images are sent to AI."}{" "}
               {deviceClass === "tablet"
                 ? "Screen sharing is not used on tablets; warning evidence may use a camera still instead of a screenshot of your tablet screen. "
@@ -2252,13 +2257,14 @@ export default function ExamRoom({
                 onChange={(event) => setAiCameraAccepted(event.target.checked)}
               />{" "}
               I understand and agree that two reduced camera samples are sent to
-              Ollama about once every 5 seconds. If no face is clearly visible
-              in either sample, or two or more distinct faces are clearly
-              visible, or a phone or extra screen is clearly visible, that
-              detection counts as a security warning and may contribute to
-              automatic submission at the exam warning limit. Other camera
-              signals are advisory only. Samples are not stored by this app, and
-              automated detections can be mistaken.
+              an AI service (OpenRouter) about once a minute, or less often in
+              large classes. If no face is clearly visible in either sample, or
+              two or more distinct faces are clearly visible, or a phone or
+              extra screen is clearly visible, that detection counts as a
+              security warning and may contribute to automatic submission at the
+              exam warning limit. Other camera signals are advisory only.
+              Samples are not stored by this app, and automated detections can
+              be mistaken.
             </label>
           )}
           {!examOpen && (

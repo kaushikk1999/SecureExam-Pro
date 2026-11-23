@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { ai } from "../src/lib/integrations";
+import { ai, aiCameraReview } from "../src/lib/integrations";
 
 afterEach(() => {
   vi.unstubAllEnvs();
@@ -49,5 +49,84 @@ describe("Ollama cloud integration", () => {
       status: 503,
     });
     expect(fetchMock).not.toHaveBeenCalled();
+  });
+});
+
+describe("OpenRouter free-model integration", () => {
+  it("prefers OpenRouter with Gemma 4 and JSON output when its key is set", async () => {
+    vi.stubEnv("OPENROUTER_API_KEY", "or-test-key");
+    vi.stubEnv("OLLAMA_ENABLED", "true");
+    vi.stubEnv("OLLAMA_API_KEY", "ollama-key");
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValue(
+        Response.json({ choices: [{ message: { content: '{"ok":true}' } }] }),
+      );
+    vi.stubGlobal("fetch", fetchMock);
+
+    await expect(
+      ai("Format these questions", { format: "json" }),
+    ).resolves.toBe('{"ok":true}');
+    const [url, options] = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect(url).toBe("https://openrouter.ai/api/v1/chat/completions");
+    expect(new Headers(options.headers).get("Authorization")).toBe(
+      "Bearer or-test-key",
+    );
+    const body = JSON.parse(String(options.body));
+    expect(body.models).toEqual([
+      "google/gemma-4-31b-it:free",
+      "nvidia/nemotron-3.5-super-vl:free",
+      "google/gemma-4-26b-a4b-it:free",
+    ]);
+    expect(body.response_format).toEqual({ type: "json_object" });
+    expect(body.messages[1]).toEqual({
+      role: "user",
+      content: "Format these questions",
+    });
+  });
+
+  it("sends camera frames as images to the vision model", async () => {
+    vi.stubEnv("OPENROUTER_API_KEY", "or-test-key");
+    const fetchMock = vi.fn().mockResolvedValue(
+      Response.json({
+        choices: [
+          { message: { content: '{"possiblePhoneOrExtraScreen":true}' } },
+        ],
+      }),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    await expect(aiCameraReview(["AAAA", "BBBB"])).resolves.toContain(
+      "possiblePhoneOrExtraScreen",
+    );
+    const body = JSON.parse(String(fetchMock.mock.calls[0][1]?.body));
+    expect(body.models[0]).toBe("nvidia/nemotron-3.5-super-vl:free");
+    expect(body.response_format).toEqual({ type: "json_object" });
+    expect(body.messages[1].content).toEqual([
+      expect.objectContaining({ type: "text" }),
+      {
+        type: "image_url",
+        image_url: { url: "data:image/jpeg;base64,AAAA" },
+      },
+      {
+        type: "image_url",
+        image_url: { url: "data:image/jpeg;base64,BBBB" },
+      },
+    ]);
+  });
+
+  it("reports a free-tier rate limit as a retryable 429", async () => {
+    vi.stubEnv("OPENROUTER_API_KEY", "or-test-key");
+    vi.stubGlobal(
+      "fetch",
+      vi
+        .fn()
+        .mockResolvedValue(
+          Response.json({ error: { message: "Rate limit" } }, { status: 429 }),
+        ),
+    );
+    await expect(aiCameraReview(["AAAA", "BBBB"])).rejects.toMatchObject({
+      status: 429,
+    });
   });
 });
