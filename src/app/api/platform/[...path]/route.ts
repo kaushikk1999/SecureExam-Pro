@@ -42,6 +42,12 @@ import {
 } from "@/lib/validation";
 import { growthRequest } from "@/lib/growth";
 import {
+  appendRecordingChunk,
+  finalizeRecordings,
+  type RecordingMime,
+} from "@/lib/single-recording";
+import { examOwnerDriveAccess } from "@/lib/drive-connection";
+import {
   authorizationUrl,
   completeDriveConnection,
   disconnectDrive,
@@ -1919,14 +1925,55 @@ async function dispatch(req: Request, parts: string[]) {
         } else await ownedExam(attempt.exam_id, u);
         if (attempt.device_state?.screenRecordingAccepted !== true)
           throw new HttpError(404, "No consented screen recording exists.");
-        const parts = await query(
-          sql`SELECT id,name,size,created_at FROM files WHERE attempt_id=${id} AND mime='video/webm' AND name LIKE ${`SCREEN_RECORDING::${id}::%`} ORDER BY name`,
+        // Fallback: complete recordings whose browser never sent "finalize"
+        // (closed tab, crash) once they have been idle for two minutes.
+        await finalizeRecordings({ attemptId: id, idleMs: 120_000 }).catch(
+          (error) =>
+            console.error(
+              "Recording finalization failed",
+              error instanceof HttpError ? error.message : "unexpected error",
+            ),
         );
-        return json({ title: attempt.title, parts });
+        const [parts, recordings, pending] = await Promise.all([
+          query(
+            sql`SELECT id,name,size,created_at FROM files WHERE attempt_id=${id} AND mime IN ('video/webm','video/mp4') AND name LIKE ${`SCREEN_RECORDING::${id}::%`} ORDER BY name`,
+          ),
+          query<any>(
+            sql`SELECT id,name,mime,size,created_at,url FROM files WHERE attempt_id=${id} AND name LIKE ${`RECORDING::${id}::%`} ORDER BY created_at`,
+          ),
+          query<{ count: number }>(
+            sql`SELECT count(*)::int AS count FROM recording_uploads WHERE attempt_id=${id} AND finalized_at IS NULL`,
+          ),
+        ]);
+        return json({
+          title: attempt.title,
+          parts,
+          recordings: recordings.map((file) => ({
+            id: file.id,
+            name: String(file.name).replace(/^RECORDING::[0-9a-f-]{36}::/, ""),
+            mime: file.mime,
+            size: file.size,
+            created_at: file.created_at,
+            driveFileId: String(file.url).startsWith("udrive:")
+              ? String(file.url).split(":")[2]
+              : null,
+          })),
+          pendingRecordings: pending[0]?.count ?? 0,
+        });
       }
       if (method !== "POST") throw new HttpError(405, "GET or POST required.");
       if (u.role !== "STUDENT")
         throw new HttpError(403, "Student attempt access required.");
+      if (parts[3] === "finalize") {
+        const v = z.object({ sessionId: uuid }).parse(await body(req));
+        const [owned] = await query(
+          sql`SELECT id FROM attempts WHERE id=${id} AND user_id=${u.id}`,
+        );
+        if (!owned) throw new HttpError(403, "Attempt access denied.");
+        return json(
+          await finalizeRecordings({ attemptId: id, sessionId: v.sessionId }),
+        );
+      }
       if (!(await rateLimit(`recording:${id}`, 20, 60)))
         throw new HttpError(
           429,
@@ -1940,8 +1987,11 @@ async function dispatch(req: Request, parts: string[]) {
       )
         throw new HttpError(400, "Invalid recording segment number.");
       const mime = req.headers.get("content-type")?.split(";")[0].trim();
-      if (mime !== "video/webm")
-        throw new HttpError(415, "Screen recording must use WebM video.");
+      if (mime !== "video/webm" && mime !== "video/mp4")
+        throw new HttpError(
+          415,
+          "Screen recording must use MP4 or WebM video.",
+        );
       const contentLength = Number(req.headers.get("content-length") ?? 0);
       if (contentLength > 3_500_000)
         throw new HttpError(413, "Recording segment exceeds 3.5 MB.");
@@ -1951,7 +2001,7 @@ async function dispatch(req: Request, parts: string[]) {
           413,
           "Recording segment must be between 1 byte and 3.5 MB.",
         );
-      const partName = `SCREEN_RECORDING::${id}::${String(sequence).padStart(13, "0")}.webm`;
+      const partName = `SCREEN_RECORDING::${id}::${String(sequence).padStart(13, "0")}.${mime === "video/mp4" ? "mp4" : "webm"}`;
       const [alreadyStored] = await query<any>(
         sql`SELECT id FROM files WHERE attempt_id=${id} AND name=${partName}`,
       );
@@ -1984,6 +2034,28 @@ async function dispatch(req: Request, parts: string[]) {
             "This screen recording upload window has ended.",
           );
       });
+      // One file per recording session in the exam owner's connected Drive.
+      const sessionHeader = req.headers.get("x-recording-session");
+      const sessionId = uuid.safeParse(sessionHeader).success
+        ? sessionHeader!
+        : null;
+      if (sessionId) {
+        const owner = await examOwnerDriveAccess(examId);
+        if (owner) {
+          const result = await appendRecordingChunk({
+            owner,
+            attemptId: id,
+            sessionId,
+            sequence,
+            mime: mime as RecordingMime,
+            bytes,
+            examTitle,
+            studentName: u.name,
+            studentId: u.student_id,
+          });
+          return json({ ok: true, sequence, single: true, ...result });
+        }
+      }
       const reference = await storeScreenRecordingPart({
         attemptId: id,
         examId,
@@ -2013,7 +2085,7 @@ async function dispatch(req: Request, parts: string[]) {
           const fileId = randomUUID();
           await tx.execute(sql`
             INSERT INTO files(id,exam_id,attempt_id,owner_id,name,mime,url,size,extracted_text)
-            VALUES(${fileId},${examId},${id},${u.id},${partName},'video/webm',${reference},${bytes.length},'')
+            VALUES(${fileId},${examId},${id},${u.id},${partName},${mime},${reference},${bytes.length},'')
           `);
           inserted = true;
         });
@@ -3241,7 +3313,10 @@ async function dispatch(req: Request, parts: string[]) {
     return new Response(fileBody, {
       headers: {
         "Content-Type": f.mime,
-        "Content-Disposition": `${url.searchParams.get("download") === "1" ? "attachment" : "inline"}; filename="${f.name.replace(/^SUBMISSION::/, "").replace(/[^a-zA-Z0-9._-]/g, "_")}"`,
+        "Content-Disposition": `${url.searchParams.get("download") === "1" ? "attachment" : "inline"}; filename="${f.name
+          .replace(/^SUBMISSION::/, "")
+          .replace(/^RECORDING::[0-9a-f-]{36}::/, "")
+          .replace(/[^a-zA-Z0-9._-]/g, "_")}"`,
         "Cache-Control": "private, no-store",
         "X-Content-Type-Options": "nosniff",
         "Content-Security-Policy": "sandbox; default-src 'none'",

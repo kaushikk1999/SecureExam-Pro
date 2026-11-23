@@ -13,7 +13,7 @@ const DRIVE_SCOPE = "https://www.googleapis.com/auth/drive";
  * harmless for My Drive folders. A service account has no storage quota of its
  * own, so evidence and recordings must live in a shared drive it can write to.
  */
-function driveApi(url: string, listing = false) {
+export function driveApi(url: string, listing = false) {
   const target = new URL(url);
   target.searchParams.set("supportsAllDrives", "true");
   if (listing) {
@@ -273,7 +273,7 @@ async function ensureDriveFolder(
   return result.id;
 }
 
-async function cachedDriveFolder(
+export async function cachedDriveFolder(
   token: string,
   parentId: string,
   name: string,
@@ -289,7 +289,7 @@ async function cachedDriveFolder(
 }
 
 /** Log Google's error status and reason (never request headers or tokens). */
-async function logDriveFailure(operation: string, response: Response) {
+export async function logDriveFailure(operation: string, response: Response) {
   let reason: string | undefined;
   let message: string | undefined;
   try {
@@ -653,7 +653,7 @@ export async function storePrivateFile(
 
 /** Store a screen-recording segment in Google Drive only; recordings must not silently fall back to another provider. */
 /** Readable recording names: exam folder, then "Name - ID" per student. */
-function recordingNames(input: {
+export function recordingNames(input: {
   attemptId: string;
   examTitle: string;
   studentName: string;

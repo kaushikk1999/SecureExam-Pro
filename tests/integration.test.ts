@@ -1107,6 +1107,123 @@ describe("server authorization and exam lifecycle", () => {
       );
     }
   });
+  it("saves a recording session as ONE MP4 in the teacher's connected Drive", async () => {
+    const previousSecret = process.env.AUTH_SECRET;
+    const previousFetch = globalThis.fetch;
+    process.env.AUTH_SECRET = "integration-test-drive-secret";
+    process.env.GOOGLE_CLIENT_ID = "client";
+    process.env.GOOGLE_CLIENT_SECRET = "secret";
+    const { encryptToken } = await import("../src/lib/drive-connection");
+    await db.execute(sql`
+      INSERT INTO drive_connections(user_id,google_email,refresh_token_enc,root_folder_id)
+      VALUES(${teacher},'teacher@bu.ac.th',${encryptToken("refresh")},'root-folder')
+      ON CONFLICT(user_id) DO NOTHING
+    `);
+    const ranges: string[] = [];
+    let folders = 0;
+    globalThis.fetch = (async (
+      input: RequestInfo | URL,
+      init?: RequestInit,
+    ) => {
+      const url = String(input);
+      if (url.startsWith("https://oauth2.googleapis.com/token"))
+        return Response.json({ access_token: "owner-token", expires_in: 3600 });
+      if (url.includes("uploadType=resumable"))
+        return new Response(null, {
+          status: 200,
+          headers: { location: "https://upload.test/session-1" },
+        });
+      if (url.startsWith("https://upload.test/session-1")) {
+        const range = new Headers(init?.headers).get("content-range") ?? "";
+        ranges.push(range);
+        const total = range.split("/")[1];
+        const end = Number(range.match(/-(\d+)\//)?.[1] ?? -1);
+        if (total !== "*") return Response.json({ id: "drive-file-1" });
+        return new Response(null, {
+          status: 308,
+          headers: { range: `bytes=0-${end}` },
+        });
+      }
+      if (
+        url.includes("/drive/v3/files?q=") ||
+        url.includes("/drive/v3/files?corpora")
+      )
+        return Response.json({ files: [] });
+      if (url.includes("/drive/v3/files") && init?.method === "POST")
+        return Response.json({ id: `folder-${++folders}` });
+      if (url.includes("/drive/v3/files?")) return Response.json({ files: [] });
+      throw new Error("Unexpected fetch " + url);
+    }) as typeof fetch;
+    const session = randomUUID();
+    const upload = (sequence: number, size: number) =>
+      POST(
+        new Request(
+          `http://localhost:3000/api/platform/attempts/${attempt}/recordings`,
+          {
+            method: "POST",
+            headers: {
+              origin: "http://localhost:3000",
+              "content-type": "video/mp4",
+              "user-agent":
+                "Mozilla/5.0 (X11; Linux x86_64) Chrome/130.0.0.0 Safari/537.36",
+              "x-exam-device": device,
+              "x-recording-sequence": String(sequence),
+              "x-recording-session": session,
+            },
+            body: Buffer.alloc(size, sequence),
+          },
+        ),
+        {
+          params: Promise.resolve({
+            path: ["attempts", attempt, "recordings"],
+          }),
+        },
+      );
+    try {
+      expect((await upload(1, 300 * 1024)).status).toBe(200);
+      expect((await upload(2, 300 * 1024)).status).toBe(200);
+      // Duplicate chunk (browser retry) is ignored.
+      expect((await (await upload(2, 300 * 1024)).json()).duplicate).toBe(true);
+      // Only 256 KiB-aligned pieces are sent while recording.
+      expect(ranges).toEqual(["bytes 0-262143/*", "bytes 262144-524287/*"]);
+      const finalize = await request(
+        `attempts/${attempt}/recordings/finalize`,
+        {
+          sessionId: session,
+        },
+      );
+      expect(await finalize.json()).toEqual({ completed: 1 });
+      expect(ranges.at(-1)).toBe("bytes 524288-614399/614400");
+      const [file] = await query<any>(
+        sql`SELECT name,mime,url,size FROM files WHERE attempt_id=${attempt} AND name LIKE 'RECORDING::%'`,
+      );
+      expect(file.mime).toBe("video/mp4");
+      expect(file.url).toBe(`udrive:${teacher}:drive-file-1`);
+      expect(Number(file.size)).toBe(614400);
+      expect(file.name).toMatch(/\.mp4$/);
+      login(teacher);
+      const review = await (
+        await request(`attempts/${attempt}/recordings`)
+      ).json();
+      expect(review.recordings).toEqual([
+        expect.objectContaining({
+          mime: "video/mp4",
+          driveFileId: "drive-file-1",
+        }),
+      ]);
+      expect(review.pendingRecordings).toBe(0);
+    } finally {
+      login(student);
+      globalThis.fetch = previousFetch;
+      process.env.AUTH_SECRET = previousSecret ?? "";
+      await db.execute(
+        sql`DELETE FROM files WHERE attempt_id=${attempt} AND name LIKE 'RECORDING::%'`,
+      );
+      await db.execute(
+        sql`DELETE FROM drive_connections WHERE user_id=${teacher}`,
+      );
+    }
+  });
   it("logs local audio and camera activity for instructor review without auto-penalizing", async () => {
     const path = "attempts/" + attempt + "/sync";
     const response = await request(path, {

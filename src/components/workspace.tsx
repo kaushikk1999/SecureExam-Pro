@@ -4127,7 +4127,19 @@ function LiveScreenViewer({
     let expectedRequestId = "";
     let iceServers: RTCIceServer[] | null = null;
     let turnAvailable = false;
+    let connected = false;
     const videoElement = video.current;
+    // Explain a stalled connection instead of leaving the viewer silent.
+    const stallTimer = setTimeout(() => {
+      if (!disposed && !connected)
+        setError(
+          "The live screen has not connected after 20 seconds. Check that the student is still in the exam with screen sharing on, then close this view and try again. Some networks block direct connections unless a TURN relay is configured.",
+        );
+    }, 20000);
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key === "Escape") close();
+    };
+    window.addEventListener("keydown", onKey);
     const path = `attempts/${id}/screen`;
     async function gatherIce(connection: RTCPeerConnection) {
       if (connection.iceGatheringState === "complete") return;
@@ -4164,6 +4176,7 @@ function LiveScreenViewer({
         });
         peer.ontrack = (event) => {
           if (videoElement) {
+            connected = true;
             videoElement.srcObject =
               event.streams[0] ?? new MediaStream([event.track]);
             setStatus("Live screen view");
@@ -4211,6 +4224,8 @@ function LiveScreenViewer({
     return () => {
       disposed = true;
       clearInterval(timer);
+      clearTimeout(stallTimer);
+      window.removeEventListener("keydown", onKey);
       if (expectedRequestId)
         void api(path + "/stop", { requestId: expectedRequestId }).catch(
           () => undefined,
@@ -4219,33 +4234,42 @@ function LiveScreenViewer({
       peer?.close();
       if (videoElement) videoElement.srcObject = null;
     };
+    // close is a fresh closure each render; the connection must not restart.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [id]);
   return (
-    <section className="panel form-panel screen-share-viewer">
-      <div className="panel-heading">
-        <div>
-          <h2>Live student screen</h2>
-          <p>
-            {name} · {studentId || "No student ID"} · {email}
-          </p>
+    <div
+      className="screen-share-backdrop"
+      role="dialog"
+      aria-modal="true"
+      aria-label={`Live screen of ${name}`}
+    >
+      <section className="panel form-panel screen-share-viewer">
+        <div className="panel-heading">
+          <div>
+            <h2>Live student screen</h2>
+            <p>
+              {name} · {studentId || "No student ID"} · {email}
+            </p>
+          </div>
+          <button onClick={close}>Stop viewing</button>
         </div>
-        <button onClick={close}>Stop viewing</button>
-      </div>
-      <p className="muted" role="status">
-        {status}
-      </p>
-      <ErrorBox message={error} />
-      <video
-        ref={video}
-        autoPlay
-        playsInline
-        controls
-        aria-label={`Live shared screen from ${name}`}
-      />
-      <small className="muted">
-        This view is live and is not recorded or stored.
-      </small>
-    </section>
+        <p className="muted" role="status">
+          {status}
+        </p>
+        <ErrorBox message={error} />
+        <video
+          ref={video}
+          autoPlay
+          playsInline
+          controls
+          aria-label={`Live shared screen from ${name}`}
+        />
+        <small className="muted">
+          This view is live and is not recorded or stored.
+        </small>
+      </section>
+    </div>
   );
 }
 function AttemptReview({ id, close }: { id: string; close: () => void }) {
@@ -4254,6 +4278,8 @@ function AttemptReview({ id, close }: { id: string; close: () => void }) {
     [archiveBusy, setArchiveBusy] = useState(false),
     [archiveMessage, setArchiveMessage] = useState(""),
     [recordingParts, setRecordingParts] = useState<any[]>([]),
+    [recordingFiles, setRecordingFiles] = useState<any[]>([]),
+    [pendingRecordings, setPendingRecordings] = useState(0),
     [recordingMessage, setRecordingMessage] = useState(""),
     [recordingBusy, setRecordingBusy] = useState(false);
   useEffect(() => {
@@ -4261,7 +4287,10 @@ function AttemptReview({ id, close }: { id: string; close: () => void }) {
     let cancelled = false;
     void api(`attempts/${id}/recordings`, undefined, "GET")
       .then((result) => {
-        if (!cancelled) setRecordingParts(result.parts ?? []);
+        if (cancelled) return;
+        setRecordingParts(result.parts ?? []);
+        setRecordingFiles(result.recordings ?? []);
+        setPendingRecordings(result.pendingRecordings ?? 0);
       })
       .catch((cause) => {
         if (!cancelled) setRecordingMessage((cause as Error).message);
@@ -4319,11 +4348,14 @@ function AttemptReview({ id, close }: { id: string; close: () => void }) {
           `Downloaded segment ${index + 1} of ${recordingParts.length}…`,
         );
       }
-      const video = new Blob(blobs, { type: "video/webm" });
+      const isMp4 = String(recordingParts[0]?.name ?? "").endsWith(".mp4");
+      const video = new Blob(blobs, {
+        type: isMp4 ? "video/mp4" : "video/webm",
+      });
       const url = URL.createObjectURL(video);
       const link = document.createElement("a");
       link.href = url;
-      link.download = `screen-recording-${id}.webm`;
+      link.download = `screen-recording-${id}.${isMp4 ? "mp4" : "webm"}`;
       link.click();
       URL.revokeObjectURL(url);
       setRecordingMessage("Screen recording downloaded as one WebM video.");
@@ -4348,37 +4380,82 @@ function AttemptReview({ id, close }: { id: string; close: () => void }) {
       {a.device_state?.screenRecordingAccepted && (
         <section className="notice" aria-label="Student screen recording">
           <strong>Full-screen recording</strong>
-          <p>
-            {recordingParts.length
-              ? `${recordingParts.length} saved segment${recordingParts.length === 1 ? "" : "s"} · ${recordingParts.reduce((total, part) => total + Number(part.size ?? 0), 0).toLocaleString()} bytes`
-              : "No uploaded recording segments are available yet."}
-          </p>
-          <div className="actions">
-            <button
-              type="button"
-              className="primary"
-              disabled={recordingBusy || !recordingParts.length}
-              onClick={() => void downloadRecording()}
-            >
-              {recordingBusy
-                ? "Preparing recording…"
-                : "Download full recording"}
-            </button>
-            {recordingParts.map((part, index) => (
-              <a
-                key={part.id}
-                className="button"
-                href={`/api/platform/files/${part.id}?download=1`}
-              >
-                Segment {index + 1}
-              </a>
-            ))}
-          </div>
-          {recordingMessage && <p role="status">{recordingMessage}</p>}
-          <p className="small muted">
-            Segments are joined in browser memory for the full download; very
-            long recordings may require substantial available memory.
-          </p>
+          {recordingFiles.length > 0 && (
+            <>
+              <p>
+                {recordingFiles.length === 1
+                  ? "Saved as one video file in Google Drive."
+                  : `Saved as ${recordingFiles.length} video files (the recording restarted, for example after a page refresh).`}
+              </p>
+              <div className="actions">
+                {recordingFiles.map((file) => (
+                  <span key={file.id} className="actions">
+                    {file.driveFileId && (
+                      <a
+                        className="button primary"
+                        href={`https://drive.google.com/file/d/${encodeURIComponent(file.driveFileId)}/view`}
+                        target="_blank"
+                        rel="noreferrer"
+                      >
+                        Open in Google Drive
+                      </a>
+                    )}
+                    <a
+                      className="button"
+                      href={`/api/platform/files/${file.id}?download=1`}
+                    >
+                      Download {file.mime === "video/mp4" ? "MP4" : "WebM"} (
+                      {(Number(file.size ?? 0) / 1_048_576).toFixed(1)} MB)
+                    </a>
+                  </span>
+                ))}
+              </div>
+            </>
+          )}
+          {pendingRecordings > 0 && (
+            <p className="small muted">
+              {pendingRecordings === 1
+                ? "A recording is still being saved."
+                : `${pendingRecordings} recordings are still being saved.`}{" "}
+              It appears here (and in Google Drive) shortly after the student
+              finishes; reopen this review to refresh.
+            </p>
+          )}
+          {(recordingParts.length > 0 || recordingFiles.length === 0) && (
+            <>
+              <p>
+                {recordingParts.length
+                  ? `${recordingParts.length} saved segment${recordingParts.length === 1 ? "" : "s"} · ${recordingParts.reduce((total, part) => total + Number(part.size ?? 0), 0).toLocaleString()} bytes`
+                  : "No uploaded recording segments are available yet."}
+              </p>
+              <div className="actions">
+                <button
+                  type="button"
+                  className="primary"
+                  disabled={recordingBusy || !recordingParts.length}
+                  onClick={() => void downloadRecording()}
+                >
+                  {recordingBusy
+                    ? "Preparing recording…"
+                    : "Download full recording"}
+                </button>
+                {recordingParts.map((part, index) => (
+                  <a
+                    key={part.id}
+                    className="button"
+                    href={`/api/platform/files/${part.id}?download=1`}
+                  >
+                    Segment {index + 1}
+                  </a>
+                ))}
+              </div>
+              {recordingMessage && <p role="status">{recordingMessage}</p>}
+              <p className="small muted">
+                Segments are joined in browser memory for the full download;
+                very long recordings may require substantial available memory.
+              </p>
+            </>
+          )}
         </section>
       )}
       <div className="actions">

@@ -4758,3 +4758,21 @@ fieldset {
 .exam-shell .question-numbers button.current {
   border-color: #31cce8;
 }
+
+/* The live screen viewer opens over the monitor instead of below the
+   student table, where it was off-screen and looked like nothing happened. */
+.screen-share-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 1000;
+  display: grid;
+  place-items: center;
+  padding: 16px;
+  background: rgb(2 10 22 / 78%);
+}
+.screen-share-backdrop .screen-share-viewer {
+  width: min(1100px, 100%);
+  max-height: calc(100dvh - 32px);
+  margin: 0;
+  overflow-y: auto;
+}

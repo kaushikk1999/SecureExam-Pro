@@ -929,11 +929,11 @@ export default function ExamRoom({
       return;
 
     const prefix = `exam-screen-recording:${attemptId}:`;
-    const headers = {
-      "x-exam-device": device.current,
-      "Content-Type": "video/webm",
-    };
     let recorder: MediaRecorder | null = null;
+    // Each MediaRecorder run is one continuous video, saved as ONE file.
+    // Sessions whose recorder stopped; completed once their chunks upload.
+    const stoppedSessions = new Set<string>();
+    type QueuedChunk = { blob: Blob; session: string; mime: string };
     let nextSequence = Date.now();
     let draining = false;
     let disposed = false;
@@ -948,21 +948,30 @@ export default function ExamRoom({
           )
           .sort();
         for (const key of pending) {
-          const blob = await get<Blob>(key);
-          if (!blob) {
+          const stored = await get<QueuedChunk | Blob>(key);
+          if (!stored) {
             await del(key);
             continue;
           }
+          // Chunks queued by an older version of this page are bare Blobs.
+          const chunk: QueuedChunk =
+            stored instanceof Blob
+              ? { blob: stored, session: "", mime: "video/webm" }
+              : stored;
           const sequence = Number(key.slice(prefix.length));
           const response = await fetch(
             `/api/platform/attempts/${attemptId}/recordings`,
             {
               method: "POST",
               headers: {
-                ...headers,
+                "x-exam-device": device.current,
+                "Content-Type": chunk.mime,
                 "x-recording-sequence": String(sequence),
+                ...(chunk.session
+                  ? { "x-recording-session": chunk.session }
+                  : {}),
               },
-              body: blob,
+              body: chunk.blob,
               cache: "no-store",
             },
           );
@@ -974,6 +983,22 @@ export default function ExamRoom({
             );
           }
           await del(key);
+        }
+        // Every chunk is uploaded: complete the file of any stopped session.
+        for (const session of stoppedSessions) {
+          const done = await fetch(
+            `/api/platform/attempts/${attemptId}/recordings/finalize`,
+            {
+              method: "POST",
+              headers: {
+                "x-exam-device": device.current,
+                "Content-Type": "application/json",
+              },
+              body: JSON.stringify({ sessionId: session }),
+              cache: "no-store",
+            },
+          );
+          if (done.ok) stoppedSessions.delete(session);
         }
         setScreenRecordingStatus(
           "Recording continues; all queued segments are saved.",
@@ -987,12 +1012,12 @@ export default function ExamRoom({
       }
     };
 
-    const enqueue = async (blob: Blob) => {
+    const enqueue = async (blob: Blob, session: string, mime: string) => {
       if (!blob.size) return;
       const sequence = nextSequence++;
       const key = `${prefix}${String(sequence).padStart(13, "0")}`;
       try {
-        await set(key, blob);
+        await set(key, { blob, session, mime } satisfies QueuedChunk);
         setScreenRecordingStatus(
           navigator.onLine
             ? "Recording screen; saving segments."
@@ -1034,7 +1059,11 @@ export default function ExamRoom({
           ? Math.max(largest, value + 1)
           : largest;
       }, Date.now());
+      // Prefer MP4 (H.264) where the browser can record it; fall back to WebM.
       const mimeType = [
+        "video/mp4;codecs=avc1.42E01E",
+        "video/mp4;codecs=avc1",
+        "video/mp4",
         "video/webm;codecs=vp9",
         "video/webm;codecs=vp8",
         "video/webm",
@@ -1044,7 +1073,19 @@ export default function ExamRoom({
           ...(mimeType ? { mimeType } : {}),
           videoBitsPerSecond: 1_000_000,
         });
-        recorder.ondataavailable = (event) => void enqueue(event.data);
+        const session = crypto.randomUUID();
+        const mime = (mimeType ?? recorder.mimeType ?? "video/webm").startsWith(
+          "video/mp4",
+        )
+          ? "video/mp4"
+          : "video/webm";
+        recorder.ondataavailable = (event) =>
+          void enqueue(event.data, session, mime);
+        recorder.onstop = () => {
+          stoppedSessions.add(session);
+          // Let the final chunk land in the queue, then upload and complete.
+          window.setTimeout(() => void drain(), 500);
+        };
         recorder.onerror = () =>
           setScreenRecordingStatus(
             "Screen recording stopped unexpectedly. Contact your instructor before continuing.",
