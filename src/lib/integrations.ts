@@ -981,6 +981,8 @@ export async function aiCameraReview(frames: [string, string]) {
     },
     body: JSON.stringify({
       model: process.env.OLLAMA_MODEL || "gemma4:31b",
+      // Ask Ollama for strict JSON so replies are always parseable.
+      format: "json",
       stream: false,
       messages: [
         {
@@ -997,8 +999,13 @@ export async function aiCameraReview(frames: [string, string]) {
       ],
     }),
   });
-  if (!response.ok)
+  if (!response.ok) {
+    console.error("Ollama camera review failed", {
+      httpStatus: response.status,
+      detail: (await response.text().catch(() => "")).slice(0, 300),
+    });
     throw new HttpError(502, "Ollama could not complete the camera review.");
+  }
   const data = await response.json();
   return String(data.message?.content ?? data.response ?? "").slice(0, 2000);
 }

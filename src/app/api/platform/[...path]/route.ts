@@ -2028,7 +2028,8 @@ async function dispatch(req: Request, parts: string[]) {
       if (method !== "POST") throw new HttpError(405, "POST required.");
       if (u.role !== "STUDENT")
         throw new HttpError(403, "Student attempt access required.");
-      if (!(await rateLimit(`vision:${id}`, 1, 5)))
+      // The browser asks about every 5 seconds; allow timing jitter.
+      if (!(await rateLimit(`vision:${id}`, 3, 12)))
         throw new HttpError(429, "Camera review is running too frequently.");
       const input = z
         .object({
@@ -2068,6 +2069,9 @@ async function dispatch(req: Request, parts: string[]) {
       try {
         parsed = JSON.parse(text);
       } catch {
+        console.error("Ollama camera review was not JSON", {
+          excerpt: text.slice(0, 200),
+        });
         throw new HttpError(
           502,
           "Ollama returned an unreadable camera review.",
@@ -2093,11 +2097,8 @@ async function dispatch(req: Request, parts: string[]) {
         // Warning signals are recorded by the client after uploading a
         // matching camera still. Keep only advisory signals on this server
         // path so the warning audit event can retain its evidence file ID.
-        const advisorySignals = signals.filter((signal) =>
-          [
-            "POSSIBLE_PHONE_OR_EXTRA_SCREEN",
-            "POSSIBLE_MOUTH_MOVEMENT",
-          ].includes(signal),
+        const advisorySignals = signals.filter(
+          (signal) => signal === "POSSIBLE_MOUTH_MOVEMENT",
         );
         if (advisorySignals.length)
           await db.transaction(async (tx) => {
@@ -2583,6 +2584,7 @@ async function dispatch(req: Request, parts: string[]) {
                 "PASTE_ATTEMPT",
                 "AI_FACE_NOT_VISIBLE",
                 "AI_MULTIPLE_FACES_VISIBLE",
+                "AI_PHONE_VISIBLE",
                 "WARNING_ACKNOWLEDGED",
               ]),
               metadata: z
@@ -2665,14 +2667,15 @@ async function dispatch(req: Request, parts: string[]) {
             continue;
           }
           if (
-            ev.type === "AI_FACE_NOT_VISIBLE" &&
+            (ev.type === "AI_FACE_NOT_VISIBLE" ||
+              ev.type === "AI_PHONE_VISIBLE") &&
             (!policy.aiCameraMonitoring ||
               !policy.camera ||
               !a.device_state?.camera)
           )
             throw new HttpError(
               403,
-              "Missing-face warnings require active camera review for this exam.",
+              "Camera review warnings require active camera review for this exam.",
             );
           if (typeof ev.metadata.evidenceFileId === "string") {
             const evidenceFileId = uuid.parse(ev.metadata.evidenceFileId);
@@ -2951,6 +2954,7 @@ async function dispatch(req: Request, parts: string[]) {
               "CAMERA_MOTION",
               "AI_FACE_NOT_VISIBLE",
               "AI_MULTIPLE_FACES_VISIBLE",
+              "AI_PHONE_VISIBLE",
             ])
             .parse(form.get("eventType"))
         : null;

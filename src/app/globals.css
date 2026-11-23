@@ -4726,3 +4726,35 @@ fieldset {
 .exam-shell .save-indicator {
   color: #34d399;
 }
+
+/* Exam room and pre-exam checks are dark: the global white button with
+   light --ink text was unreadable ("Next question", "Run enabled checks",
+   "Flag for review"). Give enabled secondary buttons a dark surface. */
+.exam-shell button:not(.primary):not(:disabled),
+.exam-shell .button:not(.primary),
+.preflight button:not(.primary):not(:disabled),
+.preflight .button:not(.primary) {
+  border-color: #3b74ad;
+  color: #e6f0fd;
+  background: #0f2d4d;
+}
+.exam-shell button:not(.primary):not(:disabled):hover,
+.exam-shell .button:not(.primary):hover,
+.preflight button:not(.primary):not(:disabled):hover,
+.preflight .button:not(.primary):hover {
+  border-color: #5b9be0;
+  background: #163d66;
+}
+.exam-shell button.flag-button.marked {
+  border-color: #b8863b;
+  color: #ffd58a;
+  background: #3a2a10;
+}
+.exam-shell .question-numbers button.answered {
+  border-color: #168ed3;
+  color: #e8f7ff;
+  background: #0b3456;
+}
+.exam-shell .question-numbers button.current {
+  border-color: #31cce8;
+}

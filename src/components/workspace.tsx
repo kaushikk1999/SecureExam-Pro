@@ -3584,6 +3584,7 @@ function Monitor({ id, policy }: { id: string; policy?: any }) {
       "AI_CAMERA_REVIEW",
       "AI_FACE_NOT_VISIBLE",
       "AI_MULTIPLE_FACES_VISIBLE",
+      "AI_PHONE_VISIBLE",
     ];
     const newest = data.events.find(
       (e: any) => e.severity === "HIGH" || alertTypes.includes(e.event_type),
@@ -3612,6 +3613,7 @@ function Monitor({ id, policy }: { id: string; policy?: any }) {
         "AI_CAMERA_REVIEW",
         "AI_FACE_NOT_VISIBLE",
         "AI_MULTIPLE_FACES_VISIBLE",
+        "AI_PHONE_VISIBLE",
       ].includes(event.event_type),
     );
     const newest = recentSignals[0];

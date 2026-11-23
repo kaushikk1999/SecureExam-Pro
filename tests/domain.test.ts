@@ -191,6 +191,14 @@ describe("objective policy", () => {
       warnings: 5,
       terminate: true,
     });
+    expect(warningDecision(4, "AI_PHONE_VISIBLE", enabled)).toEqual({
+      warnings: 5,
+      terminate: true,
+    });
+    expect(warningDecision(4, "AI_PHONE_VISIBLE", policy)).toEqual({
+      warnings: 4,
+      terminate: false,
+    });
     expect(
       warningDecision(
         4,
