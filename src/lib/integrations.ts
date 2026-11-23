@@ -227,6 +227,25 @@ async function cachedDriveFolder(
   return folderId;
 }
 
+/** Log Google's error status and reason (never request headers or tokens). */
+async function logDriveFailure(operation: string, response: Response) {
+  let reason: string | undefined;
+  let message: string | undefined;
+  try {
+    const body = (await response.json()) as {
+      error?: { message?: string; errors?: { reason?: string }[] };
+    };
+    reason = body.error?.errors?.[0]?.reason?.slice(0, 100);
+    message = body.error?.message?.slice(0, 300);
+  } catch {}
+  console.error("Google Drive request failed", {
+    operation,
+    httpStatus: response.status,
+    reason,
+    message,
+  });
+}
+
 async function uploadDriveFile(
   token: string,
   parentId: string,
@@ -259,8 +278,10 @@ async function uploadDriveFile(
     body: payload,
     signal: AbortSignal.timeout(30000),
   });
-  if (!response.ok)
+  if (!response.ok) {
+    await logDriveFailure("upload file", response);
     throw new HttpError(502, "Google Drive could not store evidence.");
+  }
   const result = (await response.json()) as { id?: string };
   const fileId = result.id ?? existingId;
   if (!fileId) throw new HttpError(502, "Google Drive returned no file ID.");
@@ -551,8 +572,10 @@ export async function storePrivateFile(
       signal: AbortSignal.timeout(30000),
     },
   );
-  if (!response.ok)
+  if (!response.ok) {
+    await logDriveFailure("upload private file", response);
     throw new HttpError(502, "Google Drive could not store this file.");
+  }
   const result = (await response.json()) as { id?: string };
   if (!result.id) throw new HttpError(502, "Google Drive returned no file ID.");
   return `gdrive:${result.id}`;
