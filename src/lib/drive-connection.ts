@@ -168,21 +168,36 @@ export async function completeDriveConnection(input: {
       "Google did not return a long-lived Drive connection. Remove Secure Exam from your Google account's third-party access, then connect again.",
     );
   const email = emailFromIdToken(result.id_token);
-  const folder = await fetch(
-    "https://www.googleapis.com/drive/v3/files?fields=id",
+  // Reuse the recordings folder from an earlier connection (drive.file still
+  // lets the app see folders it created) instead of creating a duplicate.
+  const existing = await fetch(
+    `https://www.googleapis.com/drive/v3/files?${new URLSearchParams({
+      q: `name='${ROOT_FOLDER_NAME}' and mimeType='application/vnd.google-apps.folder' and 'root' in parents and trashed=false`,
+      fields: "files(id)",
+      pageSize: "1",
+    })}`,
     {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${result.access_token}`,
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
-        name: ROOT_FOLDER_NAME,
-        mimeType: "application/vnd.google-apps.folder",
-      }),
+      headers: { Authorization: `Bearer ${result.access_token}` },
       signal: AbortSignal.timeout(15000),
     },
-  );
+  )
+    .then((response) => (response.ok ? response.json() : { files: [] }))
+    .then((found: { files?: { id: string }[] }) => found.files?.[0]?.id)
+    .catch(() => undefined);
+  const folder = existing
+    ? Response.json({ id: existing })
+    : await fetch("https://www.googleapis.com/drive/v3/files?fields=id", {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${result.access_token}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          name: ROOT_FOLDER_NAME,
+          mimeType: "application/vnd.google-apps.folder",
+        }),
+        signal: AbortSignal.timeout(15000),
+      });
   const created = (await folder.json().catch(() => ({}))) as { id?: string };
   if (!folder.ok || !created.id)
     throw new HttpError(

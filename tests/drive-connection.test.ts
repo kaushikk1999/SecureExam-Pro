@@ -1,7 +1,9 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({
-  query: vi.fn(async (statement?: unknown) => (statement ? [] : []) as unknown[]),
+  query: vi.fn(
+    async (statement?: unknown) => (statement ? [] : []) as unknown[],
+  ),
   put: vi.fn(),
 }));
 vi.mock("../src/lib/db", () => ({ query: mocks.query }));
@@ -69,6 +71,7 @@ describe("teacher Google Drive connection", () => {
           id_token: `x.${idPayload}.y`,
         }),
       )
+      .mockResolvedValueOnce(Response.json({ files: [] }))
       .mockResolvedValueOnce(Response.json({ id: "root-folder" }));
     globalThis.fetch = fetchMock as typeof fetch;
 
@@ -88,6 +91,28 @@ describe("teacher Google Drive connection", () => {
     const insert = JSON.stringify(mocks.query.mock.calls[0]);
     expect(insert).toContain("drive_connections");
     expect(insert).not.toContain('"refresh"');
+  });
+
+  it("reuses the recordings folder from an earlier connection", async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(
+        Response.json({
+          access_token: "access",
+          refresh_token: "refresh",
+          scope: "openid email https://www.googleapis.com/auth/drive.file",
+        }),
+      )
+      .mockResolvedValueOnce(Response.json({ files: [{ id: "old-folder" }] }));
+    globalThis.fetch = fetchMock as typeof fetch;
+    const result = await connection.completeDriveConnection({
+      userId: TEACHER,
+      code: "auth-code",
+      verifier: "verifier",
+      origin: "https://exam.example",
+    });
+    expect(result.rootFolderId).toBe("old-folder");
+    expect(fetchMock).toHaveBeenCalledTimes(2);
   });
 
   it("rejects a connection where Drive access was not granted", async () => {
