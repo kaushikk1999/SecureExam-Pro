@@ -74,10 +74,8 @@ describe("private exam file storage", () => {
     await expect(
       authConfig.subject_token_supplier.getSubjectToken(),
     ).resolves.toBe("test-subject-token");
-    expect(mocks.getVercelOidcToken).toHaveBeenCalledWith({
-      audience:
-        "https://iam.googleapis.com/projects/347634395141/locations/global/workloadIdentityPools/exam-pool/providers/vercel-production",
-    });
+    expect(mocks.getVercelOidcToken).toHaveBeenCalledOnce();
+    expect(mocks.getVercelOidcToken).toHaveBeenCalledWith();
     expect(fetchMock).toHaveBeenCalledTimes(2);
     expect(fetchMock.mock.calls[0][0]).toContain("upload/drive/v3/files");
     expect(String(fetchMock.mock.calls[0][1]?.body)).toContain(

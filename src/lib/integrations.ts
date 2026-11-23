@@ -20,7 +20,6 @@ function googleAuth(scopes: string[]) {
     );
 
   const workforceAudience = `//iam.googleapis.com/projects/${projectNumber}/locations/global/workloadIdentityPools/${poolId}/providers/${providerId}`;
-  const oidcAudience = `https:${workforceAudience}`;
   const auth = ExternalAccountClient.fromJSON({
     type: "external_account",
     audience: workforceAudience,
@@ -28,11 +27,12 @@ function googleAuth(scopes: string[]) {
     token_url: "https://sts.googleapis.com/v1/token",
     service_account_impersonation_url: `https://iamcredentials.googleapis.com/v1/projects/-/serviceAccounts/${serviceAccountEmail}:generateAccessToken`,
     scopes,
-    // Google’s default OIDC audience is the HTTPS provider URL. Ask Vercel
-    // to mint that audience explicitly; its default team audience does not
-    // match a Google provider configured with the recommended default.
+    // Vercel's GCP provider is configured with the team's default audience
+    // (https://vercel.com/<team-slug>). Keep the OIDC token audience aligned
+    // with that provider setting; `workforceAudience` above is the separate
+    // Google STS target resource.
     subject_token_supplier: {
-      getSubjectToken: () => getVercelOidcToken({ audience: oidcAudience }),
+      getSubjectToken: getVercelOidcToken,
     },
   });
   if (!auth)
