@@ -4643,6 +4643,17 @@ fieldset {
 .camera-dock {
   margin: 20px 0;
 }
+/* With many questions on a short laptop screen the sidebar scrolls; keep the
+   camera pinned to its bottom edge so it never leaves the viewport. */
+@media (min-width: 801px) {
+  .exam-shell .camera-dock {
+    position: sticky;
+    bottom: 0;
+    z-index: 1;
+    padding: 8px 0;
+    background: #000f20;
+  }
+}
 .camera-dock .camera-preview {
   width: 100%;
   max-width: 180px;
