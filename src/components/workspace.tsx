@@ -1361,10 +1361,10 @@ function ExamForm({ done, initial }: { done: () => void; initial?: any }) {
               )
               .map(([key, value]) => (
                 <label key={key} className="check">
-                <input
+                  <input
                     type="checkbox"
                     checked={Boolean(value)}
-                  disabled={hasActiveAttempts}
+                    disabled={hasActiveAttempts}
                     onChange={(e) =>
                       setPolicy({ ...policy, [key]: e.target.checked })
                     }
@@ -1915,7 +1915,10 @@ function ExamDetail({ id }: { id: string }) {
                             {paperDrafts.length} questions ·{" "}
                             {Object.entries(
                               paperDrafts.reduce(
-                                (counts: Record<string, number>, question: any) => {
+                                (
+                                  counts: Record<string, number>,
+                                  question: any,
+                                ) => {
                                   counts[question.type] =
                                     (counts[question.type] ?? 0) + 1;
                                   return counts;
@@ -1927,7 +1930,8 @@ function ExamDetail({ id }: { id: string }) {
                                 ([type, count]) =>
                                   `${count} ${type.replaceAll("_", " ").toLowerCase()}`,
                               )
-                              .join(" · ")} · edits are saved only to this exam
+                              .join(" · ")}{" "}
+                            · edits are saved only to this exam
                           </p>
                         </div>
                         <button
@@ -3785,7 +3789,7 @@ function Monitor({ id, policy }: { id: string; policy?: any }) {
         images.{" "}
         {data.driveEvidenceEnabled
           ? "Warned students’ available screen snapshots or consented tablet camera stills and an activity report are archived in Google Drive; students without warnings get no folder."
-          : "Google Drive evidence archiving is not configured for this deployment; set GDRIVE_FOLDER_ID and the service-account access to enable it."}
+          : "Evidence images and screen recordings are stored privately in the app; Google Drive archiving is off for this deployment."}
       </p>
       <ErrorBox message={error || message} />
       {liveSignal && (
@@ -4341,7 +4345,7 @@ function AttemptReview({ id, close }: { id: string; close: () => void }) {
       </p>
       {a.device_state?.screenRecordingAccepted && (
         <section className="notice" aria-label="Student screen recording">
-          <strong>Full-screen recording · Google Drive</strong>
+          <strong>Full-screen recording</strong>
           <p>
             {recordingParts.length
               ? `${recordingParts.length} saved segment${recordingParts.length === 1 ? "" : "s"} · ${recordingParts.reduce((total, part) => total + Number(part.size ?? 0), 0).toLocaleString()} bytes`

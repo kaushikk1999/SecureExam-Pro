@@ -22,8 +22,10 @@ vi.mock("@vercel/blob", () => ({ put: mocks.put, get: mocks.get }));
 vi.mock("../src/lib/db", () => ({ query: mocks.query }));
 
 const {
-  assertDriveRecordingReady,
+  assertRecordingStorageReady,
   archiveWarningEvidenceToDrive,
+  driveStorageEnabled,
+  storeScreenRecordingPart,
   deleteWarningEvidenceArchiveFromDrive,
   readPrivateFile,
   storePrivateFile,
@@ -304,7 +306,7 @@ describe("shared drive storage", () => {
     configureDrive();
     const fetchMock = vi.fn().mockResolvedValueOnce(folder());
     globalThis.fetch = fetchMock as typeof fetch;
-    await expect(assertDriveRecordingReady()).rejects.toThrow("shared drive");
+    await expect(assertRecordingStorageReady()).rejects.toThrow("shared drive");
     expect(fetchMock).toHaveBeenCalledOnce();
   });
 
@@ -320,7 +322,7 @@ describe("shared drive storage", () => {
         ),
       );
     globalThis.fetch = fetchMock as typeof fetch;
-    await expect(assertDriveRecordingReady()).rejects.toThrow(
+    await expect(assertRecordingStorageReady()).rejects.toThrow(
       "Content manager",
     );
   });
@@ -333,7 +335,7 @@ describe("shared drive storage", () => {
       .mockResolvedValueOnce(Response.json({ id: "probe-file" }))
       .mockResolvedValueOnce(new Response(null, { status: 204 }));
     globalThis.fetch = fetchMock as typeof fetch;
-    await assertDriveRecordingReady();
+    await assertRecordingStorageReady();
     expect(fetchMock).toHaveBeenCalledTimes(3);
     expect(String(fetchMock.mock.calls[1][0])).toContain(
       "upload/drive/v3/files",
@@ -341,7 +343,43 @@ describe("shared drive storage", () => {
     expect(fetchMock.mock.calls[2][1]?.method).toBe("DELETE");
     expect(String(fetchMock.mock.calls[2][0])).toContain("probe-file");
 
-    await assertDriveRecordingReady();
+    await assertRecordingStorageReady();
     expect(fetchMock).toHaveBeenCalledTimes(3);
+  });
+});
+
+describe("Vercel Blob storage mode", () => {
+  it("stores recording segments in Blob and skips the Drive preflight", async () => {
+    process.env.BLOB_READ_WRITE_TOKEN = "blob-token";
+    process.env.GDRIVE_FOLDER_ID = "my-drive-folder";
+    process.env.GCP_PROJECT_NUMBER = "347634395141";
+    process.env.GCP_WORKLOAD_IDENTITY_POOL_ID = "exam-pool";
+    process.env.GCP_WORKLOAD_IDENTITY_POOL_PROVIDER_ID = "vercel-production";
+    process.env.GCP_SERVICE_ACCOUNT_EMAIL =
+      "files@example.iam.gserviceaccount.com";
+    const fetchMock = vi.fn();
+    globalThis.fetch = fetchMock as typeof fetch;
+    mocks.put.mockResolvedValue({ url: "https://blob.example/segment" });
+
+    expect(driveStorageEnabled()).toBe(false);
+    await assertRecordingStorageReady();
+    const reference = await storeScreenRecordingPart({
+      attemptId: "attempt-1",
+      examId: "exam-1",
+      examTitle: "Midterm",
+      studentName: "Student",
+      studentId: "123",
+      name: "SCREEN_RECORDING::attempt-1::0000000000001.webm",
+      bytes: Buffer.from("webm"),
+    });
+
+    expect(reference).toBe("https://blob.example/segment");
+    expect(mocks.put).toHaveBeenCalledWith(
+      "exams/exam-1/recordings/attempt-1/SCREEN_RECORDING-attempt-1-0000000000001.webm",
+      Buffer.from("webm"),
+      expect.objectContaining({ access: "private", contentType: "video/webm" }),
+    );
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(mocks.getVercelOidcToken).not.toHaveBeenCalled();
   });
 });

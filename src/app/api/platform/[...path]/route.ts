@@ -46,7 +46,8 @@ import {
   syncSheets,
   storePrivateFile,
   archiveWarningEvidenceToDrive,
-  assertDriveRecordingReady,
+  assertRecordingStorageReady,
+  driveStorageEnabled,
   storeScreenRecordingPart,
   readPrivateFile,
   deletePrivateFile,
@@ -205,6 +206,12 @@ async function studentAccess(id: string, u: Actor) {
   if (!s) throw new HttpError(403, "Student access denied.");
 }
 async function archiveAttemptWarningEvidence(id: string) {
+  // With Blob storage, evidence stays in the app's private store.
+  if (!driveStorageEnabled())
+    throw new HttpError(
+      409,
+      "Warning evidence is stored privately in the app. Google Drive archiving is off for this deployment; review evidence and recordings here.",
+    );
   const [student] = await query<any>(sql`
     SELECT a.exam_id,a.status AS attempt_status,a.warnings,a.started_at,a.submitted_at,
            u.name AS student_name,u.student_id,u.email,e.title AS exam_title,
@@ -841,7 +848,7 @@ async function dispatch(req: Request, parts: string[]) {
           const [existingAttempt] = await query(
             sql`SELECT id FROM attempts WHERE exam_id=${id} AND user_id=${u.id}`,
           );
-          if (!existingAttempt) await assertDriveRecordingReady();
+          if (!existingAttempt) await assertRecordingStorageReady();
         }
         return json(await startAttempt(id, u, input));
       } catch (e) {
@@ -1024,7 +1031,7 @@ async function dispatch(req: Request, parts: string[]) {
             VALUES(${randomUUID()},'PRIVATE_FILE',${file.url},${id},${e.title})
           `);
         }
-        if (process.env.GDRIVE_FOLDER_ID) {
+        if (driveStorageEnabled()) {
           await tx.execute(sql`
             INSERT INTO storage_cleanup_jobs(id,kind,reference,exam_id,exam_title)
             VALUES(${randomUUID()},'DRIVE_EXAM_ARCHIVE',NULL,${id},${e.title})
@@ -1125,10 +1132,7 @@ async function dispatch(req: Request, parts: string[]) {
     if (action === "ai-paper-draft") {
       if (method !== "POST") throw new HttpError(405, "POST required.");
       if (e.status === "ARCHIVED")
-        throw new HttpError(
-          409,
-          "Archived examinations are read-only.",
-        );
+        throw new HttpError(409, "Archived examinations are read-only.");
       if (
         (
           await query(
@@ -1325,10 +1329,7 @@ async function dispatch(req: Request, parts: string[]) {
             tx,
           );
           if (!locked || locked.status === "ARCHIVED")
-            throw new HttpError(
-              409,
-              "Archived examinations are read-only.",
-            );
+            throw new HttpError(409, "Archived examinations are read-only.");
           const [active] = await query(
             sql`SELECT id FROM attempts WHERE exam_id=${id} AND status='ACTIVE' LIMIT 1`,
             tx,
@@ -1497,13 +1498,7 @@ async function dispatch(req: Request, parts: string[]) {
       return json({
         students,
         events,
-        driveEvidenceEnabled: Boolean(
-          process.env.GDRIVE_FOLDER_ID &&
-          process.env.GCP_PROJECT_NUMBER &&
-          process.env.GCP_WORKLOAD_IDENTITY_POOL_ID &&
-          process.env.GCP_WORKLOAD_IDENTITY_POOL_PROVIDER_ID &&
-          process.env.GCP_SERVICE_ACCOUNT_EMAIL,
-        ),
+        driveEvidenceEnabled: driveStorageEnabled(),
         stats,
         policy: e.policy,
         exam: { id: e.id, title: e.title, status: e.status },
@@ -2633,8 +2628,9 @@ async function dispatch(req: Request, parts: string[]) {
       };
     });
     if (
-      (syncResult.newWarnings?.length ?? 0) > 0 ||
-      syncResult.status !== "ACTIVE"
+      driveStorageEnabled() &&
+      ((syncResult.newWarnings?.length ?? 0) > 0 ||
+        syncResult.status !== "ACTIVE")
     ) {
       try {
         after(async () => {

@@ -22,6 +22,26 @@ function driveApi(url: string, listing = false) {
   return target.toString();
 }
 const recordingFolderCache = new Map<string, string>();
+/**
+ * When a Vercel Blob token is configured, every private file (recordings,
+ * warning evidence, uploads) is stored in Blob and Google Drive is not used.
+ */
+export function blobStorageEnabled() {
+  return Boolean(process.env.BLOB_READ_WRITE_TOKEN);
+}
+
+/** Google Drive storage and evidence archiving, used only without Blob. */
+export function driveStorageEnabled() {
+  return Boolean(
+    !blobStorageEnabled() &&
+    process.env.GDRIVE_FOLDER_ID &&
+    process.env.GCP_PROJECT_NUMBER &&
+    process.env.GCP_WORKLOAD_IDENTITY_POOL_ID &&
+    process.env.GCP_WORKLOAD_IDENTITY_POOL_PROVIDER_ID &&
+    process.env.GCP_SERVICE_ACCOUNT_EMAIL,
+  );
+}
+
 const DRIVE_PREFLIGHT_CACHE_MS = 10 * 60_000;
 let drivePreflightPassedAt = { folderId: "", at: 0 };
 
@@ -622,6 +642,12 @@ export async function storeScreenRecordingPart(input: {
   name: string;
   bytes: Buffer;
 }) {
+  if (blobStorageEnabled())
+    return storePrivateFile(
+      `exams/${input.examId}/recordings/${input.attemptId}/${input.name.replaceAll("::", "-")}`,
+      input.bytes,
+      "video/webm",
+    );
   const folderId = process.env.GDRIVE_FOLDER_ID;
   if (!folderId)
     throw new HttpError(
@@ -652,7 +678,9 @@ export async function storeScreenRecordingPart(input: {
 }
 
 /** Confirm that a new exam recording can be written before allowing the exam to begin. */
-export async function assertDriveRecordingReady() {
+export async function assertRecordingStorageReady() {
+  // Blob writes need only the project token, which is present when enabled.
+  if (blobStorageEnabled()) return;
   const folderId = process.env.GDRIVE_FOLDER_ID;
   if (!folderId)
     throw new HttpError(

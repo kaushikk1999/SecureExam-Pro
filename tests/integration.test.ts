@@ -28,7 +28,7 @@ vi.mock("../src/lib/integrations", async (importOriginal) => {
   >();
   return {
     ...actual,
-    assertDriveRecordingReady: drive.assertRecordingReady,
+    assertRecordingStorageReady: drive.assertRecordingReady,
   };
 });
 process.env.DATABASE_PROVIDER = "pglite";

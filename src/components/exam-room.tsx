@@ -968,13 +968,13 @@ export default function ExamRoom({
             const result = await response.json().catch(() => null);
             throw new Error(
               result?.error ||
-                "Drive could not save a screen recording segment.",
+                "Storage could not save a screen recording segment.",
             );
           }
           await del(key);
         }
         setScreenRecordingStatus(
-          "Recording continues; all queued segments are saved in Google Drive.",
+          "Recording continues; all queued segments are saved.",
         );
       } catch (cause) {
         setScreenRecordingStatus(
@@ -993,7 +993,7 @@ export default function ExamRoom({
         await set(key, blob);
         setScreenRecordingStatus(
           navigator.onLine
-            ? "Recording screen; saving segments to Google Drive."
+            ? "Recording screen; saving segments."
             : "Internet is unavailable; recording segments are queued in this browser for retry.",
         );
       } catch {
@@ -1048,9 +1048,7 @@ export default function ExamRoom({
             "Screen recording stopped unexpectedly. Contact your instructor before continuing.",
           );
         recorder.start(10_000);
-        setScreenRecordingStatus(
-          "Recording full screen; Google Drive saving is active.",
-        );
+        setScreenRecordingStatus("Recording full screen; saving is active.");
       } catch (cause) {
         setScreenRecordingStatus(
           `This browser could not start screen recording: ${(cause as Error).message}`,
@@ -1856,7 +1854,7 @@ export default function ExamRoom({
             screenShareUnsupported
               ? " Full-screen sharing has not passed. You cannot start until the browser confirms that Entire screen is being shared."
               : examScreenSharingRequired(p.screen, deviceClass)
-                ? " This exam requires your entire screen to remain shared and recorded from the moment the exam begins until it ends. The recording is uploaded as short, ordered video segments to the instructor’s private Google Drive folder and kept until the exam is deleted. Authorized instructors can review it; deleting the exam queues its recording segments and related files for removal from Drive, with retries if Drive is temporarily unavailable."
+                ? " This exam requires your entire screen to remain shared and recorded from the moment the exam begins until it ends. The recording is uploaded as short, ordered video segments to the exam’s private, access-controlled storage and kept until the exam is deleted. Authorized instructors can review it; deleting the exam queues its recording segments and related files for removal from storage, with retries if storage is temporarily unavailable."
                 : deviceClass === "tablet" && p.screen
                   ? " Screen sharing is not used on tablets."
                   : " Screen sharing is required on laptops only."}{" "}
@@ -2009,7 +2007,7 @@ export default function ExamRoom({
               screenShareUnsupported
                 ? "This browser/device cannot currently provide verified full-screen sharing, so you cannot start this exam here."
                 : examScreenSharingRequired(p.screen, deviceClass)
-                  ? "Your shared entire screen is recorded continuously during the exam and uploaded in segments to Google Drive. The recording includes everything visible on the shared screen and is kept until the exam is deleted. If upload is interrupted, segments are queued in this browser and retried; the exam screen shows the save status."
+                  ? "Your shared entire screen is recorded continuously during the exam and uploaded in segments to the exam’s private storage. The recording includes everything visible on the shared screen and is kept until the exam is deleted. If upload is interrupted, segments are queued in this browser and retried; the exam screen shows the save status."
                   : "Your instructor cannot view a live screen share from this tablet."}{" "}
               A browser cannot prevent switching apps; if you leave this tab,
               the exam screen is held until you acknowledge the signal.
@@ -2212,8 +2210,8 @@ export default function ExamRoom({
                 />{" "}
                 I understand and agree that my entire shared screen will be
                 continuously recorded during the exam, uploaded in video
-                segments to the instructor’s private Google Drive, and deleted
-                with the exam when the exam is deleted.
+                segments to the exam’s private, access-controlled storage, and
+                deleted with the exam when the exam is deleted.
               </label>
             </>
           )}
