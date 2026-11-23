@@ -6,7 +6,24 @@ import { query } from "./db";
 import { HttpError } from "./auth";
 
 const DRIVE_SCOPE = "https://www.googleapis.com/auth/drive";
+
+/**
+ * Add the flags Google Drive requires for items in a shared drive. They are
+ * harmless for My Drive folders. A service account has no storage quota of its
+ * own, so evidence and recordings must live in a shared drive it can write to.
+ */
+function driveApi(url: string, listing = false) {
+  const target = new URL(url);
+  target.searchParams.set("supportsAllDrives", "true");
+  if (listing) {
+    target.searchParams.set("includeItemsFromAllDrives", "true");
+    target.searchParams.set("corpora", "allDrives");
+  }
+  return target.toString();
+}
 const recordingFolderCache = new Map<string, string>();
+const DRIVE_PREFLIGHT_CACHE_MS = 10 * 60_000;
+let drivePreflightPassedAt = { folderId: "", at: 0 };
 
 function googleAuth(scopes: string[]) {
   const projectNumber = process.env.GCP_PROJECT_NUMBER;
@@ -105,7 +122,10 @@ async function findDriveChild(
     ...(mimeType ? [`mimeType='${mimeType}'`] : []),
   ].join(" and ");
   const response = await fetch(
-    `https://www.googleapis.com/drive/v3/files?q=${encodeURIComponent(query)}&fields=files(id,name,mimeType,parents)&pageSize=100`,
+    driveApi(
+      `https://www.googleapis.com/drive/v3/files?q=${encodeURIComponent(query)}&fields=files(id,name,mimeType,parents)&pageSize=100`,
+      true,
+    ),
     { headers: { Authorization: `Bearer ${token}` }, cache: "no-store" },
   );
   if (!response.ok)
@@ -136,7 +156,7 @@ async function listDriveChildren(token: string, parentId: string) {
     });
     if (pageToken) params.set("pageToken", pageToken);
     const response = await fetch(
-      `https://www.googleapis.com/drive/v3/files?${params}`,
+      driveApi(`https://www.googleapis.com/drive/v3/files?${params}`, true),
       { headers: { Authorization: `Bearer ${token}` }, cache: "no-store" },
     );
     if (!response.ok) throw new HttpError(502, "Google Drive listing failed.");
@@ -152,7 +172,9 @@ async function listDriveChildren(token: string, parentId: string) {
 
 async function deleteDriveItem(token: string, fileId: string) {
   const response = await fetch(
-    `https://www.googleapis.com/drive/v3/files/${encodeURIComponent(fileId)}`,
+    driveApi(
+      `https://www.googleapis.com/drive/v3/files/${encodeURIComponent(fileId)}`,
+    ),
     {
       method: "DELETE",
       headers: { Authorization: `Bearer ${token}` },
@@ -189,7 +211,7 @@ async function ensureDriveFolder(
   );
   if (existing) return existing.id;
   const response = await fetch(
-    "https://www.googleapis.com/drive/v3/files?fields=id",
+    driveApi("https://www.googleapis.com/drive/v3/files?fields=id"),
     {
       method: "POST",
       headers: {
@@ -269,15 +291,18 @@ async function uploadDriveFile(
   const endpoint = existingId
     ? `https://www.googleapis.com/upload/drive/v3/files/${encodeURIComponent(existingId)}`
     : "https://www.googleapis.com/upload/drive/v3/files";
-  const response = await fetch(`${endpoint}?uploadType=multipart&fields=id`, {
-    method: existingId ? "PATCH" : "POST",
-    headers: {
-      Authorization: `Bearer ${token}`,
-      "Content-Type": `multipart/related; boundary=${boundary}`,
+  const response = await fetch(
+    driveApi(`${endpoint}?uploadType=multipart&fields=id`),
+    {
+      method: existingId ? "PATCH" : "POST",
+      headers: {
+        Authorization: `Bearer ${token}`,
+        "Content-Type": `multipart/related; boundary=${boundary}`,
+      },
+      body: payload,
+      signal: AbortSignal.timeout(30000),
     },
-    body: payload,
-    signal: AbortSignal.timeout(30000),
-  });
+  );
   if (!response.ok) {
     await logDriveFailure("upload file", response);
     throw new HttpError(502, "Google Drive could not store evidence.");
@@ -290,7 +315,9 @@ async function uploadDriveFile(
 
 async function moveDriveFile(token: string, fileId: string, folderId: string) {
   const response = await fetch(
-    `https://www.googleapis.com/drive/v3/files/${encodeURIComponent(fileId)}?fields=id,parents`,
+    driveApi(
+      `https://www.googleapis.com/drive/v3/files/${encodeURIComponent(fileId)}?fields=id,parents`,
+    ),
     { headers: { Authorization: `Bearer ${token}` }, cache: "no-store" },
   );
   if (!response.ok)
@@ -300,7 +327,9 @@ async function moveDriveFile(token: string, fileId: string, folderId: string) {
   const params = new URLSearchParams({ addParents: folderId });
   if (file.parents?.length) params.set("removeParents", file.parents.join(","));
   const moved = await fetch(
-    `https://www.googleapis.com/drive/v3/files/${encodeURIComponent(fileId)}?${params}`,
+    driveApi(
+      `https://www.googleapis.com/drive/v3/files/${encodeURIComponent(fileId)}?${params}`,
+    ),
     {
       method: "PATCH",
       headers: { Authorization: `Bearer ${token}` },
@@ -561,7 +590,9 @@ export async function storePrivateFile(
     Buffer.from(`\r\n--${boundary}--`),
   ]);
   const response = await fetch(
-    "https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart&fields=id",
+    driveApi(
+      "https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart&fields=id",
+    ),
     {
       method: "POST",
       headers: {
@@ -628,19 +659,29 @@ export async function assertDriveRecordingReady() {
       503,
       "This exam requires Google Drive screen recording, but Drive storage is not configured. Ask your administrator to configure the Secure Exam Drive folder.",
     );
+  if (
+    drivePreflightPassedAt.folderId === folderId &&
+    Date.now() - drivePreflightPassedAt.at < DRIVE_PREFLIGHT_CACHE_MS
+  )
+    return;
   const token = await driveToken();
   const response = await fetch(
-    `https://www.googleapis.com/drive/v3/files/${encodeURIComponent(folderId)}?fields=id,mimeType,capabilities(canAddChildren)`,
+    driveApi(
+      `https://www.googleapis.com/drive/v3/files/${encodeURIComponent(folderId)}?fields=id,mimeType,driveId,capabilities(canAddChildren)`,
+    ),
     { headers: { Authorization: `Bearer ${token}` }, cache: "no-store" },
   );
-  if (!response.ok)
+  if (!response.ok) {
+    await logDriveFailure("read recording folder", response);
     throw new HttpError(
       503,
       "Secure Exam cannot verify access to its Google Drive folder. Ask your administrator to check Drive sharing and try again.",
     );
+  }
   const folder = (await response.json()) as {
     id?: string;
     mimeType?: string;
+    driveId?: string;
     capabilities?: { canAddChildren?: boolean };
   };
   if (
@@ -652,6 +693,31 @@ export async function assertDriveRecordingReady() {
       503,
       "The configured Google Drive location is not a writable folder. Ask your administrator to correct the Secure Exam Drive settings.",
     );
+  // Folders in My Drive pass the checks above, but the service account cannot
+  // store files there (it has no storage quota), so recordings would fail.
+  if (!folder.driveId)
+    throw new HttpError(
+      503,
+      "Secure Exam's Google Drive folder must be in a shared drive so recordings can be saved. Ask your administrator to move it to a shared drive.",
+    );
+  // Prove an upload really works before the student starts recording.
+  let probeId: string;
+  try {
+    probeId = await uploadDriveFile(
+      token,
+      folderId,
+      `.secure-exam-write-check-${randomUUID()}.txt`,
+      "text/plain",
+      Buffer.from("Secure Exam storage check. Safe to delete."),
+    );
+  } catch {
+    throw new HttpError(
+      503,
+      "Secure Exam cannot save files to its Google Drive folder. Ask your administrator to give the service account Content manager access to the shared drive.",
+    );
+  }
+  await deleteDriveItem(token, probeId).catch(() => undefined);
+  drivePreflightPassedAt = { folderId, at: Date.now() };
 }
 
 export async function readPrivateFile(reference: string) {
@@ -679,7 +745,9 @@ export async function readPrivateFile(reference: string) {
   if (!/^[\w-]+$/.test(fileId)) throw new HttpError(404, "File not found.");
   const token = await driveToken();
   const response = await fetch(
-    `https://www.googleapis.com/drive/v3/files/${encodeURIComponent(fileId)}?alt=media`,
+    driveApi(
+      `https://www.googleapis.com/drive/v3/files/${encodeURIComponent(fileId)}?alt=media`,
+    ),
     {
       headers: { Authorization: `Bearer ${token}` },
       cache: "no-store",
@@ -701,7 +769,9 @@ export async function deletePrivateFile(reference: string) {
   if (!/^[\w-]+$/.test(fileId)) throw new HttpError(404, "File not found.");
   const token = await driveToken();
   const response = await fetch(
-    `https://www.googleapis.com/drive/v3/files/${encodeURIComponent(fileId)}`,
+    driveApi(
+      `https://www.googleapis.com/drive/v3/files/${encodeURIComponent(fileId)}`,
+    ),
     {
       method: "DELETE",
       headers: { Authorization: `Bearer ${token}` },

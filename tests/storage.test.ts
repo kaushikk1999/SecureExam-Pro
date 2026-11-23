@@ -22,6 +22,7 @@ vi.mock("@vercel/blob", () => ({ put: mocks.put, get: mocks.get }));
 vi.mock("../src/lib/db", () => ({ query: mocks.query }));
 
 const {
+  assertDriveRecordingReady,
   archiveWarningEvidenceToDrive,
   deleteWarningEvidenceArchiveFromDrive,
   readPrivateFile,
@@ -266,5 +267,81 @@ describe("private exam file storage", () => {
         "application/pdf",
       ),
     ).rejects.toThrow("GDRIVE_FOLDER_ID");
+  });
+});
+
+describe("shared drive storage", () => {
+  const configureDrive = () => {
+    process.env.BLOB_READ_WRITE_TOKEN = "";
+    process.env.GDRIVE_FOLDER_ID = "shared-folder-id";
+    process.env.GCP_PROJECT_NUMBER = "347634395141";
+    process.env.GCP_WORKLOAD_IDENTITY_POOL_ID = "exam-pool";
+    process.env.GCP_WORKLOAD_IDENTITY_POOL_PROVIDER_ID = "vercel-production";
+    process.env.GCP_SERVICE_ACCOUNT_EMAIL =
+      "files@example.iam.gserviceaccount.com";
+  };
+  const folder = (extra: Record<string, unknown> = {}) =>
+    Response.json({
+      id: "shared-folder-id",
+      mimeType: "application/vnd.google-apps.folder",
+      capabilities: { canAddChildren: true },
+      ...extra,
+    });
+
+  it("sends the shared-drive flag on uploads", async () => {
+    configureDrive();
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(Response.json({ id: "stored-file-id" }));
+    globalThis.fetch = fetchMock as typeof fetch;
+    await storePrivateFile("a/b.pdf", Buffer.from("pdf"), "application/pdf");
+    const url = new URL(String(fetchMock.mock.calls[0][0]));
+    expect(url.searchParams.get("supportsAllDrives")).toBe("true");
+    expect(url.searchParams.get("uploadType")).toBe("multipart");
+  });
+
+  it("blocks recording when the folder is in My Drive, before uploading", async () => {
+    configureDrive();
+    const fetchMock = vi.fn().mockResolvedValueOnce(folder());
+    globalThis.fetch = fetchMock as typeof fetch;
+    await expect(assertDriveRecordingReady()).rejects.toThrow("shared drive");
+    expect(fetchMock).toHaveBeenCalledOnce();
+  });
+
+  it("reports a failed test upload with access guidance", async () => {
+    configureDrive();
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(folder({ driveId: "shared-drive-id" }))
+      .mockResolvedValueOnce(
+        Response.json(
+          { error: { message: "Insufficient permissions" } },
+          { status: 403 },
+        ),
+      );
+    globalThis.fetch = fetchMock as typeof fetch;
+    await expect(assertDriveRecordingReady()).rejects.toThrow(
+      "Content manager",
+    );
+  });
+
+  it("writes and deletes a test file, then reuses the result", async () => {
+    configureDrive();
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(folder({ driveId: "shared-drive-id" }))
+      .mockResolvedValueOnce(Response.json({ id: "probe-file" }))
+      .mockResolvedValueOnce(new Response(null, { status: 204 }));
+    globalThis.fetch = fetchMock as typeof fetch;
+    await assertDriveRecordingReady();
+    expect(fetchMock).toHaveBeenCalledTimes(3);
+    expect(String(fetchMock.mock.calls[1][0])).toContain(
+      "upload/drive/v3/files",
+    );
+    expect(fetchMock.mock.calls[2][1]?.method).toBe("DELETE");
+    expect(String(fetchMock.mock.calls[2][0])).toContain("probe-file");
+
+    await assertDriveRecordingReady();
+    expect(fetchMock).toHaveBeenCalledTimes(3);
   });
 });
