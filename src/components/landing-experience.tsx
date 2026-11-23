@@ -564,7 +564,8 @@ export default function LandingExperience({ brand }: { brand: Brand }) {
           {brand.brand}
         </Link>
         <span>
-          {brand.institution} · {brand.timezone}
+          {brand.institution} · {brand.timezone} ·{" "}
+          <Link href="/privacy">Privacy Policy</Link>
         </span>
         <button
           onClick={() => setPaused((p) => !p)}
