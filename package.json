@@ -10,7 +10,7 @@
     "typecheck": "tsc --noEmit",
     "lint": "eslint .",
     "test": "vitest run --exclude tests/e2e.spec.ts",
-    "test:e2e": "PLAYWRIGHT_BROWSERS_PATH=.data/browsers playwright test",
+    "test:e2e": "npm run build:next && PLAYWRIGHT_BROWSERS_PATH=.data/browsers playwright test",
     "db:migrate": "tsx scripts/migrate.ts",
     "db:seed": "tsx scripts/seed.ts",
     "prepare:assets": "node scripts/assets.mjs",

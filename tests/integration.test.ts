@@ -23,9 +23,8 @@ vi.mock("next-auth", () => ({
 }));
 vi.mock("@vercel/blob", () => blob);
 vi.mock("../src/lib/integrations", async (importOriginal) => {
-  const actual = await importOriginal<
-    typeof import("../src/lib/integrations")
-  >();
+  const actual =
+    await importOriginal<typeof import("../src/lib/integrations")>();
   return {
     ...actual,
     assertRecordingStorageReady: drive.assertRecordingReady,
@@ -1043,6 +1042,70 @@ describe("server authorization and exam lifecycle", () => {
     expect(after.device_state.screenRecordingAccepted).toBe(true);
     expect(after.device_state.deviceClass).toBe("laptop");
     expect(after.device_state.online).toBe(true);
+  });
+  it("accepts laptop screen-recording segments before and after a heartbeat", async () => {
+    const previousBlobToken = process.env.BLOB_READ_WRITE_TOKEN;
+    process.env.BLOB_READ_WRITE_TOKEN = "test-private-storage-token";
+    const upload = (sequence: number) =>
+      POST(
+        new Request(
+          `http://localhost:3000/api/platform/attempts/${attempt}/recordings`,
+          {
+            method: "POST",
+            headers: {
+              origin: "http://localhost:3000",
+              "content-type": "video/webm",
+              "user-agent":
+                "Mozilla/5.0 (X11; Linux x86_64) Chrome/130.0.0.0 Safari/537.36",
+              "x-exam-device": device,
+              "x-recording-sequence": String(sequence),
+            },
+            body: Buffer.from("webm-segment-" + sequence),
+          },
+        ),
+        {
+          params: Promise.resolve({
+            path: ["attempts", attempt, "recordings"],
+          }),
+        },
+      );
+    try {
+      const first = await upload(1);
+      expect(first.status).toBe(200);
+      await request("attempts/" + attempt + "/sync", {
+        deviceState: {
+          camera: false,
+          microphone: false,
+          screen: true,
+          deviceClass: "laptop",
+          fullscreen: false,
+          online: true,
+        },
+      });
+      const second = await upload(2);
+      expect(second.status).toBe(200);
+      const parts = await query<any>(
+        sql`SELECT name FROM files WHERE attempt_id=${attempt} AND mime='video/webm' ORDER BY name`,
+      );
+      expect(parts.map((part) => part.name)).toEqual([
+        `SCREEN_RECORDING::${attempt}::0000000000001.webm`,
+        `SCREEN_RECORDING::${attempt}::0000000000002.webm`,
+      ]);
+      expect(blob.put).toHaveBeenCalledWith(
+        expect.stringMatching(/^recordings\/.+\/.+ - .+\.webm$/),
+        expect.any(Buffer),
+        expect.objectContaining({
+          access: "private",
+          contentType: "video/webm",
+        }),
+      );
+    } finally {
+      process.env.BLOB_READ_WRITE_TOKEN = previousBlobToken ?? "";
+      // Keep later file-count assertions independent of this test.
+      await db.execute(
+        sql`DELETE FROM files WHERE attempt_id=${attempt} AND mime='video/webm'`,
+      );
+    }
   });
   it("logs local audio and camera activity for instructor review without auto-penalizing", async () => {
     const path = "attempts/" + attempt + "/sync";
