@@ -5131,12 +5131,15 @@ function DriveRecordingPanel() {
             Connect your Google account (for example your university account) to
             save your exams&apos; screen recordings in your own Drive instead.
           </p>
-          {/* A full page navigation: this API route redirects to Google. */}
-          <form action="/api/platform/drive-connection/start" method="get">
-            <button className="primary" type="submit">
-              Connect Google Drive
-            </button>
-          </form>
+          {/* A plain link, not a form: the CSP's form-action 'self' would
+              block the redirect to Google that this API route returns. */}
+          {/* eslint-disable-next-line @next/next/no-html-link-for-pages */}
+          <a
+            className="button primary"
+            href="/api/platform/drive-connection/start"
+          >
+            Connect Google Drive
+          </a>
         </>
       )}
       <p role="status">{message}</p>
