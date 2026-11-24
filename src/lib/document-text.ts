@@ -113,6 +113,54 @@ export type StructuredSourceQuestion = {
 };
 
 /**
+ * Question text is rendered as Markdown, which merges single line breaks.
+ * Keep the paper's layout: tab-separated rows become a table and other line
+ * breaks become hard breaks. The wording itself is unchanged.
+ */
+function promptMarkdown(text: string) {
+  const lines = text.split("\n");
+  const out: string[] = [];
+  for (let index = 0; index < lines.length;) {
+    if (!lines[index].includes("\t")) {
+      out.push(lines[index++]);
+      continue;
+    }
+    const rows: string[][] = [];
+    while (index < lines.length && lines[index].includes("\t"))
+      rows.push(
+        lines[index++]
+          .split("\t")
+          .map((cell) => cell.trim().replaceAll("|", "\\|")),
+      );
+    if (rows.length < 2) {
+      out.push(rows[0].join("  "));
+      continue;
+    }
+    const width = Math.max(...rows.map((row) => row.length));
+    const cells = (row: string[]) =>
+      `| ${[...row, ...Array(width - row.length).fill("")].join(" | ")} |`;
+    out.push(
+      "",
+      cells(rows[0]),
+      `| ${Array(width).fill("---").join(" | ")} |`,
+      ...rows.slice(1).map(cells),
+      "",
+    );
+  }
+  return out
+    .map((line, index) => {
+      const next = out[index + 1];
+      const isTable = (value?: string) => value?.trimStart().startsWith("|");
+      return line.trim() && next?.trim() && !isTable(line) && !isTable(next)
+        ? `${line}  `
+        : line;
+    })
+    .join("\n")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
+}
+
+/**
  * Extracts clearly labeled questions without paraphrasing them. Ollama can
  * supply answer-key suggestions, but it must not change, merge, or reorder the
  * instructor's question text.
@@ -122,7 +170,10 @@ export function extractStructuredQuestions(source: string) {
     .replace(/\r\n?/g, "\n")
     // Keep the number in a "Question 2" label attached to its prefix during
     // the packed-text split below; otherwise it can split as a bare "2".
-    .replace(/\b((?:QUESTION|Q)\s*(?:NO\.?\s*)?#?)\s*(?=[A-Z]?\d{1,3}(?:[.)]|[—–:-]|\s|$))/gi, "$1\uE000")
+    .replace(
+      /\b((?:QUESTION|Q)\s*(?:NO\.?\s*)?#?)\s*(?=[A-Z]?\d{1,3}(?:[.)]|[—–:-]|\s|$))/gi,
+      "$1\uE000",
+    )
     .replace(/([^\n])\s+(?=(?:SECTION|PART)\s+[A-Z0-9]+\s*[—–:-])/gi, "$1\n")
     // Pasted papers often lose their line breaks. Split before common numbered
     // labels without splitting decimal numbers or marks embedded in a stem.
@@ -130,10 +181,7 @@ export function extractStructuredQuestions(source: string) {
       /([^\n])\s+(?=(?:(?:QUESTION|Q)\s*(?:NO\.?\s*)?#?\s*)?[A-Z]?\d{1,3}(?:[.)]|[—–:-])\s+)/gi,
       "$1\n",
     )
-    .replace(
-      /([^\n])\s+(?=QUESTION\s+(?:NO\.?\s*)?#?\s*\d{1,3}\s+)/gi,
-      "$1\n",
-    )
+    .replace(/([^\n])\s+(?=QUESTION\s+(?:NO\.?\s*)?#?\s*\d{1,3}\s+)/gi, "$1\n")
     .replace(
       /([^\n])\s+(?=(?:QUESTION|Q)\s+(?:NO\.?\s*)?#?\s*\d{1,3}(?:\s|$))/gi,
       "$1\n",
@@ -152,11 +200,18 @@ export function extractStructuredQuestions(source: string) {
     section: string;
     title: string;
     preamble: string[];
+    implicit?: boolean;
+    marksText?: string;
   } | null = null;
+  // Papers often list questions without numbers, each ending in its marks,
+  // e.g. "An algorithm is best described as: [1]". Number them per section.
+  const implicitCounts = new Map<string, number>();
+  const endsWithMarks = /\[\s*\d+(?:\.\d+)?\s*(?:marks?)?\s*\]\s*$/i;
 
   const savePending = () => {
     if (!pending) return;
-    const title = `${pending.title} ${pending.label} ${pending.preamble.join(" ")}`.toUpperCase();
+    const title =
+      `${pending.title} ${pending.label} ${pending.preamble.join(" ")}`.toUpperCase();
     const caseSection = /CASE/.test(title);
     const matchingSection = /MATCHING/.test(title);
     const rawLines = pending.lines
@@ -218,9 +273,10 @@ export function extractStructuredQuestions(source: string) {
     }
     if (intro) prompt = `${intro}\n\n${prompt}`;
 
-    const explicitMarks = `${pending.label} ${pending.lines.join(" ")}`.match(
-      /\[(\d+(?:\.\d+)?)(?:\s*marks?)?\]|\((\d+(?:\.\d+)?)(?:\s*marks?)?\)/i,
-    );
+    const explicitMarks =
+      `${pending.marksText ?? ""} ${pending.label} ${pending.lines.join(" ")}`.match(
+        /\[(\d+(?:\.\d+)?)(?:\s*marks?)?\]|\((\d+(?:\.\d+)?)(?:\s*marks?)?\)/i,
+      );
     const sectionMarks = pending.title.match(/\d+\s*[×x]\s*(\d+(?:\.\d+)?)/i);
     const marks = Number(
       explicitMarks?.[1] ?? explicitMarks?.[2] ?? sectionMarks?.[1] ?? 1,
@@ -232,8 +288,7 @@ export function extractStructuredQuestions(source: string) {
     else if (matchingSection) type = "MATCHING";
     else if (/CASE/i.test(title)) type = "CASE_STUDY";
     else if (optionLines.length) type = "MCQ";
-    else if (/LONG\s+ANSWER|ESSAY/i.test(title))
-      type = "ESSAY";
+    else if (/LONG\s+ANSWER|ESSAY/i.test(title)) type = "ESSAY";
     else if (
       /SHORT|BRIEF|ONE\s+OR\s+TWO\s+(?:LINES|SENTENCES)/i.test(title) ||
       (marks <= 3 && !/DISCUSS|EVALUATE|IN\s+DETAIL|ELABORATE/i.test(title))
@@ -251,7 +306,7 @@ export function extractStructuredQuestions(source: string) {
       questions.push({
         sourceId: pending.sourceId,
         type,
-        prompt,
+        prompt: promptMarkdown(prompt),
         marks: Number.isFinite(marks) && marks > 0 ? marks : 1,
         options: optionLines,
       });
@@ -275,10 +330,9 @@ export function extractStructuredQuestions(source: string) {
     const letterLabel = line.match(
       /^(?:(?:QUESTION|Q)\s*(?:NO\.?\s*)?#?\s*)?([A-Z]?\d{1,3})(?:(?:[.)]|[—–:-])\s*(.*)|\s+(.+)|$)$/i,
     );
-    const matchingLabel =
-      /MATCHING/i.test(sectionTitle)
-        ? line.match(/^(\d{1,2})[.)]\s*(.+)$/)
-        : null;
+    const matchingLabel = /MATCHING/i.test(sectionTitle)
+      ? line.match(/^(\d{1,2})[.)]\s*(.+)$/)
+      : null;
     const match = letterLabel ?? matchingLabel;
     if (match) {
       savePending();
@@ -291,11 +345,36 @@ export function extractStructuredQuestions(source: string) {
           : questionNumber;
       pending = {
         sourceId,
-        label: originalLine.trim(),
+        label: originalLine.trim().replace(/ {2,}/g, " "),
         lines: [],
         section,
         title: sectionTitle,
         preamble: [...sectionPreamble],
+      };
+      continue;
+    }
+
+    // An unnumbered question: a line ending in "[marks]" that is not an
+    // option/sub-part ("a) ...") and not inside a numbered question (whose
+    // "a) ... [1]" sub-parts belong to it, as in case studies).
+    if (
+      endsWithMarks.test(line) &&
+      !/^[a-h][).]\s*/i.test(line) &&
+      (!pending || pending.implicit)
+    ) {
+      savePending();
+      const count = (implicitCounts.get(section) ?? 0) + 1;
+      implicitCounts.set(section, count);
+      pending = {
+        sourceId: `${section || "Q"}${count}`,
+        label: line.replace(endsWithMarks, "").trim(),
+        lines: [],
+        section,
+        title: sectionTitle,
+        preamble: [...sectionPreamble],
+        implicit: true,
+        // Keep the stated marks for scoring; the question text drops them.
+        marksText: line.match(endsWithMarks)![0],
       };
       continue;
     }

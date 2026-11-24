@@ -102,4 +102,87 @@ D2. Give one tool that could help. (2 marks)`;
     expect(questions?.[4].prompt).toContain("Answer in one or two sentences.");
     expect(questions?.[6].prompt).toContain("orders are growing fast");
   });
+
+  it("extracts unnumbered questions that end in [marks], section by section", () => {
+    // Synthetic paper in the same layout as instructor papers that list
+    // questions without numbers (never commit a real exam to this repo).
+    const source = [
+      "SECTION A — Multiple choice (3 × 1 = 3 marks)",
+      "Circle the correct answer.",
+      "",
+      "Which planet is closest to the Sun? [1]",
+      "a) Venus",
+      "b) Mercury",
+      "c) Mars",
+      "d) Earth",
+      "Which unit measures electric current? [1]",
+      "a) Volt",
+      "b) Watt",
+      "c) Ampere",
+      "d) Ohm",
+      "A dozen equals: [1]",
+      "a) 10",
+      "b) 12",
+      "c) 6",
+      "d) 20",
+      "",
+      "SECTION B — True or False (2 × 1 = 2 marks)",
+      "Write T for True or F for False.",
+      "",
+      "Water boils at 100 °C at sea level. ______ [1]",
+      "A triangle has four sides. ______ [1]",
+      "",
+      "SECTION C — Fill in the blanks (2 × 1 = 2 marks)",
+      "",
+      "The capital of France is ____________. [1]",
+      "Plants make food by ____________. [1]",
+      "",
+      "SECTION D — Short answers (2 × 2 = 4 marks)",
+      "Answer in one or two lines.",
+      "",
+      "Give two uses of a spreadsheet. [2]",
+      "Name two renewable energy sources. [2]",
+      "",
+      "SECTION E — Short case questions (1 × 5 = 5 marks)",
+      "",
+      "Question 1 — Lemonade stand [5]",
+      "",
+      "A lemonade stand sold these cups:",
+      "",
+      "Day\tCups",
+      "Monday\t20",
+      "Tuesday\t35",
+      "",
+      "a) What is the total? [2]",
+      "b) Which day sold more? [1]",
+      "c) Suggest one way to sell more. [2]",
+    ].join("\n");
+    const questions = extractStructuredQuestions(source)!;
+    expect(questions.map((q) => [q.sourceId, q.type, q.marks])).toEqual([
+      ["A1", "MCQ", 1],
+      ["A2", "MCQ", 1],
+      ["A3", "MCQ", 1],
+      ["B1", "TRUE_FALSE", 1],
+      ["B2", "TRUE_FALSE", 1],
+      ["C1", "FILL_BLANK", 1],
+      ["C2", "FILL_BLANK", 1],
+      ["D1", "SHORT_ANSWER", 2],
+      ["D2", "SHORT_ANSWER", 2],
+      ["Q1", "CASE_STUDY", 5],
+    ]);
+    expect(questions[0].options).toEqual([
+      "A) Venus",
+      "B) Mercury",
+      "C) Mars",
+      "D) Earth",
+    ]);
+    expect(questions[0].prompt).toContain(
+      "Which planet is closest to the Sun?",
+    );
+    expect(questions[0].prompt).not.toContain("[1]");
+    expect(questions[3].options).toEqual(["True", "False"]);
+    const caseStudy = questions.at(-1)!;
+    expect(caseStudy.prompt).toContain("| Monday | 20 |");
+    expect(caseStudy.prompt).toContain("c) Suggest one way to sell more. [2]");
+  });
 });
