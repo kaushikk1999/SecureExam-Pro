@@ -1260,12 +1260,12 @@ function ExamForm({ done, initial }: { done: () => void; initial?: any }) {
               [
                 "aiCameraMonitoring",
                 "AI camera review (optional)",
-                "Send two small, temporary camera samples to an AI service (OpenRouter) about once a minute; in large classes students are checked in turns (for example 80 students: each about every 5 minutes). A missing face, two or more faces, or a visible phone or extra screen counts as a warning strike; other signals are advisory. False detections are possible.",
+                "Check the camera on each student's device about every 1.5 seconds (no images leave the device): a visible phone or extra screen, another person, or an empty seat counts as a warning strike within a few seconds. Unclear phone detections are confirmed by an AI service (OpenRouter, free tier). False detections are possible.",
               ],
               [
                 "microphone",
                 "Microphone",
-                "Check sustained sound levels; audio is not recorded or transcribed.",
+                "Detect talking or other voices on the student's device (about 3 seconds counts as a warning strike); audio is not recorded or transcribed.",
               ],
               [
                 "location",
@@ -1375,9 +1375,9 @@ function ExamForm({ done, initial }: { done: () => void; initial?: any }) {
           </div>
           {policy.microphone && (
             <p className="small muted">
-              Microphone monitoring checks sustained sound levels on the
-              student&apos;s device. It does not recognize speech or record or
-              upload audio.
+              Microphone monitoring detects talking or other voices on the
+              student&apos;s device and counts sustained speech as a warning. It
+              does not record, upload or transcribe audio.
             </p>
           )}
           <div className="form-grid">
@@ -5201,6 +5201,26 @@ function DriveRecordingPanel() {
             }}
           >
             Disconnect Google Drive
+          </button>
+          <button
+            disabled={busy}
+            onClick={async () => {
+              setBusy(true);
+              try {
+                const result = await api("drive-connection/cleanup", {});
+                setMessage(
+                  result.removed
+                    ? `Removed ${result.removed} recording folder${result.removed === 1 ? "" : "s"} of deleted exams from Google Drive.`
+                    : "No recording folders of deleted exams were found.",
+                );
+              } catch (e) {
+                setMessage((e as Error).message);
+              } finally {
+                setBusy(false);
+              }
+            }}
+          >
+            Remove recordings of deleted exams
           </button>
         </>
       ) : (

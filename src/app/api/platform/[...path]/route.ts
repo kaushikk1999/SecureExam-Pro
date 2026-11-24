@@ -71,6 +71,7 @@ import {
 import {
   pendingStorageCleanupCount,
   processStorageCleanupJobs,
+  sweepDeletedExamFolders,
 } from "@/lib/storage-cleanup";
 import { examRequestDeviceAllowed } from "@/lib/exam-device";
 import { screenIceConfiguration } from "@/lib/screen-ice";
@@ -212,6 +213,16 @@ async function driveConnectionRequest(
     if (req.method !== "GET")
       throw new HttpError(405, "GET or DELETE required.");
     return json(await driveConnectionStatus(u.id));
+  }
+  if (step === "cleanup") {
+    if (req.method !== "POST") throw new HttpError(405, "POST required.");
+    const result = await sweepDeletedExamFolders(u.id);
+    await record({
+      userId: u.id,
+      type: "DRIVE_DELETED_EXAM_FOLDERS_REMOVED",
+      metadata: result,
+    });
+    return json(result);
   }
   if (req.method !== "GET") throw new HttpError(405, "GET required.");
   if (step === "start") {
@@ -1148,6 +1159,36 @@ async function dispatch(req: Request, parts: string[]) {
             VALUES(${randomUUID()},'DRIVE_EXAM_ARCHIVE',NULL,${id},${e.title})
           `);
         }
+        // Recordings in the teacher's own Drive: delete the exam's whole
+        // folder tree, then sweep folders left by other deleted exams.
+        const examFolders = await query<{
+          owner_user_id: string;
+          folder_id: string;
+        }>(
+          sql`SELECT owner_user_id,folder_id FROM exam_drive_folders WHERE exam_id=${id}`,
+          tx,
+        );
+        const sweepOwners = new Set<string>();
+        for (const folder of examFolders) {
+          sweepOwners.add(folder.owner_user_id);
+          await tx.execute(sql`
+            INSERT INTO storage_cleanup_jobs(id,kind,reference,exam_id,exam_title)
+            VALUES(${randomUUID()},'USER_DRIVE_EXAM',${`${folder.owner_user_id}:${folder.folder_id}`},${id},${e.title})
+          `);
+        }
+        const [examOwner] = await query<{ teacher_id: string }>(
+          sql`SELECT c.teacher_id FROM drive_connections d JOIN courses c ON c.teacher_id=d.user_id JOIN exams x ON x.course_id=c.id WHERE x.id=${id}`,
+          tx,
+        );
+        if (examOwner) sweepOwners.add(examOwner.teacher_id);
+        for (const owner of sweepOwners)
+          await tx.execute(sql`
+            INSERT INTO storage_cleanup_jobs(id,kind,reference,exam_id,exam_title)
+            VALUES(${randomUUID()},'USER_DRIVE_EXAM',${`${owner}:sweep`},${id},${e.title})
+          `);
+        await tx.execute(
+          sql`DELETE FROM exam_drive_folders WHERE exam_id=${id}`,
+        );
 
         const affectedChains = await query<{ chain_key: string }>(
           sql`SELECT DISTINCT chain_key FROM audit_events WHERE exam_id=${id} OR attempt_id IN (SELECT id FROM attempts WHERE exam_id=${id})`,
@@ -1218,6 +1259,19 @@ async function dispatch(req: Request, parts: string[]) {
         }
       });
       await processStorageCleanupJobs(3);
+      // Finish the remaining cloud deletions in the background right away
+      // instead of waiting for the nightly cleanup job.
+      try {
+        after(async () => {
+          const startedAt = Date.now();
+          while (Date.now() - startedAt < 45_000) {
+            const { cleaned, failed } = await processStorageCleanupJobs(10);
+            if (!cleaned && !failed) break;
+          }
+        });
+      } catch {
+        // Direct handler tests run outside Next's request context.
+      }
       return json({
         ok: true,
         deletedFiles: deletedFileCount,
@@ -2045,6 +2099,7 @@ async function dispatch(req: Request, parts: string[]) {
           const result = await appendRecordingChunk({
             owner,
             attemptId: id,
+            examId,
             sessionId,
             sequence,
             mime: mime as RecordingMime,

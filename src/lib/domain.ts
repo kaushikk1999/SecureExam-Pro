@@ -92,6 +92,7 @@ export const hardEvents = [
   "SCREEN_SHARE_STOPPED",
   "LOCATION_OUTSIDE_GEOFENCE",
   "PASTE_ATTEMPT",
+  "SPEECH_ACTIVITY",
 ] as const;
 export function isHard(type: string, p: Policy) {
   if (type === "TAB_HIDDEN" || type === "WINDOW_BLUR") return p.tabMonitoring;
@@ -105,6 +106,9 @@ export function isHard(type: string, p: Policy) {
   if (type === "SCREEN_SHARE_STOPPED") return p.screen;
   if (type === "LOCATION_OUTSIDE_GEOFENCE") return p.location;
   if (type === "PASTE_ATTEMPT") return !p.allowPaste;
+  // On-device voice detection (talking or other voices) when the microphone
+  // is monitored.
+  if (type === "SPEECH_ACTIVITY") return p.microphone;
   return false;
 }
 export function warningDecision(current: number, type: string, p: Policy) {

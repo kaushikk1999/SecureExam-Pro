@@ -389,6 +389,14 @@ test("strict preflight with simulated devices, location checkpoint and fifth-war
         if (state.__simulateExamSound) values.fill(160);
         else sample(values);
       };
+      // Voice detection reads the spectrum: simulate speech-band energy.
+      const spectrum = analyser.getByteFrequencyData.bind(analyser);
+      analyser.getByteFrequencyData = (values: Uint8Array) => {
+        if (state.__simulateExamSound)
+          for (let bin = 0; bin < values.length; bin++)
+            values[bin] = bin >= 4 && bin <= 36 ? 200 : 20;
+        else spectrum(values);
+      };
       return analyser;
     };
     const canvasPrototype = CanvasRenderingContext2D.prototype as any;
@@ -441,9 +449,11 @@ test("strict preflight with simulated devices, location checkpoint and fifth-war
     (window as any).__simulateExamSound = true;
   });
   await page.clock.fastForward(4500);
-  await expect(page.locator(".warning-banner")).toContainText(
-    "Sustained microphone sound was detected",
-  );
+  // Voice detection now counts as a warning (the banner may already show the
+  // generic "Warning 1 of 5" notice, so check the count and the event).
+  await expect(page.getByText("Warnings 1 / 5", { exact: true })).toBeVisible({
+    timeout: 20000,
+  });
   await page.evaluate(() => {
     (window as any).__simulateExamSound = false;
     (window as any).__simulateExamMotion = true;
@@ -467,6 +477,9 @@ test("strict preflight with simulated devices, location checkpoint and fifth-war
       );
     })
     .toBeTruthy();
+  // Hard warnings are debounced for ten seconds server-side.
+  await new Promise((resolve) => setTimeout(resolve, 10500));
+  await page.clock.fastForward(10500);
   await page.evaluate(() => {
     Object.defineProperty(document, "hidden", {
       configurable: true,
@@ -477,7 +490,7 @@ test("strict preflight with simulated devices, location checkpoint and fifth-war
   await expect(page.locator(".warning-banner")).toContainText(
     "Exam tab changed",
   );
-  await expect(page.getByText("Warnings 1 / 5", { exact: true })).toBeVisible();
+  await expect(page.getByText("Warnings 2 / 5", { exact: true })).toBeVisible();
   await page.evaluate(() => {
     Object.defineProperty(document, "hidden", {
       configurable: true,
@@ -515,7 +528,7 @@ test("strict preflight with simulated devices, location checkpoint and fifth-war
       { timeout: 15000 },
     )
     .toBeTruthy();
-  for (let count = 2; count <= 5; count++) {
+  for (let count = 3; count <= 5; count++) {
     await page.evaluate(() => window.dispatchEvent(new Event("blur")));
     if (count < 5) {
       await page.clock.fastForward(15001);
@@ -854,7 +867,10 @@ test("student appeal submission and instructor decision complete through the UI"
   await page.screenshot({ path: ".data/appeal-history.png", fullPage: true });
   await login(page, "teacher@example.test");
   await page.goto("/workspace/actions");
-  const examSummary = page.locator("summary").filter({ hasText: title }).first();
+  const examSummary = page
+    .locator("summary")
+    .filter({ hasText: title })
+    .first();
   const examReview = examSummary.locator("xpath=..");
   await examSummary.click();
   await examReview.locator("details > summary").first().click();
@@ -877,34 +893,168 @@ test("student appeal submission and instructor decision complete through the UI"
   // Submitted work must remain accessible to the teacher, including its
   // printable student identity, before closing and permanently deleting it.
   await page.goto("/workspace/analytics");
-  await page.getByPlaceholder("Name, student ID, subject or exam title").fill(title);
-  await page.getByRole("button", { name: "View submission", exact: true }).click();
-  await expect(page.getByRole("heading", { name: "Submitted paper and answers" })).toBeVisible();
+  await page
+    .getByPlaceholder("Name, student ID, subject or exam title")
+    .fill(title);
+  await page
+    .getByRole("button", { name: "View submission", exact: true })
+    .click();
+  await expect(
+    page.getByRole("heading", { name: "Submitted paper and answers" }),
+  ).toBeVisible();
   await page.evaluate(() => {
     window.print = () => {
       document.documentElement.dataset.printedTitle = document.title;
     };
   });
-  await page.getByRole("button", { name: "Download submission as PDF", exact: true }).click();
-  await expect.poll(() => page.evaluate(() => document.documentElement.dataset.printedTitle))
+  await page
+    .getByRole("button", { name: "Download submission as PDF", exact: true })
+    .click();
+  await expect
+    .poll(() =>
+      page.evaluate(() => document.documentElement.dataset.printedTitle),
+    )
     .toContain("Appeals Test Student");
-  await expect.poll(() => page.evaluate(() => document.documentElement.dataset.printedTitle))
+  await expect
+    .poll(() =>
+      page.evaluate(() => document.documentElement.dataset.printedTitle),
+    )
     .toContain("APL" + suffix);
   await page.evaluate(() => window.dispatchEvent(new Event("afterprint")));
-  await page.getByRole("button", { name: "Download all as PDF", exact: true }).click();
-  await expect.poll(() => page.evaluate(() => document.documentElement.dataset.printedTitle))
+  await page
+    .getByRole("button", { name: "Download all as PDF", exact: true })
+    .click();
+  await expect
+    .poll(() =>
+      page.evaluate(() => document.documentElement.dataset.printedTitle),
+    )
     .toContain("All submissions");
   await page.evaluate(() => window.dispatchEvent(new Event("afterprint")));
 
   await page.goto(`/workspace/exams/${exam.id}`);
   await page.getByRole("button", { name: "Close exam", exact: true }).click();
-  await page.getByRole("dialog").getByRole("button", { name: "Close exam", exact: true }).click();
+  await page
+    .getByRole("dialog")
+    .getByRole("button", { name: "Close exam", exact: true })
+    .click();
   await expect(page.locator(".page-heading .status")).toHaveText("closed");
   await page.getByRole("button", { name: "Delete exam", exact: true }).click();
-  await page.getByRole("dialog").getByRole("button", { name: "Delete exam", exact: true }).click();
+  await page
+    .getByRole("dialog")
+    .getByRole("button", { name: "Delete exam", exact: true })
+    .click();
   await expect(page).toHaveURL(/\/workspace\/exams$/);
-  expect((await page.request.get(`/api/platform/exams/${exam.id}`)).status()).toBe(404);
-  expect((await page.request.get(`/api/platform/attempts/${attempt.id}`)).status()).toBe(404);
-  const remaining = await (await page.request.get("/api/platform/growth/submissions")).json();
-  expect(remaining.some((row: { exam_id: string }) => row.exam_id === exam.id)).toBe(false);
+  expect(
+    (await page.request.get(`/api/platform/exams/${exam.id}`)).status(),
+  ).toBe(404);
+  expect(
+    (await page.request.get(`/api/platform/attempts/${attempt.id}`)).status(),
+  ).toBe(404);
+  const remaining = await (
+    await page.request.get("/api/platform/growth/submissions")
+  ).json();
+  expect(
+    remaining.some((row: { exam_id: string }) => row.exam_id === exam.id),
+  ).toBe(false);
+});
+
+test("on-device camera check warns within seconds when nobody is in front of the camera", async ({
+  page,
+  browser,
+}) => {
+  test.setTimeout(120000);
+  const teacherContext = await browser.newContext();
+  const teacher = await teacherContext.newPage();
+  await login(teacher, "teacher@example.test");
+  const courses = await (
+    await teacher.request.get("/api/platform/courses")
+  ).json();
+  const bank = await (
+    await teacher.request.get("/api/platform/questions")
+  ).json();
+  const created = await (
+    await teacher.request.post("/api/platform/exams", {
+      headers: { origin: "http://localhost:3000" },
+      data: {
+        title: "On-device camera check " + Date.now(),
+        courseId: courses[0].id,
+        startsAt: new Date(Date.now() - 60000).toISOString(),
+        endsAt: new Date(Date.now() + 7200000).toISOString(),
+        duration: 60,
+        policy: {
+          camera: true,
+          aiCameraMonitoring: true,
+          microphone: false,
+          location: false,
+          fullscreen: false,
+          classroomCode: false,
+          maxWarnings: 5,
+        },
+      },
+    })
+  ).json();
+  await teacher.request.post(`/api/platform/exams/${created.id}/questions`, {
+    headers: { origin: "http://localhost:3000" },
+    data: { questionId: bank.find((q: any) => q.type === "MCQ").id },
+  });
+  await teacher.request.post(`/api/platform/exams/${created.id}/control`, {
+    headers: { origin: "http://localhost:3000" },
+    data: { action: "publish" },
+  });
+  const studentEmail = "camera-" + Date.now() + "@example.test";
+  expect(
+    (
+      await teacher.request.post("/api/platform/students", {
+        headers: { origin: "http://localhost:3000" },
+        data: {
+          email: studentEmail,
+          name: "Camera Check Student",
+          studentId: "CC" + Date.now(),
+          password: process.env.SEED_PASSWORD,
+          courseId: courses[0].id,
+        },
+      })
+    ).status(),
+  ).toBe(200);
+  const cspViolations: string[] = [];
+  page.on("console", (message) => {
+    if (/Content Security Policy/i.test(message.text()))
+      cspViolations.push(message.text());
+  });
+  await page.context().grantPermissions(["camera", "microphone"]);
+  await login(page, studentEmail);
+  await page.goto("/exam/" + created.id);
+  await page.getByRole("button", { name: "Run enabled checks" }).click();
+  await page
+    .getByRole("checkbox", {
+      name: "I confirm my name, student ID and email are correct.",
+    })
+    .check();
+  await page.getByRole("checkbox", { name: /I have read/ }).check();
+  await page
+    .getByRole("checkbox", { name: /my camera is checked on this device/i })
+    .check();
+  await page
+    .getByRole("checkbox", { name: /a still image from my camera/i })
+    .check();
+  await page.getByRole("button", { name: "Begin secure exam" }).click();
+  await expect(page.getByText("QUESTION 1 OF 1")).toBeVisible();
+  // Chromium's fake camera shows no person: the on-device detector (loaded
+  // from our own origin under the site CSP) must flag an empty seat quickly.
+  const started = Date.now();
+  await expect(page.getByText("Warnings 1 / 5", { exact: true })).toBeVisible({
+    timeout: 30000,
+  });
+  // The warning arrives within seconds of the exam starting.
+  expect(Date.now() - started).toBeLessThan(25000);
+  expect(cspViolations).toEqual([]);
+  const monitor = await (
+    await teacher.request.get(`/api/platform/exams/${created.id}/monitor`)
+  ).json();
+  expect(
+    monitor.events.some(
+      (event: any) => event.event_type === "AI_FACE_NOT_VISIBLE",
+    ),
+  ).toBeTruthy();
+  await teacherContext.close();
 });

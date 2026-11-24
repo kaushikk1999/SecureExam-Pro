@@ -2,6 +2,7 @@ import { timingSafeEqual } from "node:crypto";
 import {
   pendingStorageCleanupCount,
   processStorageCleanupJobs,
+  sweepDeletedExamFolders,
 } from "@/lib/storage-cleanup";
 import { sql } from "drizzle-orm";
 import { query } from "@/lib/db";
@@ -30,10 +31,19 @@ export async function GET(req: Request) {
         idleMs: 600_000,
       }).catch(() => ({ completed: 0 }))
     ).completed;
+  // Remove recording folders of deleted exams from connected teacher Drives.
+  let foldersRemoved = 0;
+  for (const { user_id } of await query<{ user_id: string }>(
+    sql`SELECT user_id FROM drive_connections`,
+  ))
+    foldersRemoved += (
+      await sweepDeletedExamFolders(user_id).catch(() => ({ removed: 0 }))
+    ).removed;
   const result = await processStorageCleanupJobs(10);
   return Response.json({
     ...result,
     recordingsCompleted,
+    foldersRemoved,
     pending: await pendingStorageCleanupCount(),
   });
 }

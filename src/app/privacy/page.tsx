@@ -52,11 +52,13 @@ export default function PrivacyPolicy() {
           <li>
             <strong>Camera and microphone:</strong> the live camera and
             microphone streams stay on your device. Microphone activity is
-            measured on your device as a sound level only; audio is not recorded
-            or uploaded. When an exam enables AI camera review, two small,
-            low-resolution camera samples are sent for automated review about
-            once a minute (see below). When a warning occurs, a camera or screen
-            snapshot may be saved as evidence for that warning.
+            analysed on your device to detect talking or other voices; audio is
+            not recorded or uploaded. When an exam enables AI camera review, the
+            camera is checked on your device about every 1.5 seconds (no images
+            leave the device); only an unclear phone detection sends two small,
+            low-resolution camera samples for automated review (see below).
+            When a warning occurs, a camera or
+            screen snapshot may be saved as evidence for that warning.
           </li>
           <li>
             <strong>Location (only when an exam requires it):</strong> your

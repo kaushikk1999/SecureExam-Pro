@@ -1,13 +1,73 @@
 import { sql } from "drizzle-orm";
 import { db, query } from "./db";
 import {
+  deleteDriveFolderTree,
   deletePrivateFile,
   deleteWarningEvidenceArchiveFromDrive,
+  listDriveChildren,
+  safeDriveName,
 } from "./integrations";
+import { userDriveAccess } from "./drive-connection";
+
+/**
+ * Delete recording folders in a teacher's connected Drive that belong to
+ * exams that no longer exist: folders named "<title> (<id prefix>)" (older
+ * layout) whose exam id is gone, and title-only folders that no remaining
+ * exam of this teacher uses.
+ */
+export async function sweepDeletedExamFolders(ownerUserId: string) {
+  const access = await userDriveAccess(ownerUserId);
+  if (!access) return { removed: 0 };
+  const [kept, titles] = await Promise.all([
+    query<{ folder_id: string }>(
+      sql`SELECT f.folder_id FROM exam_drive_folders f JOIN exams e ON e.id=f.exam_id WHERE f.owner_user_id=${ownerUserId}`,
+    ),
+    query<{ title: string }>(
+      sql`SELECT e.title FROM exams e JOIN courses c ON c.id=e.course_id WHERE c.teacher_id=${ownerUserId}`,
+    ),
+  ]);
+  const keptIds = new Set(kept.map((row) => row.folder_id));
+  const liveTitles = new Set(
+    titles.map((row) => safeDriveName(row.title, "Exam")),
+  );
+  let removed = 0;
+  for (const child of await listDriveChildren(
+    access.token,
+    access.rootFolderId,
+  )) {
+    if (child.mimeType !== "application/vnd.google-apps.folder") continue;
+    if (keptIds.has(child.id)) continue;
+    const legacy = child.name.match(/\(([0-9a-f]{8})\)$/i);
+    const examGone = legacy
+      ? !(
+          await query(
+            sql`SELECT 1 FROM exams WHERE id::text LIKE ${legacy[1].toLowerCase() + "%"} LIMIT 1`,
+          )
+        ).length
+      : !liveTitles.has(child.name);
+    if (!examGone) continue;
+    await deleteDriveFolderTree(access.token, child.id);
+    removed++;
+  }
+  return { removed };
+}
+
+/** Delete one exam's recording folder ("<owner>:<folderId>") or sweep ("<owner>:sweep"). */
+async function cleanUserDriveExam(reference: string) {
+  const [ownerUserId, target] = reference.split(":");
+  if (target === "sweep") {
+    await sweepDeletedExamFolders(ownerUserId);
+    return;
+  }
+  const access = await userDriveAccess(ownerUserId);
+  if (!access)
+    throw new Error("The teacher's Google Drive is not connected; retrying.");
+  await deleteDriveFolderTree(access.token, target);
+}
 
 type CleanupJob = {
   id: string;
-  kind: "PRIVATE_FILE" | "DRIVE_EXAM_ARCHIVE";
+  kind: "PRIVATE_FILE" | "DRIVE_EXAM_ARCHIVE" | "USER_DRIVE_EXAM";
   reference: string | null;
   exam_id: string;
   exam_title: string;
@@ -46,6 +106,8 @@ export async function processStorageCleanupJobs(limit = 3) {
     try {
       if (job.kind === "PRIVATE_FILE") {
         await deletePrivateFile(job.reference!);
+      } else if (job.kind === "USER_DRIVE_EXAM") {
+        await cleanUserDriveExam(job.reference!);
       } else {
         await deleteWarningEvidenceArchiveFromDrive(
           job.exam_id,

@@ -6,7 +6,7 @@
  */
 import { randomUUID } from "node:crypto";
 import { sql } from "drizzle-orm";
-import { db, query } from "./db";
+import { db, query, type Tx } from "./db";
 import { HttpError } from "./auth";
 import { userDriveAccess, type DriveOwnerAccess } from "./drive-connection";
 import {
@@ -14,6 +14,7 @@ import {
   driveApi,
   logDriveFailure,
   recordingNames,
+  rememberExamDriveFolder,
 } from "./integrations";
 
 /** Drive requires resumable chunks in multiples of 256 KiB (except the last). */
@@ -49,11 +50,13 @@ async function startUpload(
   owner: DriveOwnerAccess,
   input: {
     attemptId: string;
+    examId: string;
     examTitle: string;
     studentName: string;
     studentId: string | null;
     mime: RecordingMime;
   },
+  tx: Tx,
 ) {
   const names = recordingNames(input);
   const examFolderId = await cachedDriveFolder(
@@ -61,6 +64,7 @@ async function startUpload(
     owner.rootFolderId,
     names.exam,
   );
+  await rememberExamDriveFolder(input.examId, owner.userId, examFolderId, tx);
   const studentFolderId = await cachedDriveFolder(
     owner.token,
     examFolderId,
@@ -158,6 +162,7 @@ async function sendChunk(
 export async function appendRecordingChunk(input: {
   owner: DriveOwnerAccess;
   attemptId: string;
+  examId: string;
   sessionId: string;
   sequence: number;
   mime: RecordingMime;
@@ -182,10 +187,11 @@ export async function appendRecordingChunk(input: {
     let uploadUrl = row.upload_url;
     let fileName = row.file_name;
     if (!uploadUrl) {
-      ({ uploadUrl, fileName } = await startUpload(input.owner, {
-        ...input,
-        mime: row.mime,
-      }));
+      ({ uploadUrl, fileName } = await startUpload(
+        input.owner,
+        { ...input, mime: row.mime },
+        tx,
+      ));
     }
     const start = Number(row.uploaded_bytes);
     const data = Buffer.concat([asBuffer(row.carry), input.bytes]);

@@ -4,6 +4,12 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import dynamic from "next/dynamic";
 import { loader } from "@monaco-editor/react";
+import {
+  createCameraJudge,
+  createVoiceJudge,
+  inspectCameraFrame,
+  loadOnDeviceDetector,
+} from "@/lib/on-device-vision";
 import { get, set, del, keys } from "idb-keyval";
 import {
   ShieldCheck,
@@ -544,6 +550,10 @@ export default function ExamRoom({
       ]);
       setExam(e);
       setExisting(list.find((x: any) => x.id === examId && x.attempt_id));
+      // Start downloading the on-device camera detector during the checks so
+      // it is ready when the exam begins.
+      if (e.policy?.aiCameraMonitoring && e.policy?.camera)
+        void loadOnDeviceDetector().catch(() => undefined);
     }
     void loadExam().catch((e) => setError(e.message));
     return () => {
@@ -1271,34 +1281,30 @@ export default function ExamRoom({
     let visionTimer: ReturnType<typeof setInterval> | undefined;
     let firstVisionCheck: ReturnType<typeof setTimeout> | undefined;
     let visionRetry: ReturnType<typeof setTimeout> | undefined;
+    let onDeviceTimer: ReturnType<typeof setInterval> | undefined;
+    let visionStopped = false;
     let visionBusy = false;
     let lastVisionNotice = 0;
     const analyser = microphoneAudio.current?.analyser;
     if (attempt.policy.microphone && analyser) {
-      const audioSamples = new Uint8Array(analyser.fftSize);
-      let speechWindows = 0;
-      let lastSpeechSignal = 0;
+      // On-device voice detection: talking or other voices sustained for
+      // about 3 s counts as a warning (no audio is recorded or uploaded).
+      const spectrum = new Uint8Array(analyser.frequencyBinCount);
+      const sampleRate = microphoneAudio.current?.context.sampleRate ?? 48000;
+      const judgeVoice = createVoiceJudge();
       speechTimer = setInterval(() => {
         if (active.current?.status !== "ACTIVE") return;
-        analyser.getByteTimeDomainData(audioSamples);
-        let energy = 0;
-        for (const sample of audioSamples) {
-          const normalized = (sample - 128) / 128;
-          energy += normalized * normalized;
-        }
-        const rms = Math.sqrt(energy / audioSamples.length);
-        speechWindows = rms > 0.045 ? speechWindows + 1 : 0;
-        if (speechWindows >= 8 && Date.now() - lastSpeechSignal > 60000) {
-          speechWindows = 0;
-          lastSpeechSignal = Date.now();
-          alert(
-            "Sustained microphone sound was detected. This sound-level signal cannot identify speech or conversation. Remain quiet if required; your instructor can review the signal.",
-          );
-          emit("SPEECH_ACTIVITY", {
-            sustainedSeconds: 4,
-            measurement: "on-device audio level only",
-          });
-        }
+        analyser.getByteFrequencyData(spectrum);
+        if (!judgeVoice(spectrum, sampleRate)) return;
+        alert(
+          "Warning: talking or other voices were detected by your microphone. This counts as a security warning. Stay silent during the exam; your instructor can review the event.",
+        );
+        emit("SPEECH_ACTIVITY", {
+          sustainedSeconds: 3,
+          reason: "voice detected",
+          measurement:
+            "on-device speech-band (300–3400 Hz) analysis; no audio recorded",
+        });
       }, 500);
     }
     if (attempt.policy.camera && video.current) {
@@ -1467,10 +1473,58 @@ export default function ExamRoom({
           visionBusy = false;
         }
       };
-      // The free AI tier is rate limited, so check about once a minute,
-      // starting shortly after the exam begins.
-      firstVisionCheck = setTimeout(() => void reviewCamera(), 10000);
-      visionTimer = setInterval(() => void reviewCamera(), 60000);
+      const startCloudReview = () => {
+        // Fallback when the on-device detector cannot run: the free AI tier
+        // is rate limited, so check about once a minute.
+        firstVisionCheck = setTimeout(() => void reviewCamera(), 10000);
+        visionTimer = setInterval(() => void reviewCamera(), 60000);
+      };
+      // Primary: on-device detection every 1.5 s (no images leave the device,
+      // no API limits), warning after the same finding in consecutive frames.
+      void loadOnDeviceDetector()
+        .then((model) => {
+          if (visionStopped) return;
+          const judge = createCameraJudge();
+          let busy = false;
+          let lastCloudConfirm = 0;
+          onDeviceTimer = setInterval(async () => {
+            const camera = video.current;
+            if (
+              busy ||
+              active.current?.status !== "ACTIVE" ||
+              !camera ||
+              camera.readyState < HTMLMediaElement.HAVE_CURRENT_DATA
+            )
+              return;
+            busy = true;
+            try {
+              const findings = inspectCameraFrame(model, camera);
+              const { warnings, confirmPhone } = judge(findings);
+              // Borderline phone: one cloud check confirms it (rate limited
+              // to stay within the free AI tier's daily allowance).
+              if (confirmPhone && Date.now() - lastCloudConfirm > 45_000) {
+                lastCloudConfirm = Date.now();
+                void reviewCamera();
+              }
+              for (const warning of warnings) {
+                emit(warning.type, {
+                  signals: warning.reason,
+                  measurement: `On-device camera check (consecutive frames): ${warning.reason}. Seen: ${findings.labels.join(", ") || "nothing recognised"}`,
+                });
+                alert(
+                  `Warning: ${warning.reason}. This counts as a security warning and may lead to automatic submission at the exam's warning limit. Automated checks can be mistaken; your instructor can review the event.`,
+                );
+              }
+            } catch {
+              // A failed frame is skipped; the next check runs in 1.5 s.
+            } finally {
+              busy = false;
+            }
+          }, 1500);
+        })
+        .catch(() => {
+          if (!visionStopped) startCloudReview();
+        });
     }
     let watch: number | undefined;
     let locationTimer: ReturnType<typeof setInterval> | undefined,
@@ -1515,6 +1569,8 @@ export default function ExamRoom({
       if (visionTimer) clearInterval(visionTimer);
       clearTimeout(firstVisionCheck);
       clearTimeout(visionRetry);
+      clearInterval(onDeviceTimer);
+      visionStopped = true;
       if (locationTimer) clearInterval(locationTimer);
       if (checkpoint) clearInterval(checkpoint);
       if (watch !== undefined) navigator.geolocation.clearWatch(watch);
@@ -1722,6 +1778,10 @@ export default function ExamRoom({
       autoSubmitTriggers.push(
         "turning off or disconnecting the required microphone",
       );
+    if (p.microphone)
+      autoSubmitTriggers.push(
+        "the microphone detecting talking or other voices for about 3 seconds",
+      );
     if (
       examScreenSharingRequired(p.screen, deviceClass) &&
       !screenShareUnsupported
@@ -1754,7 +1814,7 @@ export default function ExamRoom({
         ? [
             [
               "AI camera review",
-              "During the exam, two small, low-resolution camera samples are sent to an AI service (OpenRouter) about once a minute (less often in large classes, where students are checked in turn). If no face is clearly visible in either sample, or two or more distinct faces are clearly visible, or a phone or extra screen is clearly visible, that detection counts as a security warning and can contribute to automatic submission at the exam's warning limit. Possible mouth movement produces an advisory signal only. Samples are transient and are not stored by this app. Automated results can be mistaken and do not prove misconduct; instructors can review the signal and time.",
+              "During the exam, your camera is checked on this device about every 1.5 seconds by an on-device detector; no images leave your device for this check. A phone or extra screen, another person, or nobody in front of the camera counts as a security warning and can contribute to automatic submission at the exam's warning limit. If the on-device check is unsure about a phone (or cannot run on this device), two small, low-resolution camera samples are sent to an AI service (OpenRouter) to check; those samples are not stored by this app. Automated results can be mistaken and do not prove misconduct; instructors can review the signal and time.",
             ],
           ]
         : []),
@@ -2061,13 +2121,13 @@ export default function ExamRoom({
                 ? "On tablets, a camera still may be captured when a monitored activity event occurs. If the AI camera review reports that your face is not visible, a timestamped camera still is attached to that warning and archived in Google Drive when Drive storage is configured. Camera movement is checked locally. "
                 : "Camera monitoring and camera evidence capture are off. "}
               {p.microphone
-                ? "Sustained microphone sound levels are checked in this browser; sound levels cannot identify speech or conversation. No audio or transcript is sent to AI. "
+                ? "Your microphone is analysed in this browser for talking or other voices; sustained speech counts as a security warning. No audio is recorded, uploaded or transcribed. "
                 : "Microphone monitoring is off. "}
               {p.camera || p.microphone
                 ? "Browser observations can be incomplete or inaccurate; your instructor reviews the evidence. "
                 : ""}
               {p.aiCameraMonitoring && p.camera
-                ? "Two reduced camera samples are periodically sent to an AI service (OpenRouter) for the optional camera review described above; samples are not stored by this app."
+                ? "Your camera is checked on this device; reduced camera samples are sent to an AI service (OpenRouter) only to confirm an unclear phone detection, and are not stored by this app."
                 : "No camera images are sent to AI."}{" "}
               {deviceClass === "tablet"
                 ? "Screen sharing is not used on tablets; warning evidence may use a camera still instead of a screenshot of your tablet screen. "
@@ -2306,15 +2366,14 @@ export default function ExamRoom({
                 checked={aiCameraAccepted}
                 onChange={(event) => setAiCameraAccepted(event.target.checked)}
               />{" "}
-              I understand and agree that two reduced camera samples are sent to
-              an AI service (OpenRouter) about once a minute, or less often in
-              large classes. If no face is clearly visible in either sample, or
-              two or more distinct faces are clearly visible, or a phone or
-              extra screen is clearly visible, that detection counts as a
-              security warning and may contribute to automatic submission at the
-              exam warning limit. Other camera signals are advisory only.
-              Samples are not stored by this app, and automated detections can
-              be mistaken.
+              I understand and agree that my camera is checked on this device
+              about every 1.5 seconds, and that a phone or extra screen, another
+              person, or nobody in front of the camera counts as a security
+              warning and may contribute to automatic submission at the exam
+              warning limit. Unclear phone detections may send two reduced
+              camera samples to an AI service (OpenRouter) to confirm; samples
+              are not stored by this app, and automated detections can be
+              mistaken.
             </label>
           )}
           {!examOpen && (

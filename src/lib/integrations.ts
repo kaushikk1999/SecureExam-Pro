@@ -2,7 +2,7 @@ import { getVercelOidcToken } from "@vercel/oidc";
 import { ExternalAccountClient } from "google-auth-library";
 import { randomUUID } from "node:crypto";
 import { sql } from "drizzle-orm";
-import { query } from "./db";
+import { query, type Tx } from "./db";
 import { HttpError } from "./auth";
 import { examOwnerDriveAccess, userDriveAccess } from "./drive-connection";
 
@@ -183,7 +183,7 @@ async function findDriveChild(
   return result.files?.[0] ?? null;
 }
 
-async function listDriveChildren(token: string, parentId: string) {
+export async function listDriveChildren(token: string, parentId: string) {
   const query = `'${parentId}' in parents and trashed=false`;
   const files: { id: string; name: string; mimeType: string }[] = [];
   let pageToken: string | undefined;
@@ -227,7 +227,7 @@ async function deleteDriveItem(token: string, fileId: string) {
     );
 }
 
-async function deleteDriveFolderTree(token: string, folderId: string) {
+export async function deleteDriveFolderTree(token: string, folderId: string) {
   const children = await listDriveChildren(token, folderId);
   for (const child of children) {
     if (child.mimeType === "application/vnd.google-apps.folder")
@@ -379,7 +379,7 @@ async function moveDriveFile(token: string, fileId: string, folderId: string) {
     throw new HttpError(502, "Google Drive could not organize evidence.");
 }
 
-const safeDriveName = (value: string, fallback: string) =>
+export const safeDriveName = (value: string, fallback: string) =>
   value
     .normalize("NFKD")
     .replace(/[^\p{L}\p{N}._ -]+/gu, "")
@@ -652,6 +652,23 @@ export async function storePrivateFile(
 }
 
 /** Store a screen-recording segment in Google Drive only; recordings must not silently fall back to another provider. */
+/** Remember an exam's folder in a teacher's Drive so deletion removes it. */
+export async function rememberExamDriveFolder(
+  examId: string,
+  ownerUserId: string,
+  folderId: string,
+  tx?: Tx,
+) {
+  await query(
+    sql`
+    INSERT INTO exam_drive_folders(exam_id,owner_user_id,folder_id)
+    VALUES(${examId},${ownerUserId},${folderId})
+    ON CONFLICT(exam_id,owner_user_id) DO UPDATE SET folder_id=EXCLUDED.folder_id
+  `,
+    tx,
+  );
+}
+
 /** Readable recording names: exam folder, then "Name - ID" per student. */
 export function recordingNames(input: {
   attemptId: string;
@@ -692,6 +709,7 @@ export async function storeScreenRecordingPart(input: {
       owner.rootFolderId,
       names.exam,
     );
+    await rememberExamDriveFolder(input.examId, owner.userId, examFolderId);
     const studentFolderId = await cachedDriveFolder(
       owner.token,
       examFolderId,

@@ -1222,6 +1222,9 @@ describe("server authorization and exam lifecycle", () => {
       await db.execute(
         sql`DELETE FROM drive_connections WHERE user_id=${teacher}`,
       );
+      await db.execute(
+        sql`DELETE FROM exam_drive_folders WHERE owner_user_id=${teacher}`,
+      );
     }
   });
   it("logs local audio and camera activity for instructor review without auto-penalizing", async () => {
@@ -2109,4 +2112,73 @@ it("gates answer saving behind an audited warning acknowledgment and lists live 
   );
   login(null);
   process.env.STUDENT_LOGIN_EMAILS = previousStudentAllowlist ?? "";
+});
+
+it("sweeps recording folders of deleted exams from the teacher's Drive", async () => {
+  const previousSecret = process.env.AUTH_SECRET;
+  const previousFetch = globalThis.fetch;
+  process.env.AUTH_SECRET = "integration-test-drive-secret";
+  process.env.GOOGLE_CLIENT_ID = "client";
+  process.env.GOOGLE_CLIENT_SECRET = "secret";
+  const { encryptToken } = await import("../src/lib/drive-connection");
+  const { sweepDeletedExamFolders } =
+    await import("../src/lib/storage-cleanup");
+  await db.execute(sql`
+    INSERT INTO drive_connections(user_id,google_email,refresh_token_enc,root_folder_id)
+    VALUES(${teacher},'teacher@bu.ac.th',${encryptToken("refresh")},'root-folder')
+    ON CONFLICT(user_id) DO UPDATE SET root_folder_id='root-folder'
+  `);
+  const liveExam = randomUUID();
+  await db.execute(
+    sql`INSERT INTO exams(id,course_id,title,status,starts_at,ends_at,duration_minutes,policy,code_secret) VALUES(${liveExam},${course},'Sweep keep','DRAFT',now(),now()+interval '1 hour',60,${JSON.stringify(policySchema.parse({}))}::jsonb,'secret')`,
+  );
+  const deleted: string[] = [];
+  globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+    const url = String(input);
+    if (url.startsWith("https://oauth2.googleapis.com/token"))
+      return Response.json({ access_token: "owner-token", expires_in: 3600 });
+    if (init?.method === "DELETE") {
+      deleted.push(decodeURIComponent(url.split("/files/")[1].split("?")[0]));
+      return new Response(null, { status: 204 });
+    }
+    const q = new URL(url).searchParams.get("q") ?? "";
+    if (q.includes("'root-folder' in parents"))
+      return Response.json({
+        files: [
+          // Live exam (title "Integration") and the older layout of a live exam.
+          {
+            id: "live",
+            name: "Sweep keep",
+            mimeType: "application/vnd.google-apps.folder",
+          },
+          {
+            id: "live-legacy",
+            name: `Sweep keep (${liveExam.slice(0, 8)})`,
+            mimeType: "application/vnd.google-apps.folder",
+          },
+          // Folders of exams that were deleted.
+          {
+            id: "gone",
+            name: "Deleted midterm",
+            mimeType: "application/vnd.google-apps.folder",
+          },
+          {
+            id: "gone-legacy",
+            name: "video test (0badc0de)",
+            mimeType: "application/vnd.google-apps.folder",
+          },
+        ],
+      });
+    return Response.json({ files: [] });
+  }) as typeof fetch;
+  try {
+    expect(await sweepDeletedExamFolders(teacher)).toEqual({ removed: 2 });
+    expect(deleted.sort()).toEqual(["gone", "gone-legacy"]);
+  } finally {
+    globalThis.fetch = previousFetch;
+    process.env.AUTH_SECRET = previousSecret ?? "";
+    await db.execute(
+      sql`DELETE FROM drive_connections WHERE user_id=${teacher}`,
+    );
+  }
 });

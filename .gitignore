@@ -11,3 +11,4 @@ public/monaco
 .vercel
 .DS_Store
 *.log
+public/mediapipe
