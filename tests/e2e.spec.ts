@@ -1058,3 +1058,139 @@ test("on-device camera check warns within seconds when nobody is in front of the
   ).toBeTruthy();
   await teacherContext.close();
 });
+
+test("teacher: every workspace page loads and every exam control works", async ({
+  page,
+}) => {
+  test.setTimeout(150000);
+  const pageErrors: string[] = [];
+  page.on("pageerror", (error) => pageErrors.push(error.message));
+  page.on("dialog", (dialog) => void dialog.accept());
+  await login(page, "teacher@example.test");
+
+  // Every page in the teacher's sidebar renders without a crash or an error.
+  await page.goto("/workspace");
+  const paths = await page
+    .locator("nav a.nav-item")
+    .evaluateAll((links) =>
+      links.map((link) => new URL((link as HTMLAnchorElement).href).pathname),
+    );
+  expect(paths.length).toBeGreaterThanOrEqual(12);
+  for (const path of paths) {
+    await page.goto(path);
+    await expect(page.locator("h1").first()).toBeVisible();
+    await page.waitForTimeout(800);
+    await expect(
+      page.locator('[role="alert"].error'),
+      `error message on ${path}`,
+    ).toHaveCount(0);
+  }
+  await page.goto("/workspace/settings");
+  await expect(
+    page.getByText("Screen recordings · Google Drive"),
+  ).toBeVisible();
+
+  // One exam, driven through every control on its page.
+  const controlsTitle = "Controls check " + Date.now();
+  const courses = await (
+    await page.request.get("/api/platform/courses")
+  ).json();
+  const bank = await (await page.request.get("/api/platform/questions")).json();
+  const created = await (
+    await page.request.post("/api/platform/exams", {
+      headers: { origin: "http://localhost:3000" },
+      data: {
+        title: controlsTitle,
+        courseId: courses[0].id,
+        startsAt: new Date(Date.now() - 60000).toISOString(),
+        endsAt: new Date(Date.now() + 7200000).toISOString(),
+        duration: 60,
+        policy: {
+          camera: false,
+          microphone: false,
+          location: false,
+          fullscreen: false,
+          classroomCode: false,
+        },
+      },
+    })
+  ).json();
+  await page.request.post(`/api/platform/exams/${created.id}/questions`, {
+    headers: { origin: "http://localhost:3000" },
+    data: { questionId: bank.find((q: any) => q.type === "MCQ").id },
+  });
+  const exam = async () =>
+    (await page.request.get(`/api/platform/exams/${created.id}`)).json();
+  const confirmDialog = async (label: string) => {
+    const dialog = page.locator(".exam-control-backdrop");
+    await expect(dialog).toBeVisible();
+    await dialog.getByRole("button", { name: label, exact: true }).click();
+    await expect(dialog).toBeHidden({ timeout: 15000 });
+  };
+  await page.goto("/workspace/exams/" + created.id);
+  await expect(
+    page.getByRole("heading", { name: controlsTitle }),
+  ).toBeVisible();
+
+  for (const tab of ["monitor", "reports", "accommodations", "questions"]) {
+    await page.getByRole("button", { name: tab, exact: true }).click();
+    await page.waitForTimeout(600);
+    await expect(page.locator('[role="alert"].error'), tab).toHaveCount(0);
+  }
+
+  await page.getByRole("button", { name: "Show room code" }).click();
+  await expect(page.locator(".room-code")).toContainText("valid until");
+
+  await page.getByRole("button", { name: "Publish examination" }).click();
+  await expect.poll(async () => (await exam()).status).not.toBe("DRAFT");
+
+  await page.getByRole("button", { name: "Pause exam" }).click();
+  await expect.poll(async () => (await exam()).status).toBe("PAUSED");
+  await page.getByRole("button", { name: "Resume exam" }).click();
+  await expect.poll(async () => (await exam()).status).not.toBe("PAUSED");
+
+  const endsBefore = new Date((await exam()).ends_at).getTime();
+  await page.getByRole("button", { name: "Add time", exact: true }).click();
+  await confirmDialog("Add time");
+  await expect
+    .poll(async () => new Date((await exam()).ends_at).getTime())
+    .toBeGreaterThan(endsBefore);
+
+  await page.getByRole("button", { name: "Edit schedule" }).click();
+  await confirmDialog("Save schedule");
+
+  await page.getByRole("button", { name: "Release results" }).click();
+  await expect.poll(async () => (await exam()).results_released).toBe(true);
+
+  await page.getByRole("button", { name: "Duplicate" }).click();
+  await expect(page).not.toHaveURL(new RegExp(created.id));
+  await expect(page).toHaveURL(/\/workspace\/exams\/[0-9a-f-]{36}/);
+  const copyId = page.url().split("/").pop()!;
+  await page.goto("/workspace/exams/" + created.id);
+
+  await page.getByRole("button", { name: "Close exam", exact: true }).click();
+  await confirmDialog("Close exam");
+  await expect.poll(async () => (await exam()).status).toBe("CLOSED");
+
+  await page.getByRole("button", { name: "Archive", exact: true }).click();
+  await confirmDialog("Archive exam");
+  await expect.poll(async () => (await exam()).status).toBe("ARCHIVED");
+
+  await page.getByRole("button", { name: "Delete exam", exact: true }).click();
+  await confirmDialog("Delete exam");
+  await expect
+    .poll(async () =>
+      (await page.request.get(`/api/platform/exams/${created.id}`)).status(),
+    )
+    .toBe(404);
+  // Clean up the duplicate too.
+  expect(
+    (
+      await page.request.delete(`/api/platform/exams/${copyId}`, {
+        headers: { origin: "http://localhost:3000" },
+      })
+    ).status(),
+  ).toBe(200);
+
+  expect(pageErrors).toEqual([]);
+});
