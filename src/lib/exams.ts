@@ -16,6 +16,7 @@ import {
   shuffled,
   warningDecision,
   locationSchema,
+  aiCameraChecksEnabled,
 } from "./domain";
 export async function ownedExam(id: string, u: Actor, tx?: Tx) {
   const [e] = await query(
@@ -185,8 +186,9 @@ export async function startAttempt(
       );
     if (!input.accepted)
       throw new HttpError(400, "Accept the monitoring notice.");
+    // Recording needs the entire-screen share; each has its own switch.
     const recordingRequired = examScreenSharingRequired(
-      true,
+      p.screen && p.screenRecording,
       input.deviceClass,
     );
     if (recordingRequired && !input.screenRecordingAccepted)
@@ -194,7 +196,7 @@ export async function startAttempt(
         400,
         "Accept the full-screen recording notice before starting this exam.",
       );
-    if (p.aiCameraMonitoring && !input.aiCameraAccepted)
+    if (aiCameraChecksEnabled(p) && !input.aiCameraAccepted)
       throw new HttpError(400, "Accept the AI camera-review notice.");
     if (
       input.deviceClass === "tablet" &&

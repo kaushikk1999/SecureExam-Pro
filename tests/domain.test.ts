@@ -313,3 +313,51 @@ describe("AI camera review turns", () => {
     }
   });
 });
+
+describe("independent exam checks", () => {
+  it("lets each camera AI check be switched off on its own", () => {
+    const p = policySchema.parse({
+      camera: true,
+      aiCameraMonitoring: true,
+      aiMultiplePeople: false,
+    });
+    expect(warningDecision(0, "AI_PHONE_VISIBLE", p).warnings).toBe(1);
+    expect(warningDecision(0, "AI_FACE_NOT_VISIBLE", p).warnings).toBe(1);
+    expect(warningDecision(0, "AI_MULTIPLE_FACES_VISIBLE", p).warnings).toBe(0);
+  });
+  it("separates voice detection from the microphone requirement", () => {
+    const p = policySchema.parse({ microphone: true, voiceDetection: false });
+    expect(warningDecision(0, "SPEECH_ACTIVITY", p).warnings).toBe(0);
+    expect(warningDecision(0, "MICROPHONE_DISABLED", p).warnings).toBe(1);
+  });
+  it("separates window switching from tab switching", () => {
+    const tabOnly = policySchema.parse({
+      tabMonitoring: true,
+      windowFocus: false,
+    });
+    expect(warningDecision(0, "TAB_HIDDEN", tabOnly).warnings).toBe(1);
+    expect(warningDecision(0, "WINDOW_BLUR", tabOnly).warnings).toBe(0);
+    const windowOnly = policySchema.parse({
+      tabMonitoring: false,
+      windowFocus: true,
+    });
+    expect(warningDecision(0, "TAB_HIDDEN", windowOnly).warnings).toBe(0);
+    expect(warningDecision(0, "WINDOW_BLUR", windowOnly).warnings).toBe(1);
+  });
+  it("keeps older exams' behaviour: window switching follows tab monitoring", () => {
+    expect(
+      warningDecision(
+        0,
+        "WINDOW_BLUR",
+        policySchema.parse({ tabMonitoring: false }),
+      ).warnings,
+    ).toBe(0);
+    expect(
+      warningDecision(
+        0,
+        "WINDOW_BLUR",
+        policySchema.parse({ tabMonitoring: true }),
+      ).warnings,
+    ).toBe(1);
+  });
+});

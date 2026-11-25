@@ -24,8 +24,26 @@ export const policySchema = z.object({
   negativeMarks: z.number().min(0).max(100).default(0),
   retentionDays: z.number().int().min(7).max(3650).default(90),
   offlineGraceSeconds: z.number().int().min(30).max(3600).default(120),
+  // Independent switches for checks that used to be bundled together. Their
+  // defaults keep the behaviour existing exams already had.
+  screenRecording: z.boolean().default(true),
+  cameraMotion: z.boolean().default(true),
+  aiPhoneDetection: z.boolean().default(true),
+  aiMultiplePeople: z.boolean().default(true),
+  aiEmptySeat: z.boolean().default(true),
+  voiceDetection: z.boolean().default(true),
+  // Switching to another window/app; when unset it follows tabMonitoring
+  // (exams created before this switch existed).
+  windowFocus: z.boolean().optional(),
 });
 export type Policy = z.infer<typeof policySchema>;
+export const windowFocusMonitored = (p: Policy) =>
+  p.windowFocus ?? p.tabMonitoring;
+/** Any on-device/AI camera check is active (each also needs the camera). */
+export const aiCameraChecksEnabled = (p: Policy) =>
+  p.camera &&
+  p.aiCameraMonitoring &&
+  (p.aiPhoneDetection || p.aiMultiplePeople || p.aiEmptySeat);
 export const classroomSchema = z.object({
   name: z.string().min(1).max(120),
   building: z.string().max(120).default(""),
@@ -95,20 +113,23 @@ export const hardEvents = [
   "SPEECH_ACTIVITY",
 ] as const;
 export function isHard(type: string, p: Policy) {
-  if (type === "TAB_HIDDEN" || type === "WINDOW_BLUR") return p.tabMonitoring;
+  if (type === "TAB_HIDDEN") return p.tabMonitoring;
+  if (type === "WINDOW_BLUR") return windowFocusMonitored(p);
   if (type === "FULLSCREEN_EXIT") return p.fullscreen;
   if (type === "CAMERA_DISABLED") return p.camera;
-  if (type === "AI_FACE_NOT_VISIBLE") return p.aiCameraMonitoring && p.camera;
-  if (type === "AI_PHONE_VISIBLE") return p.aiCameraMonitoring && p.camera;
+  if (type === "AI_FACE_NOT_VISIBLE")
+    return p.aiCameraMonitoring && p.camera && p.aiEmptySeat;
+  if (type === "AI_PHONE_VISIBLE")
+    return p.aiCameraMonitoring && p.camera && p.aiPhoneDetection;
   if (type === "AI_MULTIPLE_FACES_VISIBLE")
-    return p.aiCameraMonitoring && p.camera;
+    return p.aiCameraMonitoring && p.camera && p.aiMultiplePeople;
   if (type === "MICROPHONE_DISABLED") return p.microphone;
   if (type === "SCREEN_SHARE_STOPPED") return p.screen;
   if (type === "LOCATION_OUTSIDE_GEOFENCE") return p.location;
   if (type === "PASTE_ATTEMPT") return !p.allowPaste;
   // On-device voice detection (talking or other voices) when the microphone
   // is monitored.
-  if (type === "SPEECH_ACTIVITY") return p.microphone;
+  if (type === "SPEECH_ACTIVITY") return p.microphone && p.voiceDetection;
   return false;
 }
 export function warningDecision(current: number, type: string, p: Policy) {

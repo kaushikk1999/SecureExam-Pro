@@ -45,6 +45,34 @@ type QueuedAnswer = { questionId: string; value: any; version: number };
 type QueuedEvent = { id: string; type: string; metadata: Record<string, any> };
 const FILE_DIALOG_GRACE_MS = 60_000;
 
+/** Per-check switches; a missing value means "on" (older exam settings). */
+type CheckPolicy = Record<string, unknown>;
+const switchOn = (policy: CheckPolicy | undefined, key: string) =>
+  policy?.[key] !== false;
+/** The individual AI camera checks that are enabled for this exam. */
+function aiCameraChecks(policy: CheckPolicy | undefined) {
+  const base = Boolean(policy?.camera && policy?.aiCameraMonitoring);
+  return {
+    phone: base && switchOn(policy, "aiPhoneDetection"),
+    people: base && switchOn(policy, "aiMultiplePeople"),
+    emptySeat: base && switchOn(policy, "aiEmptySeat"),
+  };
+}
+const anyAiCameraCheck = (policy: CheckPolicy | undefined) =>
+  Object.values(aiCameraChecks(policy)).some(Boolean);
+const windowFocusOn = (policy: CheckPolicy | undefined) =>
+  policy?.windowFocus === undefined
+    ? Boolean(policy?.tabMonitoring)
+    : policy.windowFocus === true;
+const recordingRequiredFor = (
+  policy: CheckPolicy | undefined,
+  deviceClass: Parameters<typeof examScreenSharingRequired>[1],
+) =>
+  examScreenSharingRequired(
+    Boolean(policy?.screen) && switchOn(policy, "screenRecording"),
+    deviceClass,
+  );
+
 /** Publish the sticky exam header's height so the sidebar can stick below it. */
 function observeExamHead(element: HTMLDivElement | null) {
   const shell = element?.parentElement;
@@ -552,7 +580,7 @@ export default function ExamRoom({
       setExisting(list.find((x: any) => x.id === examId && x.attempt_id));
       // Start downloading the on-device camera detector during the checks so
       // it is ready when the exam begins.
-      if (e.policy?.aiCameraMonitoring && e.policy?.camera)
+      if (anyAiCameraCheck(e.policy))
         void loadOnDeviceDetector().catch(() => undefined);
     }
     void loadExam().catch((e) => setError(e.message));
@@ -1207,7 +1235,7 @@ export default function ExamRoom({
         clearTimeout(focusGraceTimer.current);
         // Still record a warning if focus never comes back to the exam.
         focusGraceTimer.current = setTimeout(() => {
-          if (!document.hasFocus())
+          if (!document.hasFocus() && windowFocusOn(active.current?.policy))
             emit("WINDOW_BLUR", {
               reason:
                 "focus did not return within 60 seconds of a file or download dialog",
@@ -1215,7 +1243,7 @@ export default function ExamRoom({
         }, FILE_DIALOG_GRACE_MS);
         return;
       }
-      emit("WINDOW_BLUR");
+      if (windowFocusOn(active.current?.policy)) emit("WINDOW_BLUR");
     };
     const expectDialog = (e: MouseEvent) => {
       const target = e.target as Element | null;
@@ -1286,7 +1314,11 @@ export default function ExamRoom({
     let visionBusy = false;
     let lastVisionNotice = 0;
     const analyser = microphoneAudio.current?.analyser;
-    if (attempt.policy.microphone && analyser) {
+    if (
+      attempt.policy.microphone &&
+      switchOn(attempt.policy, "voiceDetection") &&
+      analyser
+    ) {
       // On-device voice detection: talking or other voices sustained for
       // about 3 s counts as a warning (no audio is recorded or uploaded).
       const spectrum = new Uint8Array(analyser.frequencyBinCount);
@@ -1307,7 +1339,11 @@ export default function ExamRoom({
         });
       }, 500);
     }
-    if (attempt.policy.camera && video.current) {
+    if (
+      attempt.policy.camera &&
+      switchOn(attempt.policy, "cameraMotion") &&
+      video.current
+    ) {
       const canvas = document.createElement("canvas");
       canvas.width = 32;
       canvas.height = 24;
@@ -1373,7 +1409,8 @@ export default function ExamRoom({
         }, 1000);
       }
     }
-    if (attempt.policy.aiCameraMonitoring && attempt.policy.camera) {
+    const aiChecks = aiCameraChecks(attempt.policy);
+    if (aiChecks.phone || aiChecks.people || aiChecks.emptySeat) {
       const captureFrame = async () => {
         const camera = video.current;
         if (
@@ -1418,20 +1455,24 @@ export default function ExamRoom({
           );
           const signals: string[] = result.signals ?? [];
           if (!signals.length) return;
-          const faceMissing = signals.includes("FACE_NOT_VISIBLE");
+          const faceMissing =
+            aiChecks.emptySeat && signals.includes("FACE_NOT_VISIBLE");
           if (faceMissing)
             emit("AI_FACE_NOT_VISIBLE", {
               signals: "FACE_NOT_VISIBLE",
               measurement:
                 "AI review of two transient low-resolution camera frames; no face clearly visible in either sample",
             });
-          if (signals.includes("MULTIPLE_PEOPLE_VISIBLE"))
+          if (aiChecks.people && signals.includes("MULTIPLE_PEOPLE_VISIBLE"))
             emit("AI_MULTIPLE_FACES_VISIBLE", {
               signals: "MULTIPLE_PEOPLE_VISIBLE",
               measurement:
                 "AI review of two transient low-resolution camera frames; two or more distinct faces clearly visible",
             });
-          if (signals.includes("POSSIBLE_PHONE_OR_EXTRA_SCREEN"))
+          if (
+            aiChecks.phone &&
+            signals.includes("POSSIBLE_PHONE_OR_EXTRA_SCREEN")
+          )
             emit("AI_PHONE_VISIBLE", {
               signals: "POSSIBLE_PHONE_OR_EXTRA_SCREEN",
               measurement:
@@ -1502,11 +1543,22 @@ export default function ExamRoom({
               const { warnings, confirmPhone } = judge(findings);
               // Borderline phone: one cloud check confirms it (rate limited
               // to stay within the free AI tier's daily allowance).
-              if (confirmPhone && Date.now() - lastCloudConfirm > 45_000) {
+              if (
+                aiChecks.phone &&
+                confirmPhone &&
+                Date.now() - lastCloudConfirm > 45_000
+              ) {
                 lastCloudConfirm = Date.now();
                 void reviewCamera();
               }
-              for (const warning of warnings) {
+              const enabled = {
+                AI_PHONE_VISIBLE: aiChecks.phone,
+                AI_MULTIPLE_FACES_VISIBLE: aiChecks.people,
+                AI_FACE_NOT_VISIBLE: aiChecks.emptySeat,
+              };
+              for (const warning of warnings.filter(
+                (item) => enabled[item.type],
+              )) {
                 emit(warning.type, {
                   signals: warning.reason,
                   measurement: `On-device camera check (consecutive frames): ${warning.reason}. Seen: ${findings.labels.join(", ") || "nothing recognised"}`,
@@ -1587,9 +1639,18 @@ export default function ExamRoom({
       document.removeEventListener("copy", copy);
       document.removeEventListener("cut", copy);
     };
+    // The individual check switches below are the policy fields this effect
+    // reads; depending on the whole policy object would restart monitoring on
+    // every status refresh.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [
     attempt?.id,
     attempt?.status,
+    attempt?.policy.voiceDetection,
+    attempt?.policy.cameraMotion,
+    attempt?.policy.aiPhoneDetection,
+    attempt?.policy.aiMultiplePeople,
+    attempt?.policy.aiEmptySeat,
     attempt?.policy.camera,
     attempt?.policy.aiCameraMonitoring,
     attempt?.policy.location,
@@ -1762,17 +1823,18 @@ export default function ExamRoom({
       autoSubmitTriggers.push(
         "turning off or disconnecting the required camera",
       );
-    if (p.aiCameraMonitoring && p.camera)
+    const aiTriggers = aiCameraChecks(p);
+    if (aiTriggers.emptySeat)
       autoSubmitTriggers.push(
-        "The AI camera review detects no face clearly visible in either camera sample",
+        "the camera check finds nobody in front of the camera",
       );
-    if (p.aiCameraMonitoring && p.camera)
+    if (aiTriggers.people)
       autoSubmitTriggers.push(
-        "The AI camera review detects two or more faces clearly visible in a camera sample",
+        "the camera check finds two or more people in view",
       );
-    if (p.aiCameraMonitoring && p.camera)
+    if (aiTriggers.phone)
       autoSubmitTriggers.push(
-        "The AI camera review detects a phone or extra screen clearly visible in a camera sample",
+        "the camera check finds a phone or extra screen in view",
       );
     if (p.microphone)
       autoSubmitTriggers.push(
@@ -1810,7 +1872,7 @@ export default function ExamRoom({
             ],
           ]
         : []),
-      ...(p.aiCameraMonitoring && p.camera
+      ...(anyAiCameraCheck(p)
         ? [
             [
               "AI camera review",
@@ -1917,9 +1979,9 @@ export default function ExamRoom({
       identitySaved &&
       identityConfirmed &&
       accepted &&
-      (!examScreenSharingRequired(p.screen, deviceClass) ||
+      (!recordingRequiredFor(p, deviceClass) ||
         (screenRecordingAccepted && typeof MediaRecorder !== "undefined")) &&
-      (!p.aiCameraMonitoring || !p.camera || aiCameraAccepted) &&
+      (!anyAiCameraCheck(p) || aiCameraAccepted) &&
       (deviceClass !== "tablet" || !p.camera || cameraEvidenceAccepted) &&
       online &&
       permissionReady &&
@@ -1983,7 +2045,9 @@ export default function ExamRoom({
             screenShareUnsupported
               ? " Full-screen sharing has not passed. You cannot start until the browser confirms that Entire screen is being shared."
               : examScreenSharingRequired(p.screen, deviceClass)
-                ? " This exam requires your entire screen to remain shared and recorded from the moment the exam begins until it ends. The recording is uploaded as short, ordered video segments to the exam’s private, access-controlled storage and kept until the exam is deleted. Authorized instructors can review it; deleting the exam queues its recording segments and related files for removal from storage, with retries if storage is temporarily unavailable."
+                ? !recordingRequiredFor(p, deviceClass)
+                  ? " This exam requires your entire screen to remain shared while the exam is open so your instructor can view it live; it is not recorded."
+                  : " This exam requires your entire screen to remain shared and recorded from the moment the exam begins until it ends. The recording is uploaded as short, ordered video segments to the exam’s private, access-controlled storage and kept until the exam is deleted. Authorized instructors can review it; deleting the exam queues its recording segments and related files for removal from storage, with retries if storage is temporarily unavailable."
                 : deviceClass === "tablet" && p.screen
                   ? " Screen sharing is not used on tablets."
                   : " Screen sharing is required on laptops only."}{" "}
@@ -2126,7 +2190,7 @@ export default function ExamRoom({
               {p.camera || p.microphone
                 ? "Browser observations can be incomplete or inaccurate; your instructor reviews the evidence. "
                 : ""}
-              {p.aiCameraMonitoring && p.camera
+              {anyAiCameraCheck(p)
                 ? "Your camera is checked on this device; reduced camera samples are sent to an AI service (OpenRouter) only to confirm an unclear phone detection, and are not stored by this app."
                 : "No camera images are sent to AI."}{" "}
               {deviceClass === "tablet"
@@ -2136,7 +2200,9 @@ export default function ExamRoom({
               screenShareUnsupported
                 ? "This browser/device cannot currently provide verified full-screen sharing, so you cannot start this exam here."
                 : examScreenSharingRequired(p.screen, deviceClass)
-                  ? "Your shared entire screen is recorded continuously during the exam and uploaded in segments to the exam’s private storage. The recording includes everything visible on the shared screen and is kept until the exam is deleted. If upload is interrupted, segments are queued in this browser and retried; the exam screen shows the save status."
+                  ? !recordingRequiredFor(p, deviceClass)
+                    ? "Your entire screen is shared for live instructor viewing only; it is not recorded. "
+                    : "Your shared entire screen is recorded continuously during the exam and uploaded in segments to the exam’s private storage. The recording includes everything visible on the shared screen and is kept until the exam is deleted. If upload is interrupted, segments are queued in this browser and retried; the exam screen shows the save status."
                   : "Your instructor cannot view a live screen share from this tablet."}{" "}
               A browser cannot prevent switching apps; if you leave this tab,
               the exam screen is held until you acknowledge the signal.
@@ -2321,7 +2387,7 @@ export default function ExamRoom({
             />{" "}
             I have read the monitoring notice and examination instructions.
           </label>
-          {examScreenSharingRequired(p.screen, deviceClass) && (
+          {recordingRequiredFor(p, deviceClass) && (
             <>
               {typeof MediaRecorder === "undefined" && (
                 <p className="error" role="alert">
@@ -2359,7 +2425,7 @@ export default function ExamRoom({
               screen.
             </label>
           )}
-          {p.aiCameraMonitoring && p.camera && (
+          {anyAiCameraCheck(p) && (
             <label className="check consent">
               <input
                 type="checkbox"

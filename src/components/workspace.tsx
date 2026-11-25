@@ -496,7 +496,160 @@ const standard = {
   negativeMarks: 0,
   retentionDays: 90,
   offlineGraceSeconds: 120,
+  screenRecording: true,
+  cameraMotion: true,
+  aiPhoneDetection: true,
+  aiMultiplePeople: true,
+  aiEmptySeat: true,
+  voiceDetection: true,
+  windowFocus: true,
 };
+
+type CheckItem = {
+  key: string;
+  label: string;
+  description: string;
+  /** Shown checked when the stored value is false (e.g. "Block pasting"). */
+  inverted?: boolean;
+  /** Needs this other check switched on. */
+  requires?: string;
+};
+const AI_CAMERA_KEYS = ["aiPhoneDetection", "aiMultiplePeople", "aiEmptySeat"];
+/** Every check an exam runs, grouped; each one has its own switch. */
+const EXAM_CHECK_GROUPS: { title: string; items: CheckItem[] }[] = [
+  {
+    title: "Entry",
+    items: [
+      {
+        key: "classroomCode",
+        label: "Classroom entry code",
+        description: "Require the rotating code displayed by the instructor.",
+      },
+      {
+        key: "teacherApproval",
+        label: "Teacher approval",
+        description:
+          "Require the instructor to approve entry before the exam begins.",
+      },
+      {
+        key: "location",
+        label: "Classroom location",
+        description:
+          "Require students to be within the selected classroom radius (choose a classroom above).",
+      },
+      {
+        key: "allowMobile",
+        label: "Allow phones",
+        description:
+          "Let students take the exam on a phone. Off: laptops and tablets only.",
+      },
+    ],
+  },
+  {
+    title: "Camera",
+    items: [
+      {
+        key: "camera",
+        label: "Camera required",
+        description: "Camera must stay on; turning it off counts as a warning.",
+      },
+      {
+        key: "cameraMotion",
+        label: "Camera movement notes",
+        requires: "camera",
+        description:
+          "Note repeated large movement in the camera view for review (advisory, not a warning).",
+      },
+      {
+        key: "aiPhoneDetection",
+        label: "Phone or extra screen in view",
+        requires: "camera",
+        description:
+          "Checked on the student's device about every 1.5 s; counts as a warning. Unclear phones are confirmed by AI (OpenRouter) when configured.",
+      },
+      {
+        key: "aiMultiplePeople",
+        label: "Another person in view",
+        requires: "camera",
+        description:
+          "Two or more people in front of the camera counts as a warning (on-device check).",
+      },
+      {
+        key: "aiEmptySeat",
+        label: "Nobody in front of the camera",
+        requires: "camera",
+        description:
+          "An empty seat for about 5 s counts as a warning (on-device check).",
+      },
+    ],
+  },
+  {
+    title: "Microphone",
+    items: [
+      {
+        key: "microphone",
+        label: "Microphone required",
+        description:
+          "Microphone must stay on; turning it off counts as a warning.",
+      },
+      {
+        key: "voiceDetection",
+        label: "Talking or other voices",
+        requires: "microphone",
+        description:
+          "About 3 s of speech counts as a warning. Audio is not recorded or uploaded.",
+      },
+    ],
+  },
+  {
+    title: "Screen & browser",
+    items: [
+      {
+        key: "screen",
+        label: "Entire-screen sharing (laptops)",
+        description:
+          "Students share their entire screen so you can view it live; stopping the share counts as a warning.",
+      },
+      {
+        key: "screenRecording",
+        label: "Record the shared screen",
+        requires: "screen",
+        description:
+          "Save the shared screen as a video (your connected Google Drive, or private storage).",
+      },
+      {
+        key: "fullscreen",
+        label: "Fullscreen (laptops)",
+        description:
+          "Leaving fullscreen counts as a warning. Tablets keep keyboard-friendly page mode.",
+      },
+      {
+        key: "tabMonitoring",
+        label: "Leaving the exam tab",
+        description:
+          "Switching to another browser tab counts as a warning and pauses the exam until acknowledged.",
+      },
+      {
+        key: "windowFocus",
+        label: "Switching to another window or app",
+        description:
+          "Moving focus to another window or app counts as a warning.",
+      },
+      {
+        key: "allowPaste",
+        inverted: true,
+        label: "Block pasting",
+        description: "Pasting is blocked and an attempt counts as a warning.",
+      },
+      {
+        key: "allowCopy",
+        inverted: true,
+        label: "Block copying",
+        description: "Copying exam content is blocked.",
+      },
+    ],
+  },
+];
 function ExamList() {
   const { data: exams, error, refresh } = useData("exams");
   const [creating, setCreating] = useState(false),
@@ -921,12 +1074,14 @@ function ExamForm({ done, initial }: { done: () => void; initial?: any }) {
   const router = useRouter();
   const [formNow] = useState(() => Date.now());
   const { data: courses } = useData("courses"),
-    { data: rooms } = useData("classrooms"),
-    { data: settings } = useData("settings");
+    { data: rooms } = useData("classrooms");
+  const [courseId, setCourseId] = useState<string>(initial?.course_id ?? "");
   const [policy, setPolicy] = useState({
       ...standard,
       ...initial?.policy,
-      screen: true,
+      // Exams saved before this switch existed used tab monitoring for both.
+      windowFocus:
+        initial?.policy?.windowFocus ?? initial?.policy?.tabMonitoring ?? true,
     }),
     [preset, setPreset] = useState(initial ? "custom" : "standard"),
     [instructions, setInstructions] = useState(initial?.instructions ?? ""),
@@ -1077,7 +1232,10 @@ function ExamForm({ done, initial }: { done: () => void; initial?: any }) {
             <select
               required
               name="course"
-              defaultValue={initial?.course_id}
+              // Controlled: the course list loads after the form opens, and an
+              // uncontrolled defaultValue would stay blank and block saving.
+              value={courseId}
+              onChange={(event) => setCourseId(event.target.value)}
               disabled={published}
             >
               <option value="">Select course</option>
@@ -1229,6 +1387,9 @@ function ExamForm({ done, initial }: { done: () => void; initial?: any }) {
                         allowCopy: true,
                         allowPaste: true,
                         tabMonitoring: false,
+                        windowFocus: false,
+                        screen: false,
+                        screenRecording: false,
                         allowMobile: true,
                         autoTerminate: false,
                       }
@@ -1246,91 +1407,76 @@ function ExamForm({ done, initial }: { done: () => void; initial?: any }) {
         <fieldset className="exam-checks" disabled={hasActiveAttempts}>
           <legend>Choose student checks</legend>
           <p className="small muted">
-            Select the additional checks for this exam. Entire-screen sharing is
-            required for every exam and cannot be turned off. Classroom location
-            is optional and only required when selected.
+            Every check the exam runs is listed here and can be switched on or
+            off on its own. A greyed-out check needs the one it depends on
+            (camera, microphone or screen sharing) switched on first.
           </p>
-          <div className="check-grid">
-            {[
-              [
-                "camera",
-                "Camera",
-                "Request camera access and monitor the camera feed.",
-              ],
-              [
-                "aiCameraMonitoring",
-                "AI camera review (optional)",
-                "Check the camera on each student's device about every 1.5 seconds (no images leave the device): a visible phone or extra screen, another person, or an empty seat counts as a warning strike within a few seconds. Unclear phone detections are confirmed by an AI service (OpenRouter, free tier). False detections are possible.",
-              ],
-              [
-                "microphone",
-                "Microphone",
-                "Detect talking or other voices on the student's device (about 3 seconds counts as a warning strike); audio is not recorded or transcribed.",
-              ],
-              [
-                "location",
-                "Classroom location (optional)",
-                "When selected, require students to be within the selected classroom radius. Leave unchecked to allow entry without location access.",
-              ],
-              [
-                "screen",
-                "Entire-screen sharing (required)",
-                "Students must share the entire screen before entry. Tab or window sharing and browsers without verifiable full-screen capture cannot start the exam.",
-              ],
-              [
-                "fullscreen",
-                "Fullscreen (laptops)",
-                "Require fullscreen on laptops; tablets keep keyboard-friendly page mode.",
-              ],
-              [
-                "classroomCode",
-                "Classroom entry code",
-                "Require the rotating code displayed by the instructor.",
-              ],
-              [
-                "tabMonitoring",
-                "Tab-change monitoring",
-                "Record and warn when a student leaves the exam tab.",
-              ],
-              [
-                "teacherApproval",
-                "Teacher approval",
-                "Require the instructor to approve entry before the exam begins.",
-              ],
-            ].map(([key, label, description]) => (
-              <label key={key} className="exam-check-option">
-                <span className="check">
-                  <input
-                    type="checkbox"
-                    checked={key === "screen" || Boolean(policy[key])}
-                    disabled={
-                      key === "screen" ||
-                      (key === "aiCameraMonitoring" &&
-                        (!policy.camera || !settings?.integrations?.ai))
-                    }
-                    onChange={(event) => {
-                      if (key === "screen") return;
-                      setPreset("custom");
-                      setPolicy({
-                        ...policy,
-                        [key]: event.target.checked,
-                        ...(key === "camera" && !event.target.checked
-                          ? { aiCameraMonitoring: false }
-                          : {}),
-                      });
-                    }}
-                  />
-                  {label}
-                </span>
-                <small>
-                  {key === "aiCameraMonitoring" && !settings?.integrations?.ai
-                    ? "Unavailable until the AI integration (OPENROUTER_API_KEY) is configured. " +
-                      description
-                    : description}
-                </small>
-              </label>
-            ))}
-          </div>
+          {EXAM_CHECK_GROUPS.map((group) => (
+            <div key={group.title} className="exam-check-group">
+              <h4>{group.title}</h4>
+              <div className="check-grid">
+                {group.items.map((item) => {
+                  const isAi = AI_CAMERA_KEYS.includes(item.key);
+                  const stored = isAi
+                    ? Boolean(policy.aiCameraMonitoring) &&
+                      policy[item.key] !== false
+                    : Boolean(policy[item.key]);
+                  const checked = item.inverted ? !stored : stored;
+                  const blocked = Boolean(
+                    item.requires && !policy[item.requires],
+                  );
+                  return (
+                    <label key={item.key} className="exam-check-option">
+                      <span className="check">
+                        <input
+                          type="checkbox"
+                          checked={checked && !blocked}
+                          disabled={blocked}
+                          onChange={(event) => {
+                            const on = event.target.checked;
+                            setPreset("custom");
+                            if (isAi) {
+                              const next = Object.fromEntries(
+                                AI_CAMERA_KEYS.map((key) => [
+                                  key,
+                                  key === item.key
+                                    ? on
+                                    : Boolean(policy.aiCameraMonitoring) &&
+                                      policy[key] !== false,
+                                ]),
+                              );
+                              setPolicy({
+                                ...policy,
+                                ...next,
+                                aiCameraMonitoring:
+                                  Object.values(next).some(Boolean),
+                              });
+                              return;
+                            }
+                            setPolicy({
+                              ...policy,
+                              [item.key]: item.inverted ? !on : on,
+                            });
+                          }}
+                        />
+                        {item.label}
+                      </span>
+                      <small>
+                        {blocked
+                          ? `Needs “${
+                              group.items.find(
+                                (other) => other.key === item.requires,
+                              )?.label ?? item.requires
+                            }”. `
+                          : ""}
+                        {item.description}
+                      </small>
+                    </label>
+                  );
+                })}
+              </div>
+            </div>
+          ))}
           {policy.location && !roomId && (
             <p className="small error" role="status">
               Choose a classroom above to use the location check.
@@ -1357,6 +1503,15 @@ function ExamForm({ done, initial }: { done: () => void; initial?: any }) {
                     "tabMonitoring",
                     "teacherApproval",
                     "allowMobile",
+                    "allowCopy",
+                    "allowPaste",
+                    "screenRecording",
+                    "cameraMotion",
+                    "aiPhoneDetection",
+                    "aiMultiplePeople",
+                    "aiEmptySeat",
+                    "voiceDetection",
+                    "windowFocus",
                   ].includes(key),
               )
               .map(([key, value]) => (

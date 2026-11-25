@@ -4776,3 +4776,18 @@ fieldset {
   margin: 0;
   overflow-y: auto;
 }
+
+/* Exam form: every student check, grouped. */
+.exam-check-group + .exam-check-group {
+  margin-top: 18px;
+}
+.exam-check-group h4 {
+  margin: 4px 0 10px;
+  color: #9fc4ec;
+  font-size: 12px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+.exam-check-option:has(input:disabled) {
+  opacity: 0.55;
+}

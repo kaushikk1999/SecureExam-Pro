@@ -1132,6 +1132,42 @@ test("teacher: every workspace page loads and every exam control works", async (
     page.getByRole("heading", { name: controlsTitle }),
   ).toBeVisible();
 
+  // Every check is listed and each can be switched on its own.
+  await page.getByRole("button", { name: "Edit examination" }).click();
+  const checks = page.locator("fieldset.exam-checks");
+  for (const group of ["Entry", "Camera", "Microphone", "Screen & browser"])
+    await expect(
+      checks.getByRole("heading", { name: group, exact: true }),
+    ).toBeVisible();
+  await expect(checks.locator(".exam-check-option")).toHaveCount(18);
+  const box = (label: RegExp) => checks.getByRole("checkbox", { name: label });
+  // Dependent checks are disabled until their parent check is on.
+  await expect(box(/^Another person in view/)).toBeDisabled();
+  await box(/^Camera required/).check();
+  await box(/^Another person in view/).check();
+  // Switching one AI check on does not switch on the others.
+  await expect(box(/^Phone or extra screen in view/)).not.toBeChecked();
+  await box(/^Block pasting/).uncheck();
+  await box(/^Microphone required/).check();
+  await expect(box(/^Talking or other voices/)).toBeEnabled();
+  await box(/^Microphone required/).uncheck();
+  await expect(box(/^Talking or other voices/)).toBeDisabled();
+  await page.getByRole("button", { name: "Save changes", exact: true }).click();
+  await expect
+    .poll(async () => {
+      const p = (await exam()).policy;
+      return [
+        p.aiCameraMonitoring,
+        p.aiMultiplePeople,
+        p.aiPhoneDetection,
+        p.aiEmptySeat,
+        p.allowPaste,
+        p.microphone,
+        p.camera,
+      ];
+    })
+    .toEqual([true, true, false, false, true, false, true]);
+
   for (const tab of ["monitor", "reports", "accommodations", "questions"]) {
     await page.getByRole("button", { name: tab, exact: true }).click();
     await page.waitForTimeout(600);
